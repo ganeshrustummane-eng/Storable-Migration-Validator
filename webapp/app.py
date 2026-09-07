@@ -415,7 +415,7 @@ hr { border-color: var(--neutral-200) !important; margin: 1.5rem 0 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-SOURCE_TYPES = ("postgresql", "mssql", "athena")
+SOURCE_TYPES = ("postgresql", "mssql", "athena", "redshift")
 _TYPE_MANUAL = "✏️  Type manually…"
 
 
@@ -2907,13 +2907,22 @@ with tab_execute:
                 "type will be silently skipped for the other (no matching YAML requested for it)."
             )
 
-        _thresh_col, _ = st.columns([2, 4])
+        _thresh_col, _count_thresh_col = st.columns([2, 2])
         with _thresh_col:
             mismatch_threshold = st.number_input(
                 "Acceptable mismatch % (0 = exact match required)",
                 min_value=0.0, max_value=100.0, value=0.0, step=0.1,
                 format="%.2f", key="exec_threshold",
                 help="e.g. 0.10 means ≤0.10% mismatched rows = PASS. Written into the YAML before running.",
+            )
+        with _count_thresh_col:
+            count_mismatch_threshold = st.number_input(
+                "Acceptable count difference % (0 = exact match required)",
+                min_value=0.0, max_value=100.0, value=0.0, step=0.1,
+                format="%.2f", key="exec_count_threshold",
+                help="For tables under active CDC/replication, a strict row-count match will "
+                     "intermittently FAIL for no real reason. e.g. 0.05 means ≤0.05% count "
+                     "difference = PASS. Written into the YAML before running.",
             )
 
         if st.button("🚀 Run validation", type="primary", key="exec_run", disabled=not selected_tables):
@@ -2935,6 +2944,24 @@ with tab_execute:
                             _yp.write_text(_yrun.dump(_ydoc, default_flow_style=False, sort_keys=False, allow_unicode=True), encoding="utf-8")
                         except Exception:
                             pass
+
+            # Inject count_mismatch_threshold_pct into the layer's single count_validation
+            # YAML before running — count_validation has no tolerance by default (strict ==),
+            # so this is opt-in per run, same pattern as the data_validation threshold above.
+            if count_mismatch_threshold > 0 and picked_count_tables:
+                import yaml as _yrun
+                _cv_yaml = _PROJECT_DIR / "config" / layer / "count_validation" / f"{layer}.yaml"
+                if _cv_yaml.exists():
+                    try:
+                        _cvdoc = _yrun.safe_load(_cv_yaml.read_text(encoding="utf-8")) or {}
+                        for _tbl in picked_count_tables:
+                            _tentry = (_cvdoc.get("tables") or {}).get(_tbl)
+                            _cv = (_tentry.get("validations") or {}).get("count_validation") if _tentry else None
+                            if _cv:
+                                _cv["count_mismatch_threshold_pct"] = count_mismatch_threshold
+                        _cv_yaml.write_text(_yrun.dump(_cvdoc, default_flow_style=False, sort_keys=False, allow_unicode=True), encoding="utf-8")
+                    except Exception:
+                        pass
 
             with st.spinner(f"Running {layer} validation against '{environment}' — this executes real queries..."):
                 try:
@@ -2964,7 +2991,18 @@ with tab_execute:
                         m1.metric("Tables checked", n_total)
                         m2.metric("Passed", n_pass)
                         m3.metric("Failed", n_fail, delta=-n_fail if n_fail else None, delta_color="inverse")
-                        render_paginated_df(df, key_prefix=f"exec_summary_{vtype}")
+                        show_failed_only = st.checkbox(
+                            "Show failed only", value=False, key=f"exec_summary_failed_only_{vtype}"
+                        )
+                        display_df = df[df["status"] == "FAIL"] if show_failed_only else df
+                        render_paginated_df(display_df, key_prefix=f"exec_summary_{vtype}")
+                        st.download_button(
+                            f"⬇ Download {'failed-only ' if show_failed_only else ''}{vtype} summary CSV",
+                            data=display_df.to_csv(index=False).encode("utf-8"),
+                            file_name=f"{vtype}_summary{'_failed' if show_failed_only else ''}.csv",
+                            mime="text/csv",
+                            key=f"dl_summary_{vtype}",
+                        )
 
                 if result["diff_files"]:
                     with st.container(border=True):
@@ -2972,6 +3010,20 @@ with tab_execute:
                         st.caption("Every row is shown — green = matched, red = differed. Local files only, never sent to any AI/LLM.")
                         for f in result["diff_files"]:
                             _render_diff_file(f, key_prefix=f"exec_diff_{f.stem}")
+
+                if result.get("failed_files"):
+                    with st.container(border=True):
+                        st.markdown("#### ❌ Data validation — failed rows only")
+                        st.caption("Same rows as above, pre-filtered to mismatches. Download below to share just the failures.")
+                        for f in result["failed_files"]:
+                            _render_diff_file(f, key_prefix=f"exec_failed_{f.stem}")
+                            st.download_button(
+                                f"⬇ Download {f.name}",
+                                data=f.read_bytes(),
+                                file_name=f.name,
+                                mime="text/csv",
+                                key=f"dl_failed_{f.stem}",
+                            )
 
                 if not result["summaries"]:
                     with st.expander("Raw stdout/stderr (no summary was produced)", expanded=True):
@@ -3061,6 +3113,13 @@ with tab_history:
                 table=None if table_filter == "All" else table_filter,
             )
             render_paginated_df(results_df, key_prefix="hist_results")
+            st.download_button(
+                "⬇ Download filtered results CSV",
+                data=results_df.to_csv(index=False).encode("utf-8"),
+                file_name=f"validation_history_{status_filter.lower()}.csv",
+                mime="text/csv",
+                key="dl_hist_results",
+            )
 
 # =============================================================================
 # TAB: Rule Book
@@ -3525,20 +3584,21 @@ st.markdown("""
 .st-key-gemini_chat_panel {
     position: fixed !important; bottom: 100px !important; right: 24px !important;
     z-index: 9999 !important; left: auto !important;
-    /* Width/height are set by a second, dynamic <style> block further down based
-       on st.session_state["_gemini_chat_size"] — NOT a native CSS `resize`
-       handle. Streamlit's own components only recompute their layout on an
-       actual rerun; dragging a native resize handle changes the container's
-       box size without Streamlit ever re-running, so the widgets inside keep
-       their originally-computed widths and visibly overlap. A button-driven
-       size toggle (see below) triggers a real rerun instead, so everything
-       inside reflows correctly for the new size. */
     max-width: 92vw !important; max-height: 85vh !important;
     overflow-y: auto;
     background: var(--background-color, white); border-radius: 16px;
     box-shadow: 0 10px 32px rgba(0,0,0,0.28); padding: 0;
     border: 1px solid rgba(128,128,128,0.2);
 }
+/* Drag handle on the left edge */
+#gemini-resize-handle {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 6px;
+    cursor: ew-resize; z-index: 10000;
+    border-radius: 16px 0 0 16px;
+    background: transparent;
+    transition: background 0.15s;
+}
+#gemini-resize-handle:hover { background: rgba(108,92,231,0.25); }
 .st-key-gemini_chat_size_btn {
     position: fixed !important; z-index: 10001 !important; left: auto !important;
 }
@@ -3629,8 +3689,55 @@ with st.container(key="gemini_chat_toggle"):
         st.session_state["_gemini_chat_open"] = not st.session_state["_gemini_chat_open"]
         st.rerun()
 
-# Discrete size presets applied via a real Streamlit rerun (not a native CSS
-# resize drag) — see the note on .st-key-gemini_chat_panel above for why.
+# Horizontal drag-to-resize via a JS handle injected into the panel.
+# JS reads/writes localStorage so the user's chosen width survives reruns.
+st.markdown("""
+<script>
+(function() {
+  function initResize() {
+    const panel = document.querySelector('.st-key-gemini_chat_panel');
+    if (!panel) return;
+    if (panel.querySelector('#gemini-resize-handle')) return;
+
+    // Restore saved width
+    const saved = localStorage.getItem('gemini_chat_w');
+    if (saved) panel.style.setProperty('width', saved + 'px', 'important');
+
+    const handle = document.createElement('div');
+    handle.id = 'gemini-resize-handle';
+    panel.style.position = 'fixed';
+    panel.appendChild(handle);
+
+    let startX, startW;
+    handle.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      startX = e.clientX;
+      startW = panel.getBoundingClientRect().width;
+      document.addEventListener('mousemove', onDrag);
+      document.addEventListener('mouseup', stopDrag);
+    });
+
+    function onDrag(e) {
+      // Dragging left = wider (panel anchored to right edge)
+      const newW = Math.min(Math.max(280, startW + (startX - e.clientX)), window.innerWidth * 0.92);
+      panel.style.setProperty('width', newW + 'px', 'important');
+    }
+
+    function stopDrag() {
+      const w = Math.round(panel.getBoundingClientRect().width);
+      localStorage.setItem('gemini_chat_w', w);
+      document.removeEventListener('mousemove', onDrag);
+      document.removeEventListener('mouseup', stopDrag);
+    }
+  }
+
+  // Streamlit re-renders the DOM; re-attach after each mutation.
+  new MutationObserver(initResize).observe(document.body, {childList: true, subtree: true});
+  initResize();
+})();
+</script>
+""", unsafe_allow_html=True)
+
 _GEMINI_CHAT_SIZES = {"default": (400, 520), "large": (640, 760)}
 _gemini_size = st.session_state["_gemini_chat_size"]
 _gemini_w, _gemini_h = _GEMINI_CHAT_SIZES.get(_gemini_size, _GEMINI_CHAT_SIZES["default"])

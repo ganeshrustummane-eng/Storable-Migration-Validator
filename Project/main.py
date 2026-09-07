@@ -10,7 +10,8 @@ import time
 import pyodbc
 import psycopg2
 from db.factory import get_database
-from utils.utility import (generate_runid,get_config_output_paths,create_summary,get_logger,add_file_handler)
+from utils.utility import (generate_runid,get_config_output_paths,create_summary,get_logger,add_file_handler,
+                            count_validation_match,row_hash_fallback_looks_like_column_drift)
 from utils.semantic_normalize import canonicalize_frames
 from datetime import datetime
 
@@ -103,8 +104,29 @@ logger.info(
 
 logger.debug("Validation directories: %s", validation_dirs)
 
+
+def _write_error_summary(table_name, validation_name, source_table_name, source_type,
+                          target_table_name, target_type, source_rows, target_rows,
+                          output_path, batch_start_time):
+    """Best-effort ERROR summary row so a table that crashed mid-comparison still
+    shows up in the summary CSV/dashboard instead of silently vanishing from the
+    run with the dashboard still showing green."""
+    try:
+        end = datetime.now()
+        start_str = batch_start_time.strftime("%H:%M:%S") if hasattr(batch_start_time, "strftime") else str(batch_start_time)
+        create_summary(
+            run_at, run_id, validation_name, source_table_name, source_type,
+            target_table_name, target_type, source_rows, target_rows, "", output_path,
+            "ERROR", start_str, end.strftime("%H:%M:%S"), "0:00:00",
+        )
+    except Exception:
+        logger.warning("Could not write ERROR summary row for table=%s", table_name)
+
+
 failure_count = 0
 system_error = False
+processed_tables = set()  # every table_name that actually got a validation attempt
+_warned_stale_exclusions = set()  # (yamlfile, exclusions_file) pairs already warned about
 
 #Each validation is process in order
 for validation in validation_dirs:
@@ -115,18 +137,39 @@ for validation in validation_dirs:
     logger.debug("Config path: %s", config_path_yaml)
 
     for yamlfile in config_path_yaml:
-        with open(yamlfile) as f:
-                config = yaml.safe_load(f)       
+        # One bad --tables entry used to build a path to a config file that
+        # doesn't exist (see utils/utility.py get_config_output_paths), and
+        # open() here — outside any try/except — crashed the whole run,
+        # aborting every OTHER valid table too. Now it just skips this one
+        # config file and keeps going.
+        try:
+            with open(yamlfile) as f:
+                config = yaml.safe_load(f)
+        except (FileNotFoundError, yaml.YAMLError) as e:
+            logger.error("Could not load config file %s — skipping it, other tables still run: %s", yamlfile, e)
+            failure_count += 1
+            system_error = True
+            continue
         logger.info("Loaded configuration: %s", config_path_yaml)
-        
+
         if "all" in tables:
             tables_to_process = config["tables"].items()
         else:
             tables_to_process = [
                 (table, config["tables"][table]) for table in tables if table in config["tables"]]
 
+        if not tables_to_process:
+            logger.error(
+                "No tables to process for validation=%s from %s (requested tables=%s not found in this config)",
+                validation, yamlfile, tables,
+            )
+            failure_count += 1
+            system_error = True
+            continue
+
         print("-"*100)
         for table_name, table_config in tables_to_process:
+            processed_tables.add(table_name)
             logger.info("Processing table: %s", table_name)
             for validation_name, validation_config in table_config["validations"].items():
                 logger.debug("Validation configuration: %s", validation_name)
@@ -148,10 +191,33 @@ for validation in validation_dirs:
 
                 try:
                     batch_start_time = datetime.now()
+                    source_rows = target_rows = None  # defined even if an exception fires before either query runs
+
+                    # Warn once per (yaml, exclusions file) if the exclusions config was
+                    # edited after this YAML was generated — exclusion rules are baked in
+                    # at generation time (src/core/exclusion_report.py / skip_classifier.py)
+                    # and Project/main.py never re-reads config/*_exclusions.yaml, so a
+                    # newer exclusions file means this YAML is running on stale rules.
+                    if source:
+                        excl_file = os.path.join(os.path.dirname(BASE_DIR), "config", f"{source}_exclusions.yaml")
+                        _excl_key = (yamlfile, excl_file)
+                        if (_excl_key not in _warned_stale_exclusions
+                                and os.path.exists(excl_file) and os.path.exists(yamlfile)
+                                and os.path.getmtime(excl_file) > os.path.getmtime(yamlfile)):
+                            logger.warning(
+                                "%s was modified after %s was generated — regenerate the YAML "
+                                "to pick up the new exclusion rules (table=%s).",
+                                excl_file, yamlfile, table_name,
+                            )
+                            _warned_stale_exclusions.add(_excl_key)
+
                     #source
                     logger.info("Executing source query for table %s", table_name)
                     logger.debug("Source query: %s", source_query)
-                    obj = get_database(source, BASE_DIR, "local",
+                    # Source connects via `environment` too (not hardcoded "local") —
+                    # a --environment prod run must read source creds from .env.prod,
+                    # same as the target does below, not always from the local .env.
+                    obj = get_database(source, BASE_DIR, environment,
                                        override_database=source_database,
                                        override_schema=source_schema)
                     source_df = obj.execute_query(source_query)
@@ -180,11 +246,22 @@ for validation in validation_dirs:
 
                     output_file_path = ""
                     if validation_name == "count_validation":
-                        source_rows = source_df['source_row_count'].iloc[0]
-                        target_rows = target_df['target_row_count'].iloc[0]
+                        source_rows = int(source_df['source_row_count'].iloc[0])
+                        target_rows = int(target_df['target_row_count'].iloc[0])
                         logger.debug("Source row count: %s", source_rows)
                         logger.debug("Target row count: %s", target_rows)
-                        is_match = int(source_rows) == int(target_rows)
+                        # Opt-in tolerance for tables under active CDC/replication —
+                        # default stays 0 (exact match), so existing YAMLs behave
+                        # exactly as before unless a table explicitly sets this.
+                        # Strict == on a live table produces intermittent FAILs with
+                        # no real drift, which trains people to ignore the alert.
+                        count_threshold_pct = float(validation_config.get("count_mismatch_threshold_pct", 0))
+                        is_match, count_diff_pct = count_validation_match(source_rows, target_rows, count_threshold_pct)
+                        if count_threshold_pct > 0:
+                            logger.info(
+                                "Count threshold %.4f%% vs actual %.4f%% (source=%s, target=%s)",
+                                count_threshold_pct, count_diff_pct, source_rows, target_rows,
+                            )
                     else:
                         import pandas as pd
                         source_rows = len(source_df)
@@ -208,8 +285,10 @@ for validation in validation_dirs:
                         # row_hash mode: when pk is 'row_hash' but the SQL didn't
                         # produce that column, compute it in Python from the common
                         # columns so any JOIN query can be compared without a real PK.
-                        if (pk_src == "row_hash" or (isinstance(pk_src, list) and pk_src == ["row_hash"])) \
-                                and "row_hash" not in source_df.columns:
+                        used_row_hash_fallback = (
+                            pk_src == "row_hash" or (isinstance(pk_src, list) and pk_src == ["row_hash"])
+                        )
+                        if used_row_hash_fallback and "row_hash" not in source_df.columns:
                             import hashlib
                             _common = [c for c in source_df.columns if c in set(target_df.columns)]
                             def _hash_row(row, cols=_common):
@@ -338,6 +417,19 @@ for validation in validation_dirs:
 
                         n_fail_rows = int((result_df["status"] != "PASS").sum())
                         total_rows = len(result_df)
+
+                        if used_row_hash_fallback and total_rows > 0:
+                            n_source_only = int((result_df["status"] == "SOURCE_ONLY").sum())
+                            n_target_only = int((result_df["status"] == "TARGET_ONLY").sum())
+                            if row_hash_fallback_looks_like_column_drift(n_source_only, n_target_only, total_rows):
+                                logger.warning(
+                                    "row_hash fallback for %s: %d SOURCE_ONLY / %d TARGET_ONLY out of %d rows — "
+                                    "roughly equal counts on both sides usually means ONE un-normalized column "
+                                    "is desyncing the whole row hash, not real missing rows. Configure "
+                                    "pksourcecolumn/pktargetcolumn for accurate column-level diffs.",
+                                    table_name, n_source_only, n_target_only, total_rows,
+                                )
+
                         # Optional per-table mismatch threshold (e.g. 0.1 for ≤0.1%)
                         threshold_pct = float(validation_config.get("mismatch_threshold_pct", 0))
                         if threshold_pct > 0 and total_rows > 0:
@@ -375,9 +467,17 @@ for validation in validation_dirs:
                         validation_name,
                         exc_info=True
                     )
+                    failure_count += 1
                     system_error = True
+                    _write_error_summary(table_name, validation_name, source_table_name, source,
+                                         target_table_name, target, source_rows, target_rows,
+                                         output_path, batch_start_time)
                     continue
 
+                # A crash here (bad PK, malformed YAML block, unexpected schema, ...) used
+                # to be logged and swallowed with no effect on failure_count or exit code —
+                # notify_failure never fired and the dashboard kept showing green while a
+                # table silently dropped out of validation. Now it counts as a real failure.
                 except Exception:
                     logger.error(
                         "Unexpected error for table=%s validation=%s",
@@ -385,7 +485,26 @@ for validation in validation_dirs:
                         validation_name,
                         exc_info=True
                     )
+                    failure_count += 1
+                    system_error = True
+                    _write_error_summary(table_name, validation_name, source_table_name, source,
+                                         target_table_name, target, source_rows, target_rows,
+                                         output_path, batch_start_time)
                     continue
+
+# Manifest/completeness check — nothing else verifies "every requested table
+# actually produced a result." A typo'd table name, a table missing from every
+# config file, or an empty tables_to_process used to just leave a silent gap:
+# no error, no summary row, exit 0. Now a missing table is a counted failure.
+if "all" not in tables:
+    missing_tables = sorted(set(tables) - processed_tables)
+    if missing_tables:
+        logger.error(
+            "Requested tables never validated (not found in any %s config): %s",
+            "/".join(validation_dirs), missing_tables,
+        )
+        failure_count += len(missing_tables)
+        system_error = True
 
 end_time = datetime.now()
 duration = end_time - start_time

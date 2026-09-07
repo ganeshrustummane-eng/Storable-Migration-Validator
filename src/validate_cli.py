@@ -133,6 +133,7 @@ _DB_TYPE_NORMALIZE = {
     "sqlserver": "mssql", "sql_server": "mssql",
     "mssqlserver": "mssql", "microsoftsqlserver": "mssql",
     "aws_athena": "athena", "aws athena": "athena",
+    "redshift": "redshift", "aws_redshift": "redshift", "aws redshift": "redshift",
 }
 
 _DB_TYPE_LABELS = {
@@ -140,6 +141,7 @@ _DB_TYPE_LABELS = {
     "mssql":      "MS SQL Server",
     "snowflake":  "Snowflake (source)",
     "athena":     "AWS Athena",
+    "redshift":   "AWS Redshift",
 }
 
 
@@ -182,6 +184,7 @@ _EXCLUSION_FILE_BY_DB_TYPE = {
     "postgresql": _EXCLUSIONS_DIR / "postgresql_exclusions.yaml",
     "mssql":      _EXCLUSIONS_DIR / "mssql_exclusions.yaml",
     "athena":     _EXCLUSIONS_DIR / "athena_exclusions.yaml",
+    "redshift":   _EXCLUSIONS_DIR / "redshift_exclusions.yaml",
 }
 
 

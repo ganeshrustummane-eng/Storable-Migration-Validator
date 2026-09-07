@@ -2,8 +2,8 @@
 Rules Package — Source → Snowflake Validation Transformation Rules
 ===================================================================
 All rule logic lives in postgres_base_rules.py (the canonical implementation).
-DB-specific files (mssql_rules, athena_rules, snowflake_rules) re-export
-from there — their extractors normalize types to PG-compatible names first.
+DB-specific files (mssql_rules, athena_rules, snowflake_rules, redshift_rules)
+re-export from there — their extractors normalize types to PG-compatible names first.
 
 Usage:
     from rules import get_rule_for_type, RuleRegistry

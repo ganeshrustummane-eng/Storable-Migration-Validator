@@ -26,6 +26,7 @@ _TYPE_ALIASES = {
     "postgresql": {"postgresql", "postgres"},
     "mssql": {"mssql", "mssqlserver"},
     "athena": {"athena", "aws_athena"},
+    "redshift": {"redshift", "aws_redshift"},
 }
 
 
@@ -75,6 +76,19 @@ def get_database(db_type, BASE_DIR, environment,
             user=src["USERNAME"],
             password=src.get("PASSWORD", ""),
             port=int(src.get("PORT") or 5432),
+            schema=override_schema or src.get("SCHEMA", ""),
+        )
+
+    elif db_type == "redshift":
+        # Redshift speaks the PostgreSQL wire protocol — reuse Postgres as-is,
+        # just with a different default port.
+        src = _find_source(env, "redshift")
+        return Postgres(
+            dbname=override_database or src["DATABASE"],
+            host=src["HOST"],
+            user=src["USERNAME"],
+            password=src.get("PASSWORD", ""),
+            port=int(src.get("PORT") or 5439),
             schema=override_schema or src.get("SCHEMA", ""),
         )
 

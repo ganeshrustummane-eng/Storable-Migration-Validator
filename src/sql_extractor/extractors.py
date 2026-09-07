@@ -10,6 +10,7 @@ Supported sources:
     mssql / sqlserver / sql_server → MSSQLExtractor
     snowflake                     → SnowflakeExtractor
     athena / aws_athena           → AthenaExtractor
+    redshift / aws_redshift       → RedshiftExtractor
 """
 
 import importlib
@@ -716,6 +717,38 @@ class AthenaExtractor(BaseExtractor):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# SECTION 6b — Redshift extractor (Postgres wire protocol, different type names)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_REDSHIFT_TYPE_MAP = {
+    "super": "json",       # semi-structured type — closest PG-compatible bucket
+    "varbyte": "bytea",
+    "hllsketch": "text",
+    "geometry": "text",
+    "geography": "text",
+}
+
+
+def _normalise_redshift_type(raw: str) -> str:
+    """Redshift's information_schema reports standard types (varchar, int4,
+    int8, numeric, timestamp, boolean, ...) identically to PostgreSQL — only
+    Redshift-only types need mapping to a PostgreSQL-compatible name."""
+    return _REDSHIFT_TYPE_MAP.get(raw.lower().strip(), raw)
+
+
+class RedshiftExtractor(PostgresExtractor):
+    """Redshift speaks the PostgreSQL wire protocol and shares Postgres's
+    information_schema shape (including PK constraint metadata) — only type
+    normalization differs."""
+
+    @staticmethod
+    def _row_to_column(row: dict) -> ColumnMetadata:
+        col = PostgresExtractor._row_to_column(row)
+        col.data_type = _normalise_redshift_type(col.data_type)
+        return col
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # SECTION 7 — Factory
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -731,12 +764,15 @@ _REGISTRY = {
     "snowflake":  ("sql_extractor.extractors", "SnowflakeExtractor"),
     "athena":     ("sql_extractor.extractors", "AthenaExtractor"),
     "aws_athena": ("sql_extractor.extractors", "AthenaExtractor"),
+    "redshift":     ("sql_extractor.extractors", "RedshiftExtractor"),
+    "aws_redshift": ("sql_extractor.extractors", "RedshiftExtractor"),
 }
 
 _DEFAULT_PORTS = {
     "postgresql": 5432, "postgres": 5432, "pg": 5432,
     "mssql": 1433, "sqlserver": 1433, "sql_server": 1433,
     "snowflake": 443, "athena": 443, "aws_athena": 443,
+    "redshift": 5439, "aws_redshift": 5439,
 }
 
 

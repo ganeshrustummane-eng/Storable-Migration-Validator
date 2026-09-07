@@ -1,0 +1,17 @@
+version: '1.0'
+last_updated: '2026-09-04'
+description: 'Column exclusions for the AWS Redshift source database type. Every entry
+  in this file is applied to BOTH Redshift source tables AND their Snowflake target
+  counterparts, across all Redshift connections/databases.
+
+  '
+global_exclusions:
+  description: Columns excluded from ALL Redshift-sourced tables, source and target
+  columns: []
+pattern_exclusions:
+  description: Exclude columns matching these regex patterns (case-insensitive)
+  patterns: []
+settings:
+  log_exclusions: true
+  log_level: INFO
+user_global_exclusions: []

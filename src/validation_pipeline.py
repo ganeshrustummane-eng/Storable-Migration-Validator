@@ -100,7 +100,7 @@ from core.validation_plan import (
     PlanStatus,
 )
 from validation.plan_validator import PlanValidator, PlanValidationError
-from learning.retrieval import LearnedRuleRetriever
+# from learning.retrieval import LearnedRuleRetriever
 
 
 class ValidationPipeline:

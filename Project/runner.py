@@ -59,7 +59,8 @@ def run_validation(layer: str, environment: str, tables: list,
             "returncode": int,
             "stdout_tail": str,
             "summaries": {"count_validation": DataFrame, "data_validation": DataFrame},
-            "diff_files": [Path, ...],   # per-table mismatch CSVs, if any
+            "diff_files": [Path, ...],   # per-table full result CSVs (all rows), if any
+            "failed_files": [Path, ...], # per-table failed-rows-only CSVs, if any
             "run_dir": Path | None,
         }
     """
@@ -92,6 +93,7 @@ def run_validation(layer: str, environment: str, tables: list,
         "stderr_tail": "\n".join(proc.stderr.splitlines()[-60:]),
         "summaries": {},
         "diff_files": [],
+        "failed_files": [],
         "run_dir": None,
     }
     if not run_id:
@@ -108,6 +110,7 @@ def run_validation(layer: str, environment: str, tables: list,
             result["summaries"][vtype] = pd.read_csv(summary_path)
 
     result["diff_files"] = sorted(Path(p) for p in glob.glob(str(run_dir / "**" / "*_result_*.csv"), recursive=True))
+    result["failed_files"] = sorted(Path(p) for p in glob.glob(str(run_dir / "**" / "*_failed_*.csv"), recursive=True))
 
     if result["summaries"]:
         results_store.record_run(run_id, layer, environment, proc.returncode, result["summaries"])

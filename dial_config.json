@@ -5,22 +5,79 @@
   "apiType": "chat-completions",
   "models": [
     {
-      "id": "gpt-4o",
-      "name": "GPT-4 Optimized (Best Accuracy)",
-      "url": "https://ai-proxy.lab.epam.com/openai/deployments/gpt-4o/chat/completions?api-version=2025-04-01-preview",
+      "id": "gpt-5.6-sol-2026-07-09",
+      "name": "GPT-5.6 Sol (Recommended)",
+      "url": "https://ai-proxy.lab.epam.com/openai/deployments/gpt-5.6-sol-2026-07-09/chat/completions?api-version=2025-04-01-preview",
+      "apiType": "chat-completions",
       "toolCalling": true,
       "vision": true,
-      "maxInputTokens": 128000,
-      "maxOutputTokens": 16000
+      "streaming": true,
+      "maxInputTokens": 998000,
+      "maxOutputTokens": 46384,
+      "modelOptions": {
+        "temperature": null,
+        "top_p": null
+      }
     },
     {
-      "id": "gpt-4o-mini",
-      "name": "GPT-4 Mini (Faster & Cost-Effective)",
-      "url": "https://ai-proxy.lab.epam.com/openai/deployments/gpt-4o-mini/chat/completions?api-version=2025-04-01-preview",
+      "id": "gpt-5.4-2026-03-05",
+      "name": "GPT-5.4",
+      "url": "https://ai-proxy.lab.epam.com/openai/deployments/gpt-5.4-2026-03-05/chat/completions?api-version=2025-04-01-preview",
+      "apiType": "chat-completions",
       "toolCalling": true,
       "vision": true,
-      "maxInputTokens": 128000,
-      "maxOutputTokens": 16000
+      "streaming": true,
+      "maxInputTokens": 998000,
+      "maxOutputTokens": 46384,
+      "modelOptions": {
+        "temperature": null,
+        "top_p": null
+      }
+    },
+    {
+      "id": "gpt-5.5-2026-04-24",
+      "name": "GPT-5.5",
+      "url": "https://ai-proxy.lab.epam.com/openai/deployments/gpt-5.5-2026-04-24/chat/completions?api-version=2025-04-01-preview",
+      "apiType": "chat-completions",
+      "toolCalling": true,
+      "vision": true,
+      "streaming": true,
+      "maxInputTokens": 998000,
+      "maxOutputTokens": 45384,
+      "modelOptions": {
+        "temperature": null,
+        "top_p": null
+      }
+    },
+    {
+      "id": "gpt-5.6-luna-2026-07-09",
+      "name": "GPT-5.6 Luna",
+      "url": "https://ai-proxy.lab.epam.com/openai/deployments/gpt-5.6-luna-2026-07-09/chat/completions?api-version=2025-04-01-preview",
+      "apiType": "chat-completions",
+      "toolCalling": true,
+      "vision": true,
+      "streaming": true,
+      "maxInputTokens": 998000,
+      "maxOutputTokens": 46384,
+      "modelOptions": {
+        "temperature": null,
+        "top_p": null
+      }
+    },
+    {
+      "id": "gpt-5.6-terra-2026-07-09",
+      "name": "GPT-5.6 Terra",
+      "url": "https://ai-proxy.lab.epam.com/openai/deployments/gpt-5.6-terra-2026-07-09/chat/completions?api-version=2025-04-01-preview",
+      "apiType": "chat-completions",
+      "toolCalling": true,
+      "vision": true,
+      "streaming": true,
+      "maxInputTokens": 428000,
+      "maxOutputTokens": 36384,
+      "modelOptions": {
+        "temperature": null,
+        "top_p": null
+      }
     },
     {
       "id": "claude-3-5-sonnet",
@@ -28,8 +85,8 @@
       "url": "https://ai-proxy.lab.epam.com/anthropic/v1/messages",
       "toolCalling": true,
       "vision": true,
-      "maxInputTokens": 200000,
-      "maxOutputTokens": 4096
+      "maxInputTokens": 400000,
+      "maxOutputTokens": 8096
     },
     {
       "id": "gemini-2.0-flash",
@@ -37,8 +94,8 @@
       "url": "https://ai-proxy.lab.epam.com/google/v1beta/models/gemini-2.0-flash:generateContent",
       "toolCalling": true,
       "vision": true,
-      "maxInputTokens": 1000000,
-      "maxOutputTokens": 8192
+      "maxInputTokens": 2000000,
+      "maxOutputTokens": 9000
     }
   ]
 }
