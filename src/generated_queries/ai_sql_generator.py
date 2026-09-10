@@ -153,6 +153,7 @@ class AISQLQueryGenerator:
         target_db_type: str = "snowflake",
         query_type: str = "data_validation",
         has_fivetran_active: bool = False,
+        source_filter: str = "",
     ) -> AIGeneratedQuery:
         """
         Generate a database-specific validation query using AI.
@@ -188,7 +189,8 @@ class AISQLQueryGenerator:
 
         system_prompt = self._build_system_prompt(source_db_type, target_db_type)
         user_prompt   = self._build_user_prompt(
-            schema, table, mappings, source_db_type, query_type, has_fivetran_active
+            schema, table, mappings, source_db_type, query_type, has_fivetran_active,
+            source_filter=source_filter,
         )
 
         print(
@@ -247,6 +249,7 @@ class AISQLQueryGenerator:
         source_db_type: str,
         target_db_type: str = "snowflake",
         has_fivetran_active: bool = False,
+        target_filter: str = "",
     ) -> AIGeneratedQuery:
         """
         Generate the TARGET-side data validation query using AI.
@@ -287,7 +290,7 @@ class AISQLQueryGenerator:
                 f"  [AISQLGenerator] Using CTE-based Snowflake query for {target_fqn} "
                 f"(LATERAL FLATTEN columns detected)"
             )
-            sql = self._build_snowflake_cte_query(target_fqn, active, has_fivetran_active)
+            sql = self._build_snowflake_cte_query(target_fqn, active, has_fivetran_active, target_filter)
             return AIGeneratedQuery(
                 query=sql,
                 database_type=target_db_type,
@@ -320,10 +323,14 @@ class AISQLQueryGenerator:
             for m in active
         ]
 
+        filter_parts = []
+        if has_fivetran_active:
+            filter_parts.append("_FIVETRAN_ACTIVE = TRUE")
+        if target_filter:
+            filter_parts.append(target_filter)
         fivetran_note = (
-            "\nThe query MUST include: WHERE _FIVETRAN_ACTIVE = TRUE"
-            if has_fivetran_active
-            else ""
+            "\nThe query MUST include: WHERE " + " AND ".join(filter_parts)
+            if filter_parts else ""
         )
 
         # Pre-built SELECT list with verbatim expressions for the AI to copy
@@ -402,6 +409,7 @@ Generate the complete SELECT query now:
         target_fqn: str,
         mappings: List[ColumnRuleMapping],
         has_fivetran_active: bool,
+        target_filter: str = "",
     ) -> str:
         """Build a Snowflake SELECT that uses CTEs for JSON/HStore columns.
 
@@ -447,8 +455,13 @@ Generate the complete SELECT query now:
         parts.append(f"FROM {target_fqn}")
         for jc in join_clauses:
             parts.append(jc)
+        where_parts = []
         if has_fivetran_active:
-            parts.append("WHERE _FIVETRAN_ACTIVE = TRUE")
+            where_parts.append("_FIVETRAN_ACTIVE = TRUE")
+        if target_filter:
+            where_parts.append(target_filter)
+        if where_parts:
+            parts.append("WHERE " + " AND ".join(where_parts))
 
         return "\n".join(parts)
 
@@ -921,6 +934,7 @@ Return plain SQL query only. No markdown, no comments, no explanations outside t
         source_db_type: str,
         query_type: str,
         has_fivetran_active: bool,
+        source_filter: str = "",
     ) -> str:
         """Build the user prompt with column details including exact SQL expressions."""
         active = [m for m in mappings if not m.skip_validation]
@@ -936,9 +950,9 @@ Return plain SQL query only. No markdown, no comments, no explanations outside t
             for m in active
         ]
 
-        fivetran_note = ""
-        if has_fivetran_active and query_type == "data_validation":
-            fivetran_note = "\nTarget query MUST include: WHERE _FIVETRAN_ACTIVE = TRUE"
+        filter_note = ""
+        if source_filter:
+            filter_note = f"\nThe query MUST include: WHERE {source_filter}"
 
         query_descriptions = {
             "data_validation": "SELECT normalized columns for row-by-row comparison",
@@ -974,7 +988,7 @@ Requirements:
 4. Integers: CAST(col AS {self._get_text_type(source_db_type)})
 5. Timestamps: {self._get_format_function(source_db_type)}
 6. Booleans: CASE WHEN col = {self._get_bool_true(source_db_type)} THEN '1' WHEN col = {self._get_bool_false(source_db_type)} THEN '0' ELSE NULL END
-7. Each normalized column MUST have alias: column_name_normalized{fivetran_note}
+7. Each normalized column MUST have alias: column_name_normalized{filter_note}
 
 Generate the complete SELECT query now:
 """

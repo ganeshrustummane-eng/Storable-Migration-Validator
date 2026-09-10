@@ -1,0 +1,219 @@
+tables:
+  Test_007_Count:
+    validations:
+      data_validation:
+        source_table_name: Test_007_Count
+        source: redshift
+        source_database: '{env}_source'
+        source_schema: consume
+        pksourcecolumn: row_hash
+        summary: Validate the monthly total_delinquency_units, occupied_unit, pct_delinquency_units
+          over the past 24 months (Looker's chart)
+        report_tile: Delinquency % of Occupied - Trend
+        sourcequery: 'WITH last_day_per_facility AS (
+
+          SELECT
+
+          facility_id,
+
+          DATE_TRUNC(''month'', report_date) AS report_month,
+
+          MAX(report_date) AS report_date
+
+          FROM stodl_reporting_prod.sefms_occupancy_summary_daily_iceberg
+
+          WHERE report_date IS NOT NULL
+
+          AND report_date <= CURRENT_DATE - INTERVAL ''1'' DAY
+
+          AND report_date >= CURRENT_DATE - INTERVAL ''24'' MONTH
+
+          GROUP BY facility_id, DATE_TRUNC(''month'', report_date)
+
+          ),
+
+          occ AS (
+
+          SELECT o.facility_id, o.report_date, o.units AS occupied_units_raw
+
+          FROM stodl_reporting_prod.sefms_occupancy_summary_daily_iceberg o
+
+          INNER JOIN last_day_per_facility ldp
+
+          ON o.facility_id = ldp.facility_id
+
+          AND o.report_date = ldp.report_date
+
+          WHERE o.status = ''occupied''
+
+          ),
+
+          delinquent AS (
+
+          SELECT facility_id, report_date, COUNT(DISTINCT unit_id) AS delinquent_units
+
+          FROM stodl_reporting_prod.sefms_delinquent_balances_last_event_last_payment_iceberg
+
+          GROUP BY facility_id, report_date
+
+          )
+
+          SELECT
+
+          COALESCE(DATE_FORMAT(CAST(DATE_TRUNC(''month'', occ.report_date) AS DATE),
+          ''%Y-%m''), ''_NULL_VALUE_'') AS report_month,
+
+          COALESCE(CAST(COALESCE(SUM(occ.occupied_units_raw), 0) AS VARCHAR), ''_NULL_VALUE_'')
+          AS occupied_units,
+
+          COALESCE(CAST(COALESCE(SUM(del.delinquent_units), 0) AS VARCHAR), ''_NULL_VALUE_'')
+          AS total_delinquency_units,
+
+          COALESCE(
+
+          CAST(
+
+          CAST(
+
+          ROUND(
+
+          COALESCE(SUM(del.delinquent_units), 0) * 100.0
+
+          / NULLIF(SUM(occ.occupied_units_raw), 0), 2
+
+          ) AS DECIMAL(18,2)
+
+          ) AS VARCHAR
+
+          ),
+
+          ''_NULL_VALUE_''
+
+          ) AS pct_delinquency_units
+
+          FROM occ
+
+          LEFT JOIN delinquent del
+
+          ON del.facility_id = occ.facility_id
+
+          AND del.report_date = occ.report_date
+
+          LEFT JOIN stodl_rds_prod.sefms_facilities_iceberg f
+
+          ON occ.facility_id = f.id
+
+          WHERE f.name = ''EDGE Demo 1''
+
+          GROUP BY 1
+
+          ORDER BY 1;'
+        target_table_name: Test_007_Count
+        target: snowflake
+        target_database: '{env}_gold'
+        target_schema: consume
+        pktargetcolumn: row_hash
+        targetquery: 'WITH last_day_per_facility AS (
+
+          SELECT
+
+          od.FACILITY_KEY,
+
+          DATE_TRUNC(''month'', od.REPORT_DATE) AS report_month,
+
+          MAX(od.REPORT_DATE) AS report_date
+
+          FROM DEV_GOLD.CORE.FACT_OCCUPANCY_SUMMARY_DAILY od
+
+          WHERE od.REPORT_DATE IS NOT NULL
+
+          AND od.platform_source = ''EDGE''
+
+          AND od.REPORT_DATE <= DATEADD(day, -1, CURRENT_DATE)
+
+          AND od.REPORT_DATE >= DATEADD(month, -24, CURRENT_DATE)
+
+          GROUP BY od.FACILITY_KEY, DATE_TRUNC(''month'', od.REPORT_DATE)
+
+          ),
+
+          occ AS (
+
+          SELECT o.FACILITY_KEY, o.REPORT_DATE, o.UNITS AS occupied_units_raw
+
+          FROM DEV_GOLD.CORE.FACT_OCCUPANCY_SUMMARY_DAILY o
+
+          INNER JOIN last_day_per_facility ldp
+
+          ON o.FACILITY_KEY = ldp.FACILITY_KEY
+
+          AND o.REPORT_DATE = ldp.report_date
+
+          WHERE o.STATUS = ''occupied''
+
+          ),
+
+          delinquent AS (
+
+          SELECT FACILITY_KEY, REPORT_DATE, COUNT(DISTINCT UNIT_KEY) AS delinquent_units
+
+          FROM DEV_GOLD.CORE.FACT_DELINQUENCY_SNAPSHOT
+
+          where PLATFORM_SOURCE = ''EDGE''
+
+          GROUP BY FACILITY_KEY, REPORT_DATE
+
+          )
+
+          SELECT
+
+          COALESCE(TO_CHAR(CAST(DATE_TRUNC(''month'', occ.REPORT_DATE) AS DATE), ''YYYY-MM''),
+          ''_NULL_VALUE_'') AS report_month,
+
+          COALESCE(CAST(COALESCE(SUM(occ.occupied_units_raw), 0) AS VARCHAR), ''_NULL_VALUE_'')
+          AS occupied_units,
+
+          COALESCE(CAST(COALESCE(SUM(del.delinquent_units), 0) AS VARCHAR), ''_NULL_VALUE_'')
+          AS total_delinquency_units,
+
+          COALESCE(
+
+          CAST(
+
+          CAST(
+
+          ROUND(
+
+          COALESCE(SUM(del.delinquent_units), 0) * 100.0
+
+          / NULLIF(SUM(occ.occupied_units_raw), 0), 2
+
+          ) AS NUMBER(18,2)
+
+          ) AS VARCHAR
+
+          ),
+
+          ''_NULL_VALUE_''
+
+          ) AS pct_delinquency_units
+
+          FROM occ
+
+          LEFT JOIN delinquent del
+
+          ON del.FACILITY_KEY = occ.FACILITY_KEY
+
+          AND del.REPORT_DATE = occ.REPORT_DATE
+
+          JOIN DEV_GOLD.DIM.DIM_FACILITY f
+
+          ON occ.FACILITY_KEY = f.FACILITY_KEY
+
+          AND f.IS_CURRENT = TRUE
+
+          --WHERE f.FACILITY_NAME = ''0112 StorageMart''
+
+          GROUP BY 1
+
+          ORDER BY 1'

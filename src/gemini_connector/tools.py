@@ -1659,14 +1659,11 @@ def create_jira_ticket(
             ticket_labels.append(table)
         if labels:
             ticket_labels.extend(labels)
-        if priority.lower() in ("high", "highest"):
-            ticket_labels.append("high-priority")
-
-        # Create ticket
         result = jira_client.create_ticket(
             summary=summary,
             description=description,
             labels=ticket_labels,
+            priority=priority,
         )
 
         # Log audit event
@@ -1707,40 +1704,15 @@ def get_jira_ticket_status(
     """
     try:
         from gemini_connector import jira_client
-        import requests
 
         if not jira_client.is_configured():
             return _err("JIRA is not configured.")
 
-        # Fetch ticket details
-        resp = requests.get(
-            f"{jira_client.JIRA_URL}/rest/api/3/issue/{ticket_key}",
-            auth=(jira_client.JIRA_EMAIL, jira_client.JIRA_API_TOKEN),
-            params={"fields": "summary,status,assignee,priority,created,updated"},
-            timeout=10,
-        )
+        ticket = jira_client.get_ticket(ticket_key)
+        return _ok(**ticket)
 
-        if resp.status_code == 404:
-            return _err(f"JIRA ticket '{ticket_key}' not found.")
-        if resp.status_code != 200:
-            return _err(f"JIRA API error: {resp.status_code} - {resp.text[:200]}")
-
-        data = resp.json()
-        fields = data.get("fields", {})
-        status_info = fields.get("status", {})
-        assignee_info = fields.get("assignee", {})
-
-        return _ok(
-            key=ticket_key,
-            summary=fields.get("summary", ""),
-            status=status_info.get("name", "Unknown"),
-            assignee=assignee_info.get("emailAddress") if assignee_info else "Unassigned",
-            priority=fields.get("priority", {}).get("name", "Medium"),
-            created=fields.get("created", ""),
-            updated=fields.get("updated", ""),
-            url=f"{jira_client.JIRA_URL}/browse/{ticket_key}",
-        )
-
+    except jira_client.JiraError as exc:
+        return _err(f"JIRA error: {exc}")
     except Exception as exc:
         return _err(f"get_jira_ticket_status failed: {exc}")
 

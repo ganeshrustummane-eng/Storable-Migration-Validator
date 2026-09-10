@@ -650,6 +650,53 @@ def cached_sf_column_types(database, schema, table):
 
 
 # ---------------------------------------------------------------------------
+# Filter history — read from existing plan JSONs, no extra storage needed
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=60, show_spinner=False)
+def load_filter_history() -> dict:
+    """
+    Scan all persisted plan JSON files and return previously-used migration
+    filters keyed by source table name.
+
+    Returns: {table_name: [(source_filter, target_filter), ...]}
+    Only includes entries where at least source_filter is non-empty.
+    Deduplicates within a table. Most-recently-used first.
+    """
+    plans_root = _ROOT_DIR / "output" / "plans"
+    seen: dict = {}   # table -> list of (src_filter, tgt_filter), insertion order = newest first
+    if not plans_root.exists():
+        return {}
+    for plan_file in sorted(plans_root.rglob("*.plan.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            import json as _json
+            data = _json.loads(plan_file.read_text(encoding="utf-8"))
+            src_filter = data.get("source_filter", "").strip()
+            tgt_filter = data.get("target_filter", "").strip()
+            if not src_filter:
+                continue
+            table = data.get("source", {}).get("table") or data.get("source_table", "")
+            if not table:
+                continue
+            pair = (src_filter, tgt_filter)
+            if table not in seen:
+                seen[table] = []
+            if pair not in seen[table]:
+                seen[table].append(pair)
+        except Exception:
+            continue
+    return seen
+
+
+def filter_options_for(table: str) -> list:
+    """
+    Return previously-used (source_filter, target_filter) pairs for a table.
+    Empty list means no history exists yet.
+    """
+    return load_filter_history().get(table, [])
+
+
+# ---------------------------------------------------------------------------
 # Shared UI helpers
 # ---------------------------------------------------------------------------
 
@@ -1302,7 +1349,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 tab_single, tab_batch, tab_custom, tab_execute, tab_history, tab_rules, tab_excl, tab_review, tab_jira, tab_usage, tab_guide = st.tabs(
-    ["▶️ Generate Single YAML", "📋 Generate Batch YAML", "✍️ Custom SQL Validation",
+    ["▶️ Generate Single YAML", "📋 Generate Batch YAML",
+     "✍️ Custom SQL Validation",
      "🚀 Run Validation", "📈 History & Trends",
      "📖 Rule Book", "🚫 Exclusions", "✅ Review & Approve", "🎫 My Jira Tickets", "💰 Usage & Cost", "📘 Guide"]
 )
@@ -1445,8 +1493,13 @@ with tab_single:
 
         # ── Schema drift check ───────────────────────────────────────────────
         if source_table:
-            _yaml_path = (_PROJECT_DIR / "config" / "bronze" / "data_validation" / f"{source_table}.yaml")
-            if _yaml_path.exists():
+            _yaml_path = next(
+                ((_PROJECT_DIR / "config" / _ly / "data_validation" / f"{source_table}.yaml")
+                 for _ly in _LAYERS
+                 if (_PROJECT_DIR / "config" / _ly / "data_validation" / f"{source_table}.yaml").exists()),
+                None,
+            )
+            if _yaml_path:
                 try:
                     import yaml as _yd
                     _ycfg = _yd.safe_load(_yaml_path.read_text(encoding="utf-8")) or {}
@@ -1633,6 +1686,33 @@ with tab_single:
                 if not _single_confirmed:
                     _single_generate_blocked = True
 
+        with st.expander("🔍 Migration filter (optional)", expanded=False):
+            st.caption(
+                "Use this when the migration team only moved a subset of rows "
+                "(e.g. by date range, status, or tenant). "
+                "Write the WHERE predicate **without** the WHERE keyword. "
+                "Source filter is applied to the source query; target filter defaults to the same value."
+            )
+            _sf_col, _tf_col = st.columns(2)
+            with _sf_col:
+                single_source_filter = st.text_input(
+                    "Source filter",
+                    placeholder="e.g.  created_at >= '2024-01-01'",
+                    key="single_source_filter",
+                )
+            with _tf_col:
+                single_target_filter = st.text_input(
+                    "Target filter",
+                    value=single_source_filter,
+                    placeholder="Leave blank to mirror source filter",
+                    key="single_target_filter",
+                )
+            if single_source_filter:
+                st.info(
+                    f"Source queries will include: `WHERE {single_source_filter}`  \n"
+                    f"Target queries will include: `WHERE {single_target_filter or single_source_filter}`"
+                )
+
         if st.button("▶️ Generate SQL + YAML", type="primary", key="single_generate", disabled=_single_generate_blocked):
             if not source_table or not sf_table:
                 st.error("Source table and Snowflake table are required.")
@@ -1656,6 +1736,8 @@ with tab_single:
                             exclude_columns=excluded_cols or None,
                             source_db_type=src_db_type,
                             output_dir=output_dir,
+                            source_filter=single_source_filter,
+                            target_filter=single_target_filter,
                         )
                         st.success(f"Generated for {result.table_name}")
                         m1, m2, m3 = st.columns(3)
@@ -1675,11 +1757,18 @@ with tab_single:
 # TAB: Generate — Batch YAML
 # =============================================================================
 with tab_batch:
-    st.subheader("Batch YAML — pick source/target once, map every table explicitly")
+    _batch_mode = st.radio(
+        "Mode",
+        ["📋 Standard (table mapping)", "📊 Report Pack (Excel)"],
+        horizontal=True,
+        key="batch_mode_radio",
+        label_visibility="collapsed",
+    )
+
     registry = load_registry()
     rec = select_connection(registry, key="batch_conn")
 
-    if rec:
+    if rec and _batch_mode == "📋 Standard (table mapping)":
         _override_source_env(rec)
         src_db_type = rec["db_type"]
 
@@ -2011,6 +2100,375 @@ with tab_batch:
                 if not _batch_confirmed:
                     _batch_generate_blocked = True
 
+        # ── Per-table migration filters ─────────────────────────────────────
+        # Each table gets its own filter expander so different tables can have
+        # different predicates (e.g. orders: created_at >= '2024-01-01',
+        # customers: is_active = true).
+        # Previously-used filters for each table are surfaced from plan history
+        # as a dropdown — no need to retype the same predicate every run.
+        st.markdown("**⑥ Migration filter — per table (optional)**")
+        st.caption(
+            "**What is this?**  When the migration team moved only a *subset* of rows from a table "
+            "(e.g. only the last 2 years of orders, or only active customers), the validator must "
+            "apply the same filter on the source side — otherwise it will always report a mismatch "
+            "because it is comparing the full source against the partial target.\n\n"
+            "**Source filter** is applied to the source database query. "
+            "**Target filter** is applied to the Snowflake query (defaults to the source filter when left blank). "
+            "Write the predicate *without* the WHERE keyword — e.g. `created_at >= '2024-01-01'` or "
+            "`status = 'active' AND tenant_id = 42`.\n\n"
+            "Previously-used filters for each table are shown in a dropdown so you can reuse them without retyping."
+        )
+
+        per_table_filters: dict = {}   # {src_table: (source_filter, target_filter)}
+        for src_table in source_tables:
+            _history = filter_options_for(src_table)
+            _label = f"🔍 Migration filter — {src_table}"
+            _has_history = bool(_history)
+            with st.expander(_label + (" *(history available)*" if _has_history else ""), expanded=False):
+                if _has_history:
+                    _dropdown_labels = [f"{sf}  →  {tf or '(same as source)'}" for sf, tf in _history]
+                    _dropdown_labels = ["— Enter a new filter —"] + _dropdown_labels
+                    _selected_idx = st.selectbox(
+                        "Previously used filters for this table",
+                        options=range(len(_dropdown_labels)),
+                        format_func=lambda i: _dropdown_labels[i],
+                        key=f"batch_filter_history_{src_table}",
+                        help="Filters are saved automatically from each successful generation run. "
+                             "Select one to pre-fill the fields below, or choose 'Enter a new filter' to type manually.",
+                    )
+                    _pre_src = _history[_selected_idx - 1][0] if _selected_idx > 0 else ""
+                    _pre_tgt = _history[_selected_idx - 1][1] if _selected_idx > 0 else ""
+                else:
+                    _pre_src, _pre_tgt = "", ""
+
+                _fc1, _fc2 = st.columns(2)
+                with _fc1:
+                    _src_f = st.text_input(
+                        "Source filter",
+                        value=_pre_src,
+                        placeholder="e.g.  created_at >= '2024-01-01'",
+                        key=f"batch_src_filter_{src_table}",
+                        help="WHERE predicate applied to the source database query for this table. "
+                             "No WHERE keyword — just the condition, e.g. `status = 'active'`.",
+                    )
+                with _fc2:
+                    _tgt_f = st.text_input(
+                        "Target filter",
+                        value=_pre_tgt,
+                        placeholder="Leave blank to mirror source filter",
+                        key=f"batch_tgt_filter_{src_table}",
+                        help="WHERE predicate applied to the Snowflake query. "
+                             "Column names are usually UPPER_CASE on Snowflake. "
+                             "If blank, the source filter is reused as-is.",
+                    )
+
+                if _src_f:
+                    st.info(
+                        f"**{src_table}** source: `WHERE {_src_f}`  \n"
+                        f"**{src_table}** target: `WHERE {_tgt_f or _src_f}`"
+                    )
+                else:
+                    st.caption("No filter — full table scan (both sides).")
+
+                per_table_filters[src_table] = (_src_f, _tgt_f)
+
+        # ── ⑦ Multi-schema / Multi-prompt JOIN validation (optional) ─────────
+        # Independent table pool: select tables from N schemas (across the same
+        # connection). Provide M prompts → generates M YAMLs, one per prompt.
+        # YAML filename = first pool table whose name appears in the prompt;
+        # falls back to join_1, join_2, … when no table name matches.
+        st.markdown("**⑦ Multi-schema JOIN batch (optional)**")
+        st.caption(
+            "Select tables from **multiple schemas** on the same connection, then supply "
+            "one or more JOIN prompts. Each prompt → one YAML. "
+            "AI uses live PK/FK schema for fully-qualified `db.schema.table.column` SQL."
+        )
+        with st.expander("➕ Configure multi-schema JOIN batch", expanded=False):
+
+            # ── A. Schema + table pool ────────────────────────────────────────
+            st.markdown("**A. Build your table pool**")
+            _jv_all_schemas = cached_source_schemas(
+                src_db_type, rec["host"], int(rec.get("port") or 0),
+                database, rec["username"], source_password(rec), rec.get("auth", ""),
+            ) or [schema]
+            _jv_sel_schemas = st.multiselect(
+                "Select schemas to draw tables from",
+                options=_jv_all_schemas,
+                default=[schema] if schema in _jv_all_schemas else [],
+                key="jv_schemas",
+                help="Pick one or more schemas. Each schema gets its own table multiselect below.",
+            )
+
+            # {schema: [table, ...]}
+            _jv_pool: dict = {}
+            for _jv_sch in _jv_sel_schemas:
+                try:
+                    _jv_sch_tables = cached_source_tables(
+                        src_db_type, rec["host"], int(rec.get("port") or 0),
+                        database, rec["username"], source_password(rec),
+                        rec.get("auth", ""), rec.get("s3_output", ""), _jv_sch,
+                    )
+                except Exception:
+                    _jv_sch_tables = []
+                _jv_pool[_jv_sch] = st.multiselect(
+                    f"Tables from `{_jv_sch}`",
+                    options=_jv_sch_tables,
+                    key=f"jv_tables_{_jv_sch}",
+                )
+
+            # Flat list of all selected tables across all schemas (for name matching)
+            _jv_all_tables_flat = [t for ts in _jv_pool.values() for t in ts]
+
+            st.divider()
+
+            # ── B. Snowflake target schemas ───────────────────────────────────
+            st.markdown("**B. Snowflake target**")
+            _jv_sf_creds = snowflake_creds()
+            _jv_sf_databases = cached_sf_databases(
+                _jv_sf_creds["account"], _jv_sf_creds["username"],
+                _jv_sf_creds["password"], _jv_sf_creds["warehouse"], _jv_sf_creds["role"],
+            )
+            _jv_bj_c1, _jv_bj_c2 = st.columns(2)
+            with _jv_bj_c1:
+                _jv_sf_db = select_or_type("Snowflake database", _jv_sf_databases,
+                                           sf_database, "jv_sf_db")
+            _jv_sf_schemas_list = cached_sf_schemas(
+                _jv_sf_creds["account"], _jv_sf_db, _jv_sf_creds["username"],
+                _jv_sf_creds["password"], _jv_sf_creds["warehouse"], _jv_sf_creds["role"],
+            )
+            with _jv_bj_c2:
+                _jv_sf_sch = select_or_type("Snowflake schema", _jv_sf_schemas_list,
+                                            sf_schema, "jv_sf_sch")
+
+            st.divider()
+
+            # ── C. Prompts ────────────────────────────────────────────────────
+            st.markdown("**C. Prompts** — one per line or uploaded file")
+            _jv_prompt_tab, _jv_file_tab = st.tabs(["✏️ Type prompts", "📎 Upload file"])
+
+            _jv_raw_prompts: list[str] = []
+            with _jv_prompt_tab:
+                _jv_typed = st.text_area(
+                    "One prompt per line",
+                    placeholder=(
+                        "Join orders to products on product_id where manufacturer='Acme'\n"
+                        "Summarise customers by region, count orders per customer\n"
+                        "Get inventory with warehouse location joined on warehouse_id"
+                    ),
+                    key="jv_typed_prompts",
+                    height=150,
+                )
+                _jv_raw_prompts = [p.strip() for p in _jv_typed.splitlines() if p.strip()]
+
+            with _jv_file_tab:
+                _jv_upload = st.file_uploader(
+                    "Upload .txt (one prompt per line) or .xlsx (first column = prompts)",
+                    type=["txt", "xlsx"],
+                    key="jv_prompt_file",
+                )
+                if _jv_upload:
+                    if _jv_upload.name.endswith(".xlsx"):
+                        import pandas as _jv_pd
+                        _jv_df = _jv_pd.read_excel(_jv_upload)
+                        _jv_raw_prompts = [
+                            str(v).strip() for v in _jv_df.iloc[:, 0].dropna()
+                            if str(v).strip()
+                        ]
+                    else:
+                        _jv_raw_prompts = [
+                            p.strip()
+                            for p in _jv_upload.read().decode("utf-8", errors="replace").splitlines()
+                            if p.strip()
+                        ]
+                    st.success(f"Loaded {len(_jv_raw_prompts)} prompt(s) from file.")
+
+            if _jv_raw_prompts:
+                st.info(f"**{len(_jv_raw_prompts)} prompt(s)** → will generate **{len(_jv_raw_prompts)} YAML(s)**.")
+
+            st.divider()
+
+            # ── D. Model + confirmation ───────────────────────────────────────
+            _jv_model = select_or_type(
+                "AI model", available_models_for_ui(),
+                os.getenv("DIAL_MODEL", "gpt-4o"),
+                "jv_model", format_func=_model_label,
+            )
+
+            _jv_ready = bool(_jv_all_tables_flat) and bool(_jv_raw_prompts)
+            _jv_confirmed = st.checkbox(
+                f"✅ I have reviewed the table pool ({len(_jv_all_tables_flat)} table(s)) "
+                f"and {len(_jv_raw_prompts)} prompt(s) — ready to generate",
+                key="jv_confirmed",
+                disabled=not _jv_ready,
+            )
+
+            if st.button(
+                f"✨ Generate {len(_jv_raw_prompts)} JOIN YAML(s)",
+                key="jv_batch_generate",
+                type="primary",
+                disabled=not (_jv_ready and _jv_confirmed),
+            ):
+                from excel_batch_loader import _build_schema_context as _bsc
+
+                # Build shared full schema context once for source and target
+                with st.spinner("Connecting and fetching live schema for all selected tables…"):
+                    try:
+                        _jv_extractor = ExtractorFactory.create(
+                            src_db_type, host=rec["host"], port=int(rec.get("port") or 0),
+                            database=database, username=rec["username"],
+                            password=source_password(rec),
+                            auth=rec.get("auth", ""), s3_output=rec.get("s3_output", ""),
+                        )
+                        # Merge contexts across all selected schemas
+                        _jv_src_ctx: dict = {}
+                        for _jv_sch, _jv_tbls in _jv_pool.items():
+                            if _jv_tbls:
+                                _jv_src_ctx.update(
+                                    _bsc(_jv_extractor, src_db_type, database,
+                                         _jv_sch, _jv_tbls, grain_cols=[])
+                                )
+
+                        _jv_sf_ext = SnowflakeExtractor(
+                            account=_jv_sf_creds["account"],
+                            database=_jv_sf_db, schema=_jv_sf_sch,
+                            username=_jv_sf_creds["username"],
+                            password=_jv_sf_creds["password"],
+                        ) if _jv_sf_creds.get("account") and _jv_sf_db else None
+                        # Mirror: assume same table names upper-cased in target schema
+                        _jv_tgt_ctx: dict = {}
+                        for _jv_sch, _jv_tbls in _jv_pool.items():
+                            if _jv_tbls and _jv_sf_ext:
+                                _jv_tgt_ctx.update(
+                                    _bsc(_jv_sf_ext, "snowflake", _jv_sf_db,
+                                         _jv_sf_sch, [t.upper() for t in _jv_tbls],
+                                         grain_cols=[])
+                                )
+                            elif _jv_tbls:
+                                for _t in _jv_tbls:
+                                    _jv_tgt_ctx[f"{_jv_sf_db}.{_jv_sf_sch}.{_t.upper()}"] = []
+
+                        _jv_schema_err = None
+                    except Exception as _jv_schema_exc:
+                        _jv_schema_err = _jv_schema_exc
+
+                if _jv_schema_err:
+                    st.error(f"Schema fetch failed: {_jv_schema_err}")
+                else:
+                    _jv_gen = AISQLQueryGenerator(model=_jv_model)
+                    _jv_results: list = []
+                    _jv_bar = st.progress(0, text="Starting…")
+
+                    for _jv_i, _jv_prompt in enumerate(_jv_raw_prompts):
+                        _jv_bar.progress(
+                            (_jv_i) / len(_jv_raw_prompts),
+                            text=f"Prompt {_jv_i + 1}/{len(_jv_raw_prompts)}: {_jv_prompt[:60]}…",
+                        )
+                        try:
+                            # Auto-derive filename: first pool table name found in prompt
+                            _jv_prompt_lower = _jv_prompt.lower()
+                            _jv_fname = next(
+                                (t for t in _jv_all_tables_flat
+                                 if t.lower() in _jv_prompt_lower),
+                                f"join_{_jv_i + 1}",
+                            )
+                            _jv_src_sql = _jv_gen.generate_schema_aware_query(
+                                user_instruction=_jv_prompt,
+                                schema_context=_jv_src_ctx,
+                                db_type=src_db_type,
+                                default_schema=list(_jv_pool.keys())[0] if _jv_pool else schema,
+                                normalize=True,
+                            ).query
+                            _jv_tgt_sql = _jv_gen.generate_schema_aware_query(
+                                user_instruction=_jv_prompt,
+                                schema_context=_jv_tgt_ctx,
+                                db_type="snowflake",
+                                default_schema=_jv_sf_sch,
+                                normalize=True,
+                            ).query
+                            _jv_results.append({
+                                "idx": _jv_i + 1,
+                                "prompt": _jv_prompt,
+                                "filename": _jv_fname,
+                                "src": _jv_src_sql,
+                                "tgt": _jv_tgt_sql,
+                                "saved": False,
+                                "error": None,
+                            })
+                        except Exception as _jv_exc:
+                            _jv_results.append({
+                                "idx": _jv_i + 1,
+                                "prompt": _jv_prompt,
+                                "filename": f"join_{_jv_i + 1}",
+                                "src": "", "tgt": "",
+                                "saved": False,
+                                "error": str(_jv_exc),
+                            })
+
+                    _jv_bar.progress(1.0, text=f"Done — {len(_jv_results)} YAML(s) ready.")
+                    st.session_state["jv_batch_results"] = _jv_results
+
+            # ── E. Results ────────────────────────────────────────────────────
+            _jv_batch_results = st.session_state.get("jv_batch_results", [])
+            if _jv_batch_results:
+                st.markdown(f"**Results — {len(_jv_batch_results)} JOIN YAML(s)**")
+                for _jv_r in _jv_batch_results:
+                    _jv_label = (
+                        f"{'✅' if _jv_r['saved'] else ('❌' if _jv_r['error'] else '⏳')} "
+                        f"#{_jv_r['idx']} — `{_jv_r['filename']}.yaml`"
+                    )
+                    with st.expander(_jv_label, expanded=_jv_r.get("error") is not None):
+                        st.caption(_jv_r["prompt"])
+                        if _jv_r["error"]:
+                            st.error(_jv_r["error"])
+                        else:
+                            st.markdown(f"**Source SQL ({src_db_type}):**")
+                            st.code(_jv_r["src"], language="sql")
+                            st.markdown("**Snowflake SQL:**")
+                            st.code(_jv_r["tgt"], language="sql")
+
+                            if not _jv_r["saved"]:
+                                if st.button(
+                                    f"💾 Save `{_jv_r['filename']}.yaml`",
+                                    key=f"jv_save_{_jv_r['idx']}",
+                                ):
+                                    try:
+                                        import yaml as _jv_yaml
+                                        _jv_out_dir = Path(output_dir) / "data_validation"
+                                        _jv_out_dir.mkdir(parents=True, exist_ok=True)
+                                        _jv_path = _jv_out_dir / f"{_jv_r['filename']}.yaml"
+                                        _jv_doc = {
+                                            "tables": {
+                                                _jv_r["filename"]: {
+                                                    "validations": {
+                                                        "data_validation": {
+                                                            "source_table_name": _jv_r["filename"],
+                                                            "source": src_db_type,
+                                                            "source_database": database,
+                                                            "source_schema": ", ".join(_jv_pool.keys()),
+                                                            "pksourcecolumn": "row_hash",
+                                                            "sourcequery": _jv_r["src"],
+                                                            "target_table_name": _jv_r["filename"],
+                                                            "target": "snowflake",
+                                                            "target_database": _jv_sf_db,
+                                                            "target_schema": _jv_sf_sch,
+                                                            "pktargetcolumn": "row_hash",
+                                                            "targetquery": _jv_r["tgt"],
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        with open(_jv_path, "w", encoding="utf-8") as _jv_f:
+                                            _jv_yaml.dump(_jv_doc, _jv_f, allow_unicode=True,
+                                                          sort_keys=False, default_flow_style=False)
+                                        _jv_r["saved"] = True
+                                        st.success(f"Saved: `{_jv_path}`")
+                                        st.rerun()
+                                    except Exception as _jv_save_exc:
+                                        st.error(f"Save failed: {_jv_save_exc}")
+                            else:
+                                st.success("Already saved.")
+
         if st.button("▶️ Generate All", type="primary", key="batch_generate", disabled=generate_disabled or _batch_generate_blocked):
             extractor = ExtractorFactory.create(
                 src_db_type, host=rec["host"], port=int(rec.get("port") or 0),
@@ -2035,6 +2493,8 @@ with tab_batch:
                         exclude_columns=(list(auto_excluded) + per_table_excl.get(src_table, [])) or None,
                         source_db_type=src_db_type,
                         output_dir=output_dir,
+                        source_filter=per_table_filters.get(src_table, ("", ""))[0],
+                        target_filter=per_table_filters.get(src_table, ("", ""))[1],
                     )
                     results.append({
                         "Source": src_table, "Target": tgt_table, "Status": "✅ Success",
@@ -2057,6 +2517,153 @@ with tab_batch:
                 st.success(f"Batch complete: {n_ok}/{len(results)} table(s) generated successfully.")
             else:
                 st.warning(f"Batch complete: {n_ok}/{len(results)} table(s) generated successfully — see failures above.")
+
+    elif rec and _batch_mode == "📊 Report Pack (Excel)":
+        # =====================================================================
+        # REPORT PACK MODE — uses same source/target connection as Standard,
+        # but takes table list + filters from an uploaded Excel mapping sheet.
+        # AI generates SQL via generate_schema_aware_query with real PK/FK info.
+        # =====================================================================
+        import pandas as _pd_excel
+        import tempfile
+        from excel_batch_loader import load_excel, _generate_queries, write_yaml
+
+        _override_source_env(rec)
+        src_db_type = rec["db_type"]
+
+        with st.container(border=True):
+            st.markdown("**① Source location** (same connection selected above)")
+            _rp_database, _rp_schema, _ = pick_source_location(rec, "rp")
+
+        with st.container(border=True):
+            st.markdown("**② Target (Snowflake)**")
+            _rp_sf_database, _rp_sf_schema, _ = pick_snowflake_target("", "rp", include_table=False)
+
+        st.markdown("**③ Upload mapping sheet**")
+        st.caption("Expected columns: **Report Pack · Yaml-File-name · Report Name · Summary · Grain · Legacy Query (Redshift/Postgres/…) · Snowflake Query**")
+
+        _rp_c1, _rp_c2, _rp_c3 = st.columns([2, 2, 3])
+        with _rp_c1:
+            _rp_env = st.text_input("Environment", placeholder="dev / prod / uat …", key="rp_env",
+                                    help="Replaces {env} tokens in SQL. Leave blank to keep as placeholder.")
+        with _rp_c2:
+            _rp_sheet = st.text_input("Sheet name (optional)", placeholder="First sheet if blank", key="rp_sheet")
+        with _rp_c3:
+            _rp_model = st.selectbox("AI model for empty cells",
+                                     options=["(use default from .env)"] + list(AVAILABLE_MODELS),
+                                     key="rp_model")
+        _rp_dry = st.checkbox("Dry run — preview only, no files written", key="rp_dry")
+
+        _rp_file = st.file_uploader("Upload Excel mapping sheet (.xlsx)", type=["xlsx", "xls"], key="rp_excel_upload")
+
+        if _rp_file and _rp_database and _rp_schema:
+            _rp_bytes = _rp_file.read()
+            with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as _rp_tmp:
+                _rp_tmp.write(_rp_bytes)
+                _rp_tmp_path = _rp_tmp.name
+
+            try:
+                _rp_specs = load_excel(_rp_tmp_path, sheet=_rp_sheet.strip() or None)
+            except Exception as _rp_exc:
+                st.error(f"Could not parse sheet: {_rp_exc}")
+                _rp_specs = []
+
+            if _rp_specs:
+                st.success(f"Parsed **{len(_rp_specs)}** row(s). Review below, then confirm.")
+
+                _rp_preview = [
+                    {
+                        "Row": s.row_num,
+                        "Report Pack": s.report_pack,
+                        "YAML File": s.yaml_file_name,
+                        "Report Name": s.report_name[:60] + ("…" if len(s.report_name) > 60 else ""),
+                        "Grain": s.grain,
+                        "Source SQL": "✅ provided" if s.legacy_query else "🤖 AI will generate",
+                        "Target SQL": "✅ provided" if s.snowflake_query else "🤖 AI will generate",
+                    }
+                    for s in _rp_specs
+                ]
+                st.dataframe(_pd_excel.DataFrame(_rp_preview), use_container_width=True, hide_index=True)
+
+                _rp_needs_ai = sum(1 for s in _rp_specs if not s.legacy_query or not s.snowflake_query)
+                if _rp_needs_ai:
+                    st.info(
+                        f"**{_rp_needs_ai}** row(s) have empty SQL — AI will generate queries "
+                        f"from the live DB schema (PK/FK relationships detected), with fully-qualified "
+                        f"db.schema.table.column references. Row-hash used when no PK is found."
+                    )
+
+                _rp_confirmed = st.checkbox(
+                    "✅ I have reviewed the preview above and confirm generating YAMLs",
+                    key="rp_confirmed",
+                )
+
+                if st.button("▶️ Generate Report YAMLs", type="primary", key="rp_generate",
+                             disabled=not _rp_confirmed):
+                    _rp_model_val = None if _rp_model == "(use default from .env)" else _rp_model
+                    _rp_env_val   = _rp_env.strip() or None
+                    _rp_out_dir   = _ROOT_DIR / "Project" / "config" / "report"
+
+                    # Build extractors once — reused across all rows
+                    _rp_src_extractor = ExtractorFactory.create(
+                        src_db_type, host=rec["host"], port=int(rec.get("port") or 0),
+                        database=_rp_database, username=rec["username"],
+                        password=source_password(rec),
+                        auth=rec.get("auth", ""), s3_output=rec.get("s3_output", ""),
+                    )
+                    _rp_sf_creds = snowflake_creds()
+                    _rp_sf_extractor = SnowflakeExtractor(
+                        account=_rp_sf_creds["account"],
+                        database=_rp_sf_database,
+                        schema=_rp_sf_schema,
+                        username=_rp_sf_creds["username"],
+                        password=_rp_sf_creds["password"],
+                    ) if _rp_sf_creds["account"] and _rp_sf_database else None
+
+                    _rp_progress = st.progress(0.0, text="Starting…")
+                    _rp_results  = []
+                    _rp_errors   = []
+
+                    for _rp_i, _rp_spec in enumerate(_rp_specs, 1):
+                        _rp_progress.progress(
+                            _rp_i / len(_rp_specs),
+                            text=f"Processing {_rp_spec.yaml_file_name}  ({_rp_i}/{len(_rp_specs)})",
+                        )
+                        try:
+                            # Derive table names from grain columns + yaml_file_name
+                            _rp_grain_cols = [g.strip() for g in __import__("re").split(r"[+,]", _rp_spec.grain) if g.strip()]
+                            _rp_spec.source_database = _rp_database
+                            _rp_spec.source_schema   = _rp_schema
+                            _rp_spec.source_tables   = [_rp_spec.yaml_file_name]
+                            _rp_spec.sf_database     = _rp_sf_database or ""
+                            _rp_spec.sf_schema       = _rp_sf_schema or ""
+
+                            _rp_src_q, _rp_tgt_q = _generate_queries(
+                                _rp_spec, _rp_model_val,
+                                source_extractor=_rp_src_extractor,
+                                sf_extractor=_rp_sf_extractor,
+                            ) if (not _rp_spec.legacy_query or not _rp_spec.snowflake_query) \
+                              else (_rp_spec.legacy_query, _rp_spec.snowflake_query)
+
+                            _rp_out = write_yaml(
+                                _rp_spec, _rp_src_q, _rp_tgt_q, _rp_env_val, _rp_out_dir,
+                                dry_run=_rp_dry,
+                            )
+                            _rp_results.append(str(_rp_out))
+                        except Exception as _rp_exc2:
+                            _rp_errors.append(f"Row {_rp_spec.row_num} ({_rp_spec.yaml_file_name}): {_rp_exc2}")
+
+                    _rp_progress.progress(1.0, text="Done.")
+
+                    if _rp_results:
+                        st.success(f"✅ {'Would write' if _rp_dry else 'Written'} **{len(_rp_results)}** YAML file(s).")
+                        with st.expander("Output files"):
+                            for _rp_p in _rp_results:
+                                st.code(_rp_p, language=None)
+                    for _rp_e in _rp_errors:
+                        st.error(_rp_e)
+        elif _rp_file and not (_rp_database and _rp_schema):
+            st.warning("Select a source database and schema above before uploading.")
 
 # =============================================================================
 # Row-hash SQL builder — used by Custom SQL tab when a table has no PK.
@@ -2749,8 +3356,26 @@ with tab_custom:
 
         yaml_str = _yaml.dump(yaml_payload, default_flow_style=False, sort_keys=False, allow_unicode=True, Dumper=_yaml.SafeDumper)
 
+        # ── Inline schema validation (no tempfile — we already have the dict) ─
+        from validation.config_schema import ValidationConfigDocument
+        from pydantic import ValidationError as _PydanticValidationError
+        _yaml_errors = []
+        try:
+            ValidationConfigDocument.model_validate(yaml_payload)
+        except _PydanticValidationError as _ve:
+            _yaml_errors = [
+                f"{'.'.join(str(p) for p in e['loc'])} — {e['msg']}"
+                for e in _ve.errors()
+            ]
+
         with st.expander("📄 YAML preview", expanded=True):
             st.code(yaml_str, language="yaml")
+            if _yaml_errors:
+                st.error("**Schema errors — fix before saving:**")
+                for _msg in _yaml_errors:
+                    st.markdown(f"- `{_msg}`")
+            else:
+                st.success("✓ YAML passes schema validation", icon="✅")
 
         _save_c1, _save_c2, _save_c3 = st.columns([2, 2, 3])
         with _save_c1:
@@ -2767,7 +3392,8 @@ with tab_custom:
             )
         with _save_c3:
             st.markdown("<div style='height:28px'/>", unsafe_allow_html=True)
-            if st.button("💾 Save YAML to config folder", type="primary", key="cst_save"):
+            if st.button("💾 Save YAML to config folder", type="primary", key="cst_save",
+                         disabled=bool(_yaml_errors)):
                 if report_subfolder.strip():
                     save_dir = _ROOT_DIR / "Project" / "config" / "report" / report_subfolder.strip() / vtype_folder
                 else:
@@ -2804,24 +3430,26 @@ with tab_execute:
     with _exec_top2:
         environment = st.selectbox("Environment", ["local", "dev", "uat", "prod"], key="exec_env")
 
-    # ── Build full YAML inventory (layer + report/, independent) ─────────────
-    # Each row: {stem, vtype, folder_label, yaml_path}
-    def _build_exec_inventory(layer):
+    # ── Build full YAML inventory (all layers + report/) ─────────────────────
+    # Each row: {stem, vtype, folder, layer, path}
+    # Scans every layer so the folder-filter multiselect below does the narrowing.
+    def _build_exec_inventory():
+        import yaml as _yi
         rows = []
-        # Count validation — single shared YAML per layer
-        _cv_path = _PROJECT_DIR / "config" / layer / "count_validation" / f"{layer}.yaml"
-        if _cv_path.exists():
-            import yaml as _yi
-            _cfg = _yi.safe_load(_cv_path.read_text(encoding="utf-8")) or {}
-            for tbl in (_cfg.get("tables") or {}):
-                rows.append({"stem": tbl, "vtype": "count_validation",
-                             "folder": layer, "path": _cv_path})
-        # Layer data_validation
-        _dv_dir = _PROJECT_DIR / "config" / layer / "data_validation"
-        if _dv_dir.exists():
-            for p in sorted(_dv_dir.glob("*.yaml")):
-                rows.append({"stem": p.stem, "vtype": "data_validation",
-                             "folder": layer, "path": p})
+        for _ly in _LAYERS:
+            # Count validation — single shared YAML per layer
+            _cv_path = _PROJECT_DIR / "config" / _ly / "count_validation" / f"{_ly}.yaml"
+            if _cv_path.exists():
+                _cfg = _yi.safe_load(_cv_path.read_text(encoding="utf-8")) or {}
+                for tbl in (_cfg.get("tables") or {}):
+                    rows.append({"stem": tbl, "vtype": "count_validation",
+                                 "folder": _ly, "layer": _ly, "path": _cv_path})
+            # Layer data_validation
+            _dv_dir = _PROJECT_DIR / "config" / _ly / "data_validation"
+            if _dv_dir.exists():
+                for p in sorted(_dv_dir.glob("*.yaml")):
+                    rows.append({"stem": p.stem, "vtype": "data_validation",
+                                 "folder": _ly, "layer": _ly, "path": p})
         # Report/ data_validation — independent of layer
         _rep_root = _PROJECT_DIR / "config" / "report"
         if _rep_root.exists():
@@ -2829,10 +3457,10 @@ with tab_execute:
                 if p.parent.name == "data_validation":
                     subfolder = p.parent.parent.name
                     rows.append({"stem": p.stem, "vtype": "data_validation",
-                                 "folder": f"report/{subfolder}", "path": p})
+                                 "folder": f"report/{subfolder}", "layer": "bronze", "path": p})
         return rows
 
-    _inventory = _build_exec_inventory(layer)
+    _inventory = _build_exec_inventory()
 
     if not _inventory:
         st.warning(
@@ -2925,15 +3553,21 @@ with tab_execute:
                      "difference = PASS. Written into the YAML before running.",
             )
 
+        # Derive run layer from the actual inventory rows selected (first match wins)
+        _picked_stems = set(selected_tables)
+        _run_layer = next(
+            (r["layer"] for r in _filtered if r["stem"] in _picked_stems),
+            layer,
+        )
+
         if st.button("🚀 Run validation", type="primary", key="exec_run", disabled=not selected_tables):
             # Inject mismatch_threshold_pct into data_validation YAMLs before running
             if mismatch_threshold > 0:
                 import yaml as _yrun
-                _search_roots = [_PROJECT_DIR / "config" / layer, _PROJECT_DIR / "config" / "report"]
-                _all_data_yamls = {p.stem: p for root in _search_roots if root.exists()
-                                   for p in root.rglob("*.yaml") if p.parent.name == "data_validation"}
+                # Build stem→path map from inventory directly (covers all layers + report)
+                _all_data_yamls = {r["stem"]: r["path"] for r in _inventory if r["vtype"] == "data_validation"}
                 for _tbl in picked_data_tables:
-                    _yp = _all_data_yamls.get(_tbl, _PROJECT_DIR / "config" / layer / "data_validation" / f"{_tbl}.yaml")
+                    _yp = _all_data_yamls.get(_tbl)
                     if _yp.exists():
                         try:
                             _ydoc = _yrun.safe_load(_yp.read_text(encoding="utf-8")) or {}
@@ -2963,9 +3597,9 @@ with tab_execute:
                     except Exception:
                         pass
 
-            with st.spinner(f"Running {layer} validation against '{environment}' — this executes real queries..."):
+            with st.spinner(f"Running {_run_layer} validation against '{environment}' — this executes real queries..."):
                 try:
-                    result = run_validation(layer, environment, selected_tables, do_count, do_data)
+                    result = run_validation(_run_layer, environment, selected_tables, do_count, do_data)
                 except Exception as exc:
                     st.error(f"Execution failed to start: {exc}")
                     result = None
@@ -4575,13 +5209,8 @@ with tab_jira:
                     # ── Attach validation result as comment ───────────────────
                     with st.expander("📎 Attach validation result to this ticket", expanded=False):
                         _yaml_files = sorted(
-                            (p for layer in ["bronze", "silver", "gold"]
-                             for p in (
-                                 Path("config") / layer / "data_validation",
-                                 Path("config") / layer / "count_validation",
-                             )
-                             if p.exists()
-                             for p in p.glob("*.yaml")),
+                            (p for p in (_PROJECT_DIR / "config").rglob("*.yaml")
+                             if p.parent.name in ("data_validation", "count_validation")),
                             key=lambda p: p.stat().st_mtime, reverse=True,
                         )
                         if not _yaml_files:

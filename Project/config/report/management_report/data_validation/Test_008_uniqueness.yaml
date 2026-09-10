@@ -1,0 +1,134 @@
+tables:
+  Test_008_uniqueness:
+    validations:
+      data_validation:
+        source_table_name: Test_008_uniqueness
+        source: redshift
+        source_database: '{env}_source'
+        source_schema: consume
+        pksourcecolumn: row_hash
+        summary: Validate the monthly delinquent_unit_count for each group lable over
+          the past 24 months (Looker's chart)
+        report_tile: Delinquent Units by Aging Bucket
+        sourcequery: 'WITH eom_dates AS (
+
+          SELECT MAX(full_date) AS eom_date
+
+          FROM stodl_reporting_prod.sefms_date_dim
+
+          WHERE full_date IS NOT NULL
+
+          AND full_date < DATE_TRUNC(''month'', CURRENT_DATE)
+
+          AND full_date >= DATE_TRUNC(''month'', CURRENT_DATE - INTERVAL ''24'' MONTH)
+
+          GROUP BY year_month
+
+          ),
+
+          filtered_delinquency AS (
+
+          SELECT db.*
+
+          FROM stodl_reporting_prod.sefms_delinquent_balances_last_event_last_payment_iceberg
+          db
+
+          INNER JOIN eom_dates eom
+
+          ON DATE(db.report_date) = DATE(eom.eom_date)
+
+          )
+
+          SELECT
+
+          CAST(
+
+          CASE
+
+          WHEN days_past_due IS NULL THEN ''_NULL_VALUE_''
+
+          WHEN days_past_due BETWEEN 0 AND 10 THEN ''0 TO 10 DAYS''
+
+          WHEN days_past_due BETWEEN 11 AND 30 THEN ''11 TO 30 DAYS''
+
+          WHEN days_past_due BETWEEN 31 AND 60 THEN ''31 TO 60 DAYS''
+
+          WHEN days_past_due BETWEEN 61 AND 90 THEN ''61 TO 90 DAYS''
+
+          WHEN days_past_due BETWEEN 91 AND 120 THEN ''91 TO 120 DAYS''
+
+          ELSE ''OVER 120 DAYS''
+
+          END AS VARCHAR
+
+          ) AS group_label,
+
+          COALESCE(DATE_FORMAT(CAST(report_date AS DATE), ''%Y-%m''), ''_NULL_VALUE_'')
+          AS report_month,
+
+          COALESCE(CAST(COUNT(DISTINCT unit_id) AS VARCHAR), ''_NULL_VALUE_'') AS
+          count_of_unique_tenant_unit_pairs
+
+          FROM filtered_delinquency
+
+          --WHERE facility_id = 413475
+
+          GROUP BY 1, 2
+
+          ORDER BY 2, 1;'
+        target_table_name: Test_008_uniqueness
+        target: snowflake
+        target_database: '{env}_gold'
+        target_schema: consume
+        pktargetcolumn: row_hash
+        targetquery: 'SELECT
+
+          CAST(
+
+          CASE
+
+          WHEN d.days_past_due IS NULL THEN ''_NULL_VALUE_''
+
+          WHEN d.days_past_due BETWEEN 0 AND 10 THEN ''0 TO 10 DAYS''
+
+          WHEN d.days_past_due BETWEEN 11 AND 30 THEN ''11 TO 30 DAYS''
+
+          WHEN d.days_past_due BETWEEN 31 AND 60 THEN ''31 TO 60 DAYS''
+
+          WHEN d.days_past_due BETWEEN 61 AND 90 THEN ''61 TO 90 DAYS''
+
+          WHEN d.days_past_due BETWEEN 91 AND 120 THEN ''91 TO 120 DAYS''
+
+          ELSE ''OVER 120 DAYS''
+
+          END AS VARCHAR
+
+          ) AS group_label,
+
+          COALESCE(TO_CHAR(CAST(d.REPORT_DATE AS DATE), ''YYYY-MM''), ''_NULL_VALUE_'')
+          AS report_month,
+
+          COALESCE(CAST(COUNT(DISTINCT d.UNIT_KEY) AS VARCHAR), ''_NULL_VALUE_'')
+          AS count_of_unique_tenant_unit_pairs
+
+          FROM DEV_GOLD.CORE.FACT_DELINQUENCY_SNAPSHOT AS d
+
+          JOIN DEV_GOLD.DIM.DIM_FACILITY AS f
+
+          ON d.FACILITY_KEY = f.FACILITY_KEY
+
+          AND f.IS_CURRENT = TRUE
+
+          WHERE d.IS_LATEST_IN_MONTH = TRUE
+
+          AND d.days_past_due > 0
+
+          AND d.total_due > 0
+
+          AND d.REPORT_DATE >= DATE_TRUNC(''month'', DATEADD(month, -24, CURRENT_DATE))
+
+          AND d.REPORT_DATE < DATE_TRUNC(''month'', CURRENT_DATE)
+
+          GROUP BY 1, 2
+
+          ORDER BY 2, 1;'

@@ -68,24 +68,25 @@ def get_my_tickets(jql_extra: str = "") -> list:
 
 
 def get_ticket(key: str) -> dict:
-    """Full detail for one ticket: key, summary, status, priority, description."""
-    data = _get(f"/rest/api/3/issue/{key}", {"fields": "summary,status,priority,description"})
-    desc_nodes = (
-        (data["fields"].get("description") or {})
-        .get("content", [])
-    )
-    # Extract plain text from Atlassian Document Format
+    """Full detail for one ticket: key, summary, status, priority, assignee, created, updated, description."""
+    data = _get(f"/rest/api/3/issue/{key}", {"fields": "summary,status,priority,description,assignee,created,updated"})
+    fields = data["fields"]
+    desc_nodes = (fields.get("description") or {}).get("content", [])
     desc = " ".join(
         node.get("text", "")
         for block in desc_nodes
         for node in block.get("content", [])
         if node.get("type") == "text"
     )
+    assignee = fields.get("assignee") or {}
     return {
         "key": data["key"],
-        "summary": data["fields"]["summary"],
-        "status": data["fields"]["status"]["name"],
-        "priority": (data["fields"].get("priority") or {}).get("name", ""),
+        "summary": fields["summary"],
+        "status": fields["status"]["name"],
+        "priority": (fields.get("priority") or {}).get("name", ""),
+        "assignee": assignee.get("emailAddress", "Unassigned"),
+        "created": fields.get("created", ""),
+        "updated": fields.get("updated", ""),
         "description": desc,
         "url": f"{JIRA_URL}/browse/{data['key']}",
     }
@@ -150,7 +151,7 @@ def add_comment(key: str, text: str) -> None:
         raise JiraError(f"Comment failed {resp.status_code}: {resp.text[:300]}")
 
 
-def create_ticket(summary: str, description: str, labels: list = None) -> dict:
+def create_ticket(summary: str, description: str, labels: list = None, priority: str = "") -> dict:
     """Creates a Jira issue via the Cloud REST API v3. Returns {"key": "...", "url": "..."}.
 
     Raises JiraNotConfiguredError if JIRA_* env vars are missing, or
@@ -162,21 +163,24 @@ def create_ticket(summary: str, description: str, labels: list = None) -> dict:
             "JIRA_PROJECT_KEY in .env to enable ticket creation."
         )
 
-    payload = {
-        "fields": {
-            "project": {"key": JIRA_PROJECT_KEY},
-            "summary": summary,
-            "description": {
-                "type": "doc", "version": 1,
-                "content": [{
-                    "type": "paragraph",
-                    "content": [{"type": "text", "text": description}],
-                }],
-            },
-            "issuetype": {"name": JIRA_ISSUE_TYPE},
-            **({"labels": labels} if labels else {}),
-        }
+    fields: dict = {
+        "project": {"key": JIRA_PROJECT_KEY},
+        "summary": summary,
+        "description": {
+            "type": "doc", "version": 1,
+            "content": [{
+                "type": "paragraph",
+                "content": [{"type": "text", "text": description}],
+            }],
+        },
+        "issuetype": {"name": JIRA_ISSUE_TYPE},
     }
+    if labels:
+        fields["labels"] = labels
+    if priority:
+        fields["priority"] = {"name": priority}
+
+    payload = {"fields": fields}
 
     try:
         resp = requests.post(

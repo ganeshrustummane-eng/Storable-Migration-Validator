@@ -1,0 +1,28 @@
+tables:
+  products:
+    validations:
+      data_validation:
+        source_table_name: products
+        source: mssql
+        source_database: mv_test_mssql
+        source_schema: dbo
+        pksourcecolumn: row_hash
+        sourcequery: "SELECT \n    mv_test_mssql.dbo.products.sku AS product_sku,\n\
+          \    mv_test_mssql.dbo.products.product_name AS product_name,\n    mv_test_mssql.dbo.products.category\
+          \ AS category,\n    mv_test_mssql.dbo.inventory.warehouse_code AS warehouse_code,\n\
+          \    mv_test_mssql.dbo.inventory.quantity AS quantity,\n    mv_test_mssql.dbo.inventory.reorder_level\
+          \ AS reorder_level\nFROM \n    mv_test_mssql.dbo.products\nINNER JOIN \n\
+          \    mv_test_mssql.dbo.inventory\nON \n    mv_test_mssql.dbo.products.id\
+          \ = mv_test_mssql.dbo.inventory.product_id\nWHERE \n    mv_test_mssql.dbo.inventory.quantity\
+          \ <= mv_test_mssql.dbo.inventory.reorder_level;"
+        target_table_name: products
+        target: snowflake
+        target_database: MV_TEST
+        target_schema: PUBLIC
+        pktargetcolumn: row_hash
+        targetquery: "SELECT \n    MV_TEST.PUBLIC.PRODUCTS.SKU,\n    MV_TEST.PUBLIC.PRODUCTS.PRODUCT_NAME,\n\
+          \    MV_TEST.PUBLIC.PRODUCTS.CATEGORY,\n    MV_TEST.PUBLIC.INVENTORY.WAREHOUSE_CODE,\n\
+          \    MV_TEST.PUBLIC.INVENTORY.QUANTITY,\n    MV_TEST.PUBLIC.INVENTORY.REORDER_LEVEL\n\
+          FROM \n    MV_TEST.PUBLIC.PRODUCTS\nJOIN \n    MV_TEST.PUBLIC.INVENTORY\n\
+          ON \n    MV_TEST.PUBLIC.PRODUCTS.ID = MV_TEST.PUBLIC.INVENTORY.PRODUCT_ID\n\
+          WHERE \n    MV_TEST.PUBLIC.INVENTORY.QUANTITY <= MV_TEST.PUBLIC.INVENTORY.REORDER_LEVEL;"

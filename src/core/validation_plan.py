@@ -238,6 +238,14 @@ class CanonicalValidationPlan:
     unmatched_source_columns: List[str] = field(default_factory=list)
     unmatched_target_columns: List[str] = field(default_factory=list)
 
+    # ── Migration filters ──────────────────────────────────────────────────
+    # WHERE predicate (no "WHERE" keyword) applied during SQL generation.
+    # source_filter scopes the source query; target_filter scopes the target.
+    # Empty string = no filter (full-table scan, original behaviour).
+    # Example: source_filter="created_at >= '2024-01-01'"
+    source_filter: str = ""
+    target_filter: str = ""  # if blank, mirrors source_filter at generate time
+
     # ── Generation metadata ────────────────────────────────────────────────
     ai_calls_made:   int = 0
     model_used:      str = "N/A"
@@ -356,6 +364,8 @@ class CanonicalValidationPlan:
             "model_used":     self.model_used,
             "ai_calls_made":  self.ai_calls_made,
             "has_fivetran_active": self.has_fivetran_active,
+            "source_filter": self.source_filter,
+            "target_filter": self.target_filter,
             "primary_keys": {
                 "source": self.source_primary_keys,
                 "target": self.target_primary_keys,
@@ -403,6 +413,8 @@ class CanonicalValidationPlan:
             target_table=target.get("table", ""),
             mappings=[ColumnMappingEntry.from_dict(m) for m in d.get("mappings", [])],
             has_fivetran_active=bool(d.get("has_fivetran_active", False)),
+            source_filter=d.get("source_filter", ""),
+            target_filter=d.get("target_filter", ""),
             source_primary_keys=list(pks.get("source", [])),
             target_primary_keys=list(pks.get("target", [])),
             pk_mismatch=bool(pks.get("mismatch", False)),
@@ -430,6 +442,14 @@ class CanonicalValidationPlan:
             f"Fuzzy matches     : {len(self.fuzzy_matches)}",
             f"AI-resolved       : {len(self.ai_resolved_matches)}",
             f"Fivetran filter   : {self.has_fivetran_active}",
+            *(
+                [f"Source filter     : {self.source_filter}"]
+                if self.source_filter else []
+            ),
+            *(
+                [f"Target filter     : {self.target_filter}"]
+                if self.target_filter else []
+            ),
             f"AI calls made     : {self.ai_calls_made}",
             f"Model used        : {self.model_used}",
             f"Status            : {self.status.upper()}",

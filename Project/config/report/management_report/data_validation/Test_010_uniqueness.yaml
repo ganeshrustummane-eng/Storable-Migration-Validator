@@ -1,0 +1,82 @@
+tables:
+  Test_010_uniqueness:
+    validations:
+      data_validation:
+        source_table_name: Test_010_uniqueness
+        source: redshift
+        source_database: '{env}_source'
+        source_schema: consume
+        pksourcecolumn: row_hash
+        summary: Validates grain uniqueness for the fact_move_in table
+        report_tile: Move-Ins By Lead Category - Trend
+        sourcequery: 'SELECT
+
+          COALESCE(NULLIF(TRIM(CAST(facility_id AS VARCHAR)), ''''), ''_NULL_VALUE_'')
+          AS facility_id,
+
+          COALESCE(NULLIF(TRIM(CAST(unit_name AS VARCHAR)), ''''), ''_NULL_VALUE_'')
+          AS unit_name,
+
+          COALESCE(NULLIF(TRIM(CAST(tenant_id AS VARCHAR)), ''''), ''_NULL_VALUE_'')
+          AS tenant_id,
+
+          COALESCE(NULLIF(TRIM(CAST(activity_type AS VARCHAR)), ''''), ''_NULL_VALUE_'')
+          AS activity_type,
+
+          COALESCE(DATE_FORMAT(CAST(move_in_date AS DATE), ''%Y-%m-%d''), ''_NULL_VALUE_'')
+          AS move_in_date,
+
+          CAST(COUNT(*) AS BIGINT) AS row_count
+
+          FROM stodl_reporting_prod.sefms_total_move_ins_iceberg
+
+          GROUP BY 1, 2, 3, 4, 5
+
+          HAVING COUNT(*) > 1
+
+          ORDER BY 1, 2, 3, 4, 5;'
+        target_table_name: Test_010_uniqueness
+        target: snowflake
+        target_database: '{env}_gold'
+        target_schema: consume
+        pktargetcolumn: row_hash
+        targetquery: 'SELECT
+
+          COALESCE(NULLIF(TRIM(CAST(f.facility_id AS VARCHAR)), ''''), ''_NULL_VALUE_'')
+          AS facility_id,
+
+          COALESCE(NULLIF(TRIM(CAST(u.unit_name AS VARCHAR)), ''''), ''_NULL_VALUE_'')
+          AS unit_name,
+
+          COALESCE(NULLIF(TRIM(CAST(t.tenant_id AS VARCHAR)), ''''), ''_NULL_VALUE_'')
+          AS tenant_id,
+
+          COALESCE(NULLIF(TRIM(CAST(fm.activity_type AS VARCHAR)), ''''), ''_NULL_VALUE_'')
+          AS activity_type,
+
+          COALESCE(TO_CHAR(CAST(fm.move_in_date AS DATE), ''YYYY-MM-DD''), ''_NULL_VALUE_'')
+          AS move_in_date,
+
+          CAST(COUNT(*) AS BIGINT) AS row_count
+
+          FROM dev_gold.core.fact_move_in fm
+
+          LEFT JOIN DEV_GOLD.DIM.DIM_FACILITY f
+
+          ON fm.facility_key = f.facility_key
+
+          LEFT JOIN DEV_GOLD.DIM.DIM_TENANT t
+
+          ON fm.tenant_key = t.tenant_key
+
+          LEFT JOIN dev_gold.dim.dim_unit u
+
+          ON fm.unit_key = u.unit_key
+
+          WHERE fm.platform_source = ''EDGE''
+
+          GROUP BY 1, 2, 3, 4, 5
+
+          HAVING COUNT(*) > 1
+
+          ORDER BY 1, 2, 3, 4, 5;'

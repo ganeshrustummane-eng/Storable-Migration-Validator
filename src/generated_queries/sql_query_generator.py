@@ -217,6 +217,8 @@ class SQLQueryGenerator:
         model_used: str = "N/A",
         primary_keys: Optional[List[str]] = None,
         target_primary_keys: Optional[List[str]] = None,
+        source_filter: str = "",
+        target_filter: str = "",
         source_db_type: str = "postgresql",
     ) -> ValidationQuerySet:
         """
@@ -261,22 +263,27 @@ class SQLQueryGenerator:
             primary_keys=pks,
         )
 
-        qs.row_count_source       = self._row_count_pg(pg_schema, pg_table, src_type)
-        qs.row_count_target       = self._row_count_sf(sf_full, has_fivetran_active)
-        qs.main_validation_source = self._main_validation_pg(pg_schema, pg_table, active, src_type)
-        qs.main_validation_target = self._main_validation_sf(sf_full, active, has_fivetran_active, src_type)
-        qs.null_pct_source        = self._null_pct_pg(pg_schema, pg_table, active, src_type)
-        qs.null_pct_target        = self._null_pct_sf(sf_full, active, has_fivetran_active)
-        qs.distinct_count_source  = self._distinct_count_pg(pg_schema, pg_table, active, src_type)
-        qs.distinct_count_target  = self._distinct_count_sf(sf_full, active, has_fivetran_active)
+        # Resolve effective target filter: explicit target_filter wins; fall back to source_filter.
+        # This handles the common case where source and target predicates are identical
+        # (e.g. both use created_at >= '2024-01-01' with same column name).
+        eff_tgt_filter = target_filter or source_filter
+
+        qs.row_count_source       = self._row_count_pg(pg_schema, pg_table, src_type, source_filter)
+        qs.row_count_target       = self._row_count_sf(sf_full, has_fivetran_active, eff_tgt_filter)
+        qs.main_validation_source = self._main_validation_pg(pg_schema, pg_table, active, src_type, source_filter)
+        qs.main_validation_target = self._main_validation_sf(sf_full, active, has_fivetran_active, src_type, eff_tgt_filter)
+        qs.null_pct_source        = self._null_pct_pg(pg_schema, pg_table, active, src_type, source_filter)
+        qs.null_pct_target        = self._null_pct_sf(sf_full, active, has_fivetran_active, eff_tgt_filter)
+        qs.distinct_count_source  = self._distinct_count_pg(pg_schema, pg_table, active, src_type, source_filter)
+        qs.distinct_count_target  = self._distinct_count_sf(sf_full, active, has_fivetran_active, eff_tgt_filter)
 
         if pks:
-            qs.pk_duplicate_source = self._pk_duplicate_pg(pg_schema, pg_table, pks)
-            qs.pk_duplicate_target = self._pk_duplicate_sf(sf_full, tgt_pks, has_fivetran_active)
-            qs.pk_missing_rows     = self._pk_missing_rows(pg_schema, pg_table, pks, sf_full, tgt_pks, has_fivetran_active)
-            qs.pk_orphan_rows      = self._pk_orphan_rows(pg_schema, pg_table, pks, sf_full, tgt_pks, has_fivetran_active)
-            qs.pk_ordered_source   = self._pk_ordered_pg(pg_schema, pg_table, active, pks, src_type)
-            qs.pk_ordered_target   = self._pk_ordered_sf(sf_full, active, tgt_pks, has_fivetran_active)
+            qs.pk_duplicate_source = self._pk_duplicate_pg(pg_schema, pg_table, pks, source_filter)
+            qs.pk_duplicate_target = self._pk_duplicate_sf(sf_full, tgt_pks, has_fivetran_active, eff_tgt_filter)
+            qs.pk_missing_rows     = self._pk_missing_rows(pg_schema, pg_table, pks, sf_full, tgt_pks, has_fivetran_active, source_filter, eff_tgt_filter)
+            qs.pk_orphan_rows      = self._pk_orphan_rows(pg_schema, pg_table, pks, sf_full, tgt_pks, has_fivetran_active, source_filter, eff_tgt_filter)
+            qs.pk_ordered_source   = self._pk_ordered_pg(pg_schema, pg_table, active, pks, src_type, source_filter)
+            qs.pk_ordered_target   = self._pk_ordered_sf(sf_full, active, tgt_pks, has_fivetran_active, eff_tgt_filter)
         else:
             qs.pk_warning = (
                 "No primary key detected — "
@@ -314,26 +321,43 @@ class SQLQueryGenerator:
             primary_keys=plan.source_primary_keys,
             target_primary_keys=plan.target_primary_keys,
             source_db_type=plan.source_db_type,
+            source_filter=plan.source_filter,
+            target_filter=plan.target_filter,
         )
+
+    # -----------------------------------------------------------------------
+    # WHERE clause builder — composes migration filter + Fivetran flag
+    # -----------------------------------------------------------------------
+
+    @staticmethod
+    def _where(filter_clause: str, fivetran: bool = False) -> str:
+        """Return '\nWHERE ...' string, empty when nothing to filter."""
+        parts = []
+        if fivetran:
+            parts.append("_FIVETRAN_ACTIVE = TRUE")
+        if filter_clause:
+            parts.append(filter_clause)
+        return ("\nWHERE " + " AND ".join(parts)) if parts else ""
 
     # -----------------------------------------------------------------------
     # ① Row Count — PostgreSQL
     # -----------------------------------------------------------------------
 
-    def _row_count_pg(self, schema: str, table: str, src_type: str = "postgresql") -> str:
+    def _row_count_pg(self, schema: str, table: str, src_type: str = "postgresql", source_filter: str = "") -> str:
         label = _source_label(src_type)
+        where = self._where(source_filter)
         return (
             f"-- ① ROW COUNT: {label} ({schema}.{table})\n"
             f"SELECT COUNT(*) AS source_row_count\n"
-            f"FROM {schema}.{table};"
+            f"FROM {schema}.{table}{where};"
         )
 
     # -----------------------------------------------------------------------
     # ② Row Count — Snowflake
     # -----------------------------------------------------------------------
 
-    def _row_count_sf(self, sf_full: str, fivetran_active: bool) -> str:
-        where = "\nWHERE _FIVETRAN_ACTIVE = TRUE" if fivetran_active else ""
+    def _row_count_sf(self, sf_full: str, fivetran_active: bool, target_filter: str = "") -> str:
+        where = self._where(target_filter, fivetran_active)
         return (
             f"-- ② ROW COUNT: Snowflake ({sf_full})\n"
             f"SELECT COUNT(*) AS target_row_count\n"
@@ -350,6 +374,7 @@ class SQLQueryGenerator:
         table: str,
         mappings: List[ColumnRuleMapping],
         src_type: str = "postgresql",
+        source_filter: str = "",
     ) -> str:
         label = _source_label(src_type)
         if not mappings:
@@ -366,6 +391,7 @@ class SQLQueryGenerator:
             source_db_type=src_type,
             query_type="data_validation",
             has_fivetran_active=False,
+            source_filter=source_filter,
         )
         return (
             f"-- ③ SOURCE: {label} ({schema}.{table})\n"
@@ -383,6 +409,7 @@ class SQLQueryGenerator:
         mappings: List[ColumnRuleMapping],
         fivetran_active: bool,
         src_type: str = "postgresql",
+        target_filter: str = "",
     ) -> str:
         if not mappings:
             return (
@@ -397,6 +424,7 @@ class SQLQueryGenerator:
             source_db_type=src_type,
             target_db_type="snowflake",
             has_fivetran_active=fivetran_active,
+            target_filter=target_filter,
         )
         return (
             f"-- ④ TARGET: Snowflake ({sf_full})\n"
@@ -418,6 +446,7 @@ class SQLQueryGenerator:
         table: str,
         mappings: List[ColumnRuleMapping],
         src_type: str = "postgresql",
+        source_filter: str = "",
     ) -> str:
         if not mappings:
             return ""
@@ -428,10 +457,11 @@ class SQLQueryGenerator:
             f" / COUNT(*), 2) AS {m.source_column}_null_pct"
             for m in mappings
         )
+        where = self._where(source_filter)
         return (
             f"-- ⑤ NULL % CHECK: {label} ({schema}.{table})\n"
             f"SELECT\n    COUNT(*) AS total_rows,\n    {null_parts}\n"
-            f"FROM {schema}.{table};"
+            f"FROM {schema}.{table}{where};"
         )
 
     # -----------------------------------------------------------------------
@@ -443,6 +473,7 @@ class SQLQueryGenerator:
         sf_full: str,
         mappings: List[ColumnRuleMapping],
         fivetran_active: bool,
+        target_filter: str = "",
     ) -> str:
         if not mappings:
             return ""
@@ -452,7 +483,7 @@ class SQLQueryGenerator:
             f" / COUNT(*), 2) AS {m.source_column}_null_pct"
             for m in mappings
         )
-        where = "\nWHERE _FIVETRAN_ACTIVE = TRUE" if fivetran_active else ""
+        where = self._where(target_filter, fivetran_active)
         return (
             f"-- ⑥ NULL % CHECK: Snowflake ({sf_full})\n"
             f"SELECT\n    COUNT(*) AS total_rows,\n    {null_parts}\n"
@@ -469,6 +500,7 @@ class SQLQueryGenerator:
         table: str,
         mappings: List[ColumnRuleMapping],
         src_type: str = "postgresql",
+        source_filter: str = "",
     ) -> str:
         if not mappings:
             return ""
@@ -487,11 +519,12 @@ class SQLQueryGenerator:
             return f"COUNT(DISTINCT {col}) AS {col}_distinct_count"
 
         distinct_parts = ",\n    ".join(_pg_distinct_expr(m) for m in mappings)
+        where = self._where(source_filter)
         return (
             f"-- ⑦ DISTINCT VALUE COUNT: {label} ({schema}.{table})\n"
             f"-- Compare distinct counts with ⑧ — large differences indicate data drift.\n"
             f"SELECT\n    COUNT(*) AS total_rows,\n    {distinct_parts}\n"
-            f"FROM {schema}.{table};"
+            f"FROM {schema}.{table}{where};"
         )
 
     # -----------------------------------------------------------------------
@@ -503,6 +536,7 @@ class SQLQueryGenerator:
         sf_full: str,
         mappings: List[ColumnRuleMapping],
         fivetran_active: bool,
+        target_filter: str = "",
     ) -> str:
         if not mappings:
             return ""
@@ -511,7 +545,7 @@ class SQLQueryGenerator:
             f"COUNT(DISTINCT {m.target_column}) AS {m.source_column}_distinct_count"
             for m in mappings
         )
-        where = "\nWHERE _FIVETRAN_ACTIVE = TRUE" if fivetran_active else ""
+        where = self._where(target_filter, fivetran_active)
         return (
             f"-- ⑧ DISTINCT VALUE COUNT: Snowflake ({sf_full})\n"
             f"-- Compare distinct counts with ⑦ — large differences indicate data drift.\n"
@@ -523,13 +557,14 @@ class SQLQueryGenerator:
     # ⑨ Duplicate PK check — PostgreSQL
     # -----------------------------------------------------------------------
 
-    def _pk_duplicate_pg(self, schema: str, table: str, pks: List[str]) -> str:
+    def _pk_duplicate_pg(self, schema: str, table: str, pks: List[str], source_filter: str = "") -> str:
         pk_cols = ", ".join(pks)
+        where = self._where(source_filter)
         return (
             f"-- ⑨ DUPLICATE PK CHECK: PostgreSQL ({schema}.{table})\n"
             f"-- Expected: 0 rows. Any row here means a duplicate PK violation.\n"
             f"SELECT {pk_cols}, COUNT(*) AS duplicate_count\n"
-            f"FROM {schema}.{table}\n"
+            f"FROM {schema}.{table}{where}\n"
             f"GROUP BY {pk_cols}\n"
             f"HAVING COUNT(*) > 1\n"
             f"ORDER BY duplicate_count DESC;"
@@ -539,9 +574,9 @@ class SQLQueryGenerator:
     # ⑩ Duplicate PK check — Snowflake
     # -----------------------------------------------------------------------
 
-    def _pk_duplicate_sf(self, sf_full: str, tgt_pks: List[str], fivetran_active: bool) -> str:
+    def _pk_duplicate_sf(self, sf_full: str, tgt_pks: List[str], fivetran_active: bool, target_filter: str = "") -> str:
         pk_cols = ", ".join(tgt_pks)
-        where   = "\nWHERE _FIVETRAN_ACTIVE = TRUE" if fivetran_active else ""
+        where = self._where(target_filter, fivetran_active)
         return (
             f"-- ⑩ DUPLICATE PK CHECK: Snowflake ({sf_full})\n"
             f"-- Expected: 0 rows. Any row here means a duplicate PK in target.\n"
@@ -561,34 +596,43 @@ class SQLQueryGenerator:
         pg_schema: str, pg_table: str, src_pks: List[str],
         sf_full: str,   tgt_pks: List[str],
         fivetran_active: bool,
+        source_filter: str = "",
+        target_filter: str = "",
     ) -> str:
-        sf_where = "WHERE _FIVETRAN_ACTIVE = TRUE AND " if fivetran_active else "WHERE "
+        tgt_where = self._where(target_filter, fivetran_active)
+        src_where = self._where(source_filter)
         if len(src_pks) == 1:
             src_col, tgt_col = src_pks[0], tgt_pks[0]
             return (
                 f"-- ⑪ MISSING ROWS: source PKs not found in target\n"
                 f"-- Expected: 0 rows. Each row is a record lost during migration.\n"
                 f"SELECT src.{src_col}\n"
+                f"FROM {pg_schema}.{pg_table} src{src_where}\n"
+                f"AND src.{src_col} NOT IN (\n"
+                f"    SELECT {tgt_col} FROM {sf_full}{tgt_where}\n"
+                f");"
+            ) if src_where else (
+                f"-- ⑪ MISSING ROWS: source PKs not found in target\n"
+                f"-- Expected: 0 rows. Each row is a record lost during migration.\n"
+                f"SELECT src.{src_col}\n"
                 f"FROM {pg_schema}.{pg_table} src\n"
                 f"WHERE src.{src_col} NOT IN (\n"
-                f"    SELECT {tgt_col} FROM {sf_full}"
-                + (f"\n    WHERE _FIVETRAN_ACTIVE = TRUE" if fivetran_active else "")
-                + f"\n);"
+                f"    SELECT {tgt_col} FROM {sf_full}{tgt_where}\n"
+                f");"
             )
         # Composite PK — use NOT EXISTS with correlated subquery
         join_cond = " AND ".join(
             f"src.{s} = tgt.{t}" for s, t in zip(src_pks, tgt_pks)
         )
-        sf_where_clause = "\n    WHERE _FIVETRAN_ACTIVE = TRUE" if fivetran_active else ""
         src_select = ", ".join(f"src.{c}" for c in src_pks)
         return (
             f"-- ⑪ MISSING ROWS: source PKs not found in target (composite PK)\n"
             f"-- Expected: 0 rows. Each row is a record lost during migration.\n"
             f"SELECT {src_select}\n"
-            f"FROM {pg_schema}.{pg_table} src\n"
-            f"WHERE NOT EXISTS (\n"
-            f"    SELECT 1 FROM {sf_full} tgt{sf_where_clause}\n"
-            f"    WHERE {join_cond}\n"
+            f"FROM {pg_schema}.{pg_table} src{src_where}\n"
+            f"{'AND' if src_where else 'WHERE'} NOT EXISTS (\n"
+            f"    SELECT 1 FROM {sf_full} tgt{tgt_where}\n"
+            f"    {'AND' if tgt_where else 'WHERE'} {join_cond}\n"
             f");"
         )
 
@@ -601,32 +645,34 @@ class SQLQueryGenerator:
         pg_schema: str, pg_table: str, src_pks: List[str],
         sf_full: str,   tgt_pks: List[str],
         fivetran_active: bool,
+        source_filter: str = "",
+        target_filter: str = "",
     ) -> str:
+        tgt_where = self._where(target_filter, fivetran_active)
+        src_where_inner = self._where(source_filter)
         if len(tgt_pks) == 1:
             src_col, tgt_col = src_pks[0], tgt_pks[0]
-            sf_where = "\nWHERE _FIVETRAN_ACTIVE = TRUE AND " if fivetran_active else "\nWHERE "
             return (
                 f"-- ⑫ ORPHAN ROWS: target PKs not found in source\n"
                 f"-- Expected: 0 rows. Each row is an extra record inserted in target.\n"
                 f"SELECT tgt.{tgt_col}\n"
-                f"FROM {sf_full} tgt{sf_where}"
-                f"tgt.{tgt_col} NOT IN (\n"
-                f"    SELECT {src_col} FROM {pg_schema}.{pg_table}\n"
+                f"FROM {sf_full} tgt{tgt_where}\n"
+                f"{'AND' if tgt_where else 'WHERE'} tgt.{tgt_col} NOT IN (\n"
+                f"    SELECT {src_col} FROM {pg_schema}.{pg_table}{src_where_inner}\n"
                 f");"
             )
         join_cond = " AND ".join(
             f"src.{s} = tgt.{t}" for s, t in zip(src_pks, tgt_pks)
         )
-        sf_where = "\nWHERE _FIVETRAN_ACTIVE = TRUE" if fivetran_active else ""
         tgt_select = ", ".join(f"tgt.{c}" for c in tgt_pks)
         return (
             f"-- ⑫ ORPHAN ROWS: target PKs not found in source (composite PK)\n"
             f"-- Expected: 0 rows. Each row is an extra record inserted in target.\n"
             f"SELECT {tgt_select}\n"
-            f"FROM {sf_full} tgt{sf_where}\n"
-            f"WHERE NOT EXISTS (\n"
-            f"    SELECT 1 FROM {pg_schema}.{pg_table} src\n"
-            f"    WHERE {join_cond}\n"
+            f"FROM {sf_full} tgt{tgt_where}\n"
+            f"{'AND' if tgt_where else 'WHERE'} NOT EXISTS (\n"
+            f"    SELECT 1 FROM {pg_schema}.{pg_table} src{src_where_inner}\n"
+            f"    {'AND' if src_where_inner else 'WHERE'} {join_cond}\n"
             f");"
         )
 
@@ -641,6 +687,7 @@ class SQLQueryGenerator:
         mappings: List[ColumnRuleMapping],
         pks: List[str],
         src_type: str = "postgresql",
+        source_filter: str = "",
     ) -> str:
         if not mappings:
             return ""
@@ -651,11 +698,12 @@ class SQLQueryGenerator:
             select_lines.append(f"    {expr}")
         cols     = ",\n".join(select_lines)
         order_by = ", ".join(pks)
+        where    = self._where(source_filter)
         return (
             f"-- ⑬ ORDERED VALIDATION — {label} ({schema}.{table})\n"
             f"-- ORDER BY PK ensures reproducible row-by-row comparison with ⑭.\n"
             f"SELECT\n{cols}\n"
-            f"FROM {schema}.{table}\n"
+            f"FROM {schema}.{table}{where}\n"
             f"ORDER BY {order_by};"
         )
 
@@ -669,6 +717,7 @@ class SQLQueryGenerator:
         mappings: List[ColumnRuleMapping],
         tgt_pks: List[str],
         fivetran_active: bool,
+        target_filter: str = "",
     ) -> str:
         if not mappings:
             return ""
@@ -678,7 +727,7 @@ class SQLQueryGenerator:
             select_lines.append(f"    {expr}")
         cols     = ",\n".join(select_lines)
         order_by = ", ".join(tgt_pks)
-        where    = "\nWHERE _FIVETRAN_ACTIVE = TRUE" if fivetran_active else ""
+        where    = self._where(target_filter, fivetran_active)
         return (
             f"-- ⑭ ORDERED VALIDATION — Snowflake ({sf_full})\n"
             f"-- ORDER BY PK ensures reproducible row-by-row comparison with ⑬.\n"

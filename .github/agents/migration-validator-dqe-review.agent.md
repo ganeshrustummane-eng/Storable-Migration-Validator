@@ -14,7 +14,7 @@ Review the Migration Validator workspace with special attention to these surface
 
 - End-to-end workflow and documentation: `README.md`, `docs/**`, `plans/**`, `SUBMISSION_CHECKLIST.md`, `JUDGING_RUBRIC.md`
 - Main validation runtime: `Project/main.py`, `Project/runner.py`, `Project/results_store.py`, `Project/utils/**`
-- CLI and orchestration: `src/validate_cli.py`, `src/validation_pipeline.py`, `src/setup_wizard.py`
+- CLI and orchestration:  `src/validation_pipeline.py`, `src/setup_wizard.py`
 - AI-assisted mapping and SQL generation: `src/ai/**`, `src/ai_transformation/**`, `src/generated_queries/**`, `src/rule_book.py`, `src/rules_catalog.json`, `src/rule_book_learned.json`
 - Matching, validation plans, and learning: `src/matching/**`, `src/core/**`, `src/validation/**`, `src/learning/**`
 - Data extraction and database connectors: `src/sql_extractor/**`, `src/gemini_connector/**`, `config/**`, `dial_config.json`

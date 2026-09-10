@@ -1,0 +1,361 @@
+{
+  "meta": {
+    "generatedAt": "2026-09-09T08:58:42.052Z",
+    "rangeLabel": "all",
+    "agents": [
+      "claude"
+    ],
+    "projectFilter": "all",
+    "totals": {
+      "sessions": 1,
+      "durationMs": 12770511,
+      "turns": 89,
+      "files": 10,
+      "netLines": 237,
+      "toolCallsTotal": 93,
+      "toolSuccessRate": 98.9,
+      "totalCostUSD": 10.203095699999999,
+      "cacheReadCostUSD": 2.5863837,
+      "pricedSessions": 1
+    },
+    "unpricedModels": [],
+    "coverage": [
+      {
+        "agentName": "claude",
+        "total": 1,
+        "priced": 1,
+        "withLog": 1
+      }
+    ],
+    "periodStart": "2026-09-09T05:25:48.397Z",
+    "periodEnd": "2026-09-09T08:58:38.908Z"
+  },
+  "sessions": [
+    {
+      "sessionId": "56f8200d-b0cf-4963-ba43-f729e4c53000",
+      "agentName": "claude",
+      "provider": "ai-run-sso",
+      "title": "/ponytail:ponytail Act as the Data Quality Engineer Suppose we have the filter while migrating from sources to the target how we can manage this or shall we add the prompt option in between while generating the YAML for Single and Multiple YAML generation how should we.",
+      "project": "C:\\Gemini-Hackathon\\Migration-validator",
+      "branch": "version1.2",
+      "startTime": 1788931548397,
+      "durationMs": 12770511,
+      "turns": 89,
+      "fileOps": 10,
+      "linesAdded": 317,
+      "linesRemoved": 80,
+      "linesModified": 0,
+      "netLines": 237,
+      "filesChanged": 5,
+      "filesWritten": 0,
+      "filesEdited": 5,
+      "toolCallsTotal": 93,
+      "toolCallsSuccess": 92,
+      "toolCallsFailure": 1,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "languages": [
+        "python",
+        "yaml"
+      ],
+      "tools": [
+        {
+          "toolName": "Read",
+          "totalCalls": 35,
+          "successCount": 34,
+          "failureCount": 1,
+          "successRate": 97.14285714285714
+        },
+        {
+          "toolName": "Edit",
+          "totalCalls": 26,
+          "successCount": 26,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "TaskUpdate",
+          "totalCalls": 12,
+          "successCount": 12,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Grep",
+          "totalCalls": 10,
+          "successCount": 10,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "TaskCreate",
+          "totalCalls": 6,
+          "successCount": 6,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Glob",
+          "totalCalls": 3,
+          "successCount": 3,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Bash",
+          "totalCalls": 1,
+          "successCount": 1,
+          "failureCount": 0,
+          "successRate": 100
+        }
+      ],
+      "tokens": {
+        "input": 108,
+        "output": 39502,
+        "cacheRead": 8621279,
+        "cacheCreation": 1170643,
+        "cacheCreation1h": 1170643,
+        "total": 9831532
+      },
+      "costUSD": 10.203095699999999,
+      "cacheReadCostUSD": 2.5863837,
+      "perModelCost": [
+        {
+          "model": "claude-sonnet-4-6",
+          "tokens": {
+            "input": 108,
+            "output": 39502,
+            "cacheRead": 8621279,
+            "cacheCreation": 1170643,
+            "cacheCreation1h": 1170643,
+            "total": 9831532
+          },
+          "costUSD": 10.203095699999999,
+          "unpriced": false
+        }
+      ],
+      "costSeries": [
+        {
+          "t": 1788931814786,
+          "cost": 0.292284,
+          "tokens": 48420
+        },
+        {
+          "t": 1788931830358,
+          "cost": 0.944829,
+          "tokens": 156406
+        },
+        {
+          "t": 1788931907196,
+          "cost": 1.4978091,
+          "tokens": 346890
+        },
+        {
+          "t": 1788931940496,
+          "cost": 1.7439669,
+          "tokens": 486943
+        },
+        {
+          "t": 1788932804016,
+          "cost": 1.9925892,
+          "tokens": 701372
+        },
+        {
+          "t": 1788932817275,
+          "cost": 2.0806626,
+          "tokens": 850285
+        },
+        {
+          "t": 1788932828363,
+          "cost": 2.3658702,
+          "tokens": 1004277
+        },
+        {
+          "t": 1788934601151,
+          "cost": 2.5662882,
+          "tokens": 1250212
+        },
+        {
+          "t": 1788934613665,
+          "cost": 2.6971263,
+          "tokens": 1423626
+        },
+        {
+          "t": 1788934623734,
+          "cost": 2.8131735,
+          "tokens": 1603696
+        },
+        {
+          "t": 1788934636199,
+          "cost": 3.2304894,
+          "tokens": 1886492
+        },
+        {
+          "t": 1788934643244,
+          "cost": 3.3007203,
+          "tokens": 2078004
+        },
+        {
+          "t": 1788934664694,
+          "cost": 3.7101972,
+          "tokens": 2366726
+        },
+        {
+          "t": 1788935484919,
+          "cost": 4.0951158,
+          "tokens": 2560903
+        },
+        {
+          "t": 1788935495680,
+          "cost": 4.1713635,
+          "tokens": 2756254
+        },
+        {
+          "t": 1788935516811,
+          "cost": 4.2828603,
+          "tokens": 3051168
+        },
+        {
+          "t": 1788935549461,
+          "cost": 4.4042181,
+          "tokens": 3252322
+        },
+        {
+          "t": 1788935608353,
+          "cost": 4.6641897,
+          "tokens": 3570356
+        },
+        {
+          "t": 1788935658781,
+          "cost": 4.8774765,
+          "tokens": 3797697
+        },
+        {
+          "t": 1788935670754,
+          "cost": 5.0299254,
+          "tokens": 4031646
+        },
+        {
+          "t": 1788935688898,
+          "cost": 5.3703639,
+          "tokens": 4393541
+        },
+        {
+          "t": 1788935699531,
+          "cost": 5.4764964,
+          "tokens": 4639139
+        },
+        {
+          "t": 1788935709466,
+          "cost": 5.5652034,
+          "tokens": 4887567
+        },
+        {
+          "t": 1788935723777,
+          "cost": 5.7205629,
+          "tokens": 5263940
+        },
+        {
+          "t": 1788935743740,
+          "cost": 6.3210843,
+          "tokens": 5518229
+        },
+        {
+          "t": 1788935765011,
+          "cost": 6.483897,
+          "tokens": 5902549
+        },
+        {
+          "t": 1788935773376,
+          "cost": 6.5806743,
+          "tokens": 6160392
+        },
+        {
+          "t": 1788935786124,
+          "cost": 6.678306,
+          "tokens": 6419027
+        },
+        {
+          "t": 1788935812425,
+          "cost": 6.8175165,
+          "tokens": 6810464
+        },
+        {
+          "t": 1788935850569,
+          "cost": 6.9688938,
+          "tokens": 7077129
+        },
+        {
+          "t": 1788936569781,
+          "cost": 7.7097804,
+          "tokens": 7489680
+        },
+        {
+          "t": 1788936583526,
+          "cost": 7.8778611,
+          "tokens": 7772353
+        },
+        {
+          "t": 1788936592676,
+          "cost": 8.0018355,
+          "tokens": 8058790
+        },
+        {
+          "t": 1788936620998,
+          "cost": 8.1881715,
+          "tokens": 8490797
+        },
+        {
+          "t": 1788936640144,
+          "cost": 8.8751619,
+          "tokens": 8780449
+        },
+        {
+          "t": 1788936648729,
+          "cost": 8.991765,
+          "tokens": 9075892
+        },
+        {
+          "t": 1788936806685,
+          "cost": 9.2020743,
+          "tokens": 9429500
+        },
+        {
+          "t": 1788936818895,
+          "cost": 9.3951993,
+          "tokens": 9540197
+        },
+        {
+          "t": 1788942459981,
+          "cost": 9.8194245,
+          "tokens": 9713870
+        },
+        {
+          "t": 1788943913408,
+          "cost": 10.2030957,
+          "tokens": 9831532
+        }
+      ],
+      "dispatches": [
+        {
+          "kind": "command",
+          "name": "ponytail:ponytail",
+          "start": 1788931804920,
+          "durationMs": 0
+        }
+      ],
+      "skillInvocations": [],
+      "agentInvocations": [],
+      "commandInvocations": [
+        {
+          "name": "ponytail:ponytail",
+          "totalCalls": 7,
+          "successCount": 7,
+          "failureCount": 0
+        }
+      ],
+      "sessionSource": "Pure chat"
+    }
+  ]
+}
