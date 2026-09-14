@@ -25,9 +25,9 @@ tables:
         sourcequery: |
           SELECT col1_normalized, ... FROM ...;
         target_table_name: ...
-        pktargetcolumn: <FIRST_COLUMN>
+        pktargetcolumn: <first_column>   # source-derived alias, NOT the target's name
         targetquery: |
-          SELECT COL1_normalized, ... FROM ...;
+          SELECT col1_normalized, ... FROM ...;
 ────────────────────────────────────────────────────────────────
 
 Output format — bronze_count_validation.yaml (shared file):
@@ -111,6 +111,10 @@ class YAMLConfigWriter:
         output_dir: Optional[Path] = None,
         source_audit_column: str = "",
         target_audit_column: str = "",
+        source_database: str = "",
+        source_primary_keys: Optional[List[str]] = None,
+        target_primary_keys: Optional[List[str]] = None,
+        plan: Optional["CanonicalValidationPlan"] = None,
     ) -> Path:
         """
         Write the data validation YAML for a single table.
@@ -144,21 +148,35 @@ class YAMLConfigWriter:
         out_dir.mkdir(parents=True, exist_ok=True)
 
         active = [m for m in mappings if not m.skip_validation]
-        first_src_col = active[0].source_column if active else "id"
-        first_tgt_col = active[0].target_column if active else "ID"
+
+        # Build normalized PK column names — the SQL SELECT aliases every
+        # expression as "{source_col}_normalized", so PK names must match.
+        # Use explicit PK lists from the plan when available; fall back to
+        # first active column (single-PK tables where list wasn't supplied).
+        if source_primary_keys and len(source_primary_keys) > 1:
+            src_pk = [f"{c}_normalized" for c in source_primary_keys]
+            tgt_pk = src_pk  # target SQL aliases always use source column names
+        elif source_primary_keys and len(source_primary_keys) == 1:
+            src_pk = f"{source_primary_keys[0]}_normalized"
+            tgt_pk = src_pk  # target SQL aliases always use source column names
+        else:
+            first_src_col = active[0].source_column if active else "id"
+            src_pk = f"{first_src_col}_normalized"
+            tgt_pk = src_pk
 
         def _prep(sql: str) -> str:
-            return _indent_for_yaml(_strip_generator_header(sql), _QUERY_INDENT)
+            return _to_single_line(_strip_generator_header(sql))
 
         yaml_content = _build_data_yaml(
             table_name_source=pg_table,
             table_name_target=sf_table,
             source_db_type=source_db_type,
+            source_database=source_database,
             pg_schema=pg_schema,
             sf_database=sf_database,
             sf_schema=sf_schema,
-            source_column=first_src_col,
-            target_column=first_tgt_col,
+            src_pk=src_pk,
+            tgt_pk=tgt_pk,
             data_source_yaml=_prep(query_set.main_validation_source),
             data_target_yaml=_prep(query_set.main_validation_target),
             null_pct_source_yaml=_prep(query_set.null_pct_source),
@@ -172,6 +190,25 @@ class YAMLConfigWriter:
             model_used=query_set.model_used,
             source_audit_column=source_audit_column,
             target_audit_column=target_audit_column,
+            plan_intent={
+                "population_scope": plan.population_scope,
+                "relationships": [r.to_dict() for r in plan.relationships],
+                "identity": {
+                    "type": plan.identity_type,
+                    "source_primary_keys": plan.source_primary_keys,
+                    "target_primary_keys": plan.target_primary_keys,
+                    "candidate_keys": plan.candidate_keys,
+                },
+                "row_hash": plan.row_hash.to_dict() if plan.row_hash else None,
+                "transformations": [t.to_dict() for t in plan.transformations],
+                "validations": [v.to_dict() for v in plan.validations],
+                "requires_review": plan.requires_review,
+                "review_reasons": plan.review_reasons,
+            } if plan is not None else None,
+            transformation_source_yaml=_prep(query_set.transformation_source),
+            transformation_target_yaml=_prep(query_set.transformation_target),
+            aggregate_source_yaml=_prep(query_set.aggregate_source),
+            aggregate_target_yaml=_prep(query_set.aggregate_target),
         )
 
         yaml_path = out_dir / f"{pg_table}.yaml"
@@ -192,6 +229,7 @@ class YAMLConfigWriter:
         sf_table: str,
         has_fivetran_active: bool = False,
         output_dir: Optional[Path] = None,
+        source_database: str = "",
     ) -> Path:
         """
         Upsert this table's count_validation block into the shared
@@ -218,10 +256,14 @@ class YAMLConfigWriter:
                 "count_validation": {
                     "source_table_name": pg_table,
                     "source": source_db_type,
-                    "sourcequery": _strip_generator_header(query_set.row_count_source) + "\n",
+                    "source_database": source_database,
+                    "source_schema": pg_schema,
+                    "sourcequery": " ".join(_strip_generator_header(query_set.row_count_source).split()),
                     "target_table_name": sf_table or pg_table,
                     "target": "snowflake",
-                    "targetquery": _strip_generator_header(query_set.row_count_target) + "\n",
+                    "target_database": sf_database,
+                    "target_schema": sf_schema,
+                    "targetquery": " ".join(_strip_generator_header(query_set.row_count_target).split()),
                 }
             }
         }
@@ -262,6 +304,7 @@ class YAMLConfigWriter:
         return self.write_count_yaml(
             query_set=query_set,
             source_db_type=plan.source_db_type,
+            source_database=plan.source_database,
             pg_schema=plan.source_schema,
             pg_table=plan.source_table,
             sf_database=plan.target_database,
@@ -295,6 +338,7 @@ class YAMLConfigWriter:
         return self.write(
             query_set=query_set,
             source_db_type=plan.source_db_type,
+            source_database=plan.source_database,
             pg_schema=plan.source_schema,
             pg_table=plan.source_table,
             sf_database=plan.target_database,
@@ -302,7 +346,10 @@ class YAMLConfigWriter:
             sf_table=plan.target_table,
             mappings=mappings,
             has_fivetran_active=plan.has_fivetran_active,
+            source_primary_keys=plan.source_primary_keys or [],
+            target_primary_keys=plan.target_primary_keys or [],
             output_dir=output_dir,
+            plan=plan,
         )
 
 
@@ -310,15 +357,32 @@ class YAMLConfigWriter:
 # YAML content builder — exact format per project specification
 # ---------------------------------------------------------------------------
 
+def _pk_yaml_lines(key: str, pk) -> List[str]:
+    """
+    Render a pksourcecolumn / pktargetcolumn YAML block.
+
+    Single PK  → '        pksourcecolumn: col_normalized'
+    Composite  → '        pksourcecolumn:\n          - col1_normalized\n          - col2_normalized'
+    """
+    if isinstance(pk, list) and len(pk) > 1:
+        lines = [f"        {key}:"]
+        for col in pk:
+            lines.append(f"          - {col}")
+        return lines
+    val = pk[0] if isinstance(pk, list) else pk
+    return [f"        {key}: {val}"]
+
+
 def _build_data_yaml(
     table_name_source: str,
     table_name_target: str,
     source_db_type: str,
+    source_database: str,
     pg_schema: str,
     sf_database: str,
     sf_schema: str,
-    source_column: str,
-    target_column: str,
+    src_pk,       # str (single) or List[str] (composite) — already has _normalized suffix
+    tgt_pk,       # str (single) or List[str] (composite) — already has _normalized suffix
     data_source_yaml: str,
     data_target_yaml: str,
     null_pct_source_yaml: str,
@@ -332,24 +396,12 @@ def _build_data_yaml(
     model_used: str,
     source_audit_column: str = "",
     target_audit_column: str = "",
+    plan_intent: Optional[dict] = None,
+    transformation_source_yaml: str = "",
+    transformation_target_yaml: str = "",
+    aggregate_source_yaml: str = "",
+    aggregate_target_yaml: str = "",
 ) -> str:
-    """
-    Build the data validation YAML for one table (no row count block).
-
-    Output goes to config/bronze/data_validation/<table>_validation.yaml.
-    Row count lives in config/bronze/count_validation/bronze.yaml.
-
-    Indentation structure:
-      tables:                               <- 0 spaces
-        <table>:                            <- 2 spaces
-          validations:                      <- 4 spaces
-            data_validation:               <- 6 spaces
-              source_table_name: ...        <- 8 spaces
-              sourcequery: |               <- 8 spaces
-                <sql line>                 <- 10 spaces  (| block content)
-            null_pct_validation:           <- 6 spaces
-            distinct_count_validation:     <- 6 spaces
-    """
     fivetran_comment = (
         "\n#   - Fivetran  : WHERE _FIVETRAN_ACTIVE = TRUE (Snowflake side — active records only)"
         if has_fivetran_active
@@ -392,18 +444,60 @@ def _build_data_yaml(
         "      data_validation:",
         f"        source_table_name: {table_name_source}",
         f"        source: {source_db_type}",
-        f"        pksourcecolumn: {source_column + '_normalized' if source_column else ''}",
+        f"        source_database: {source_database}",
+        f"        source_schema: {pg_schema}",
+        *_pk_yaml_lines("pksourcecolumn", src_pk),
         f"        source_audit_column: {source_audit_column}",
         "        sourcequery: |",
         data_source_yaml,
         f"        target_table_name: {table_name_target}",
         "        target: snowflake",
-        f"        pktargetcolumn: {target_column + '_normalized' if target_column else ''}",
+        f"        target_database: {sf_database}",
+        f"        target_schema: {sf_schema}",
+        *_pk_yaml_lines("pktargetcolumn", tgt_pk),
         f"        target_audit_column: {target_audit_column}",
         "        targetquery: |",
         data_target_yaml,
         "",
     ]
+
+    if plan_intent:
+        lines.extend([
+            "      validation_plan:",
+            *[f"        {line}" if line else "" for line in yaml.safe_dump(
+                plan_intent, sort_keys=False, default_flow_style=False
+            ).rstrip().splitlines()],
+            "",
+        ])
+
+    if transformation_source_yaml and transformation_target_yaml:
+        lines.extend([
+            "      transformation_validation:",
+            f"        source_table_name: {table_name_source}",
+            f"        source: {source_db_type}",
+            f"        source_database: {source_database}",
+            f"        source_schema: {pg_schema}",
+            "        sourcequery: |", transformation_source_yaml,
+            f"        target_table_name: {table_name_target}",
+            "        target: snowflake",
+            f"        target_database: {sf_database}",
+            f"        target_schema: {sf_schema}",
+            "        targetquery: |", transformation_target_yaml,
+        ])
+    if aggregate_source_yaml and aggregate_target_yaml:
+        lines.extend([
+            "      aggregate_validation:",
+            f"        source_table_name: {table_name_source}",
+            f"        source: {source_db_type}",
+            f"        source_database: {source_database}",
+            f"        source_schema: {pg_schema}",
+            "        sourcequery: |", aggregate_source_yaml,
+            f"        target_table_name: {table_name_target}",
+            "        target: snowflake",
+            f"        target_database: {sf_database}",
+            f"        target_schema: {sf_schema}",
+            "        targetquery: |", aggregate_target_yaml,
+        ])
 
     return "\n".join(lines)
 
@@ -510,27 +604,7 @@ def _strip_generator_header(sql: str) -> str:
     return "\n".join(lines).strip() if lines else sql.strip()
 
 
-def _indent_for_yaml(sql: str, indent: int = 10) -> str:
-    """
-    Indent every line of a SQL query for embedding in a YAML literal block (|).
-
-    YAML literal block scalars require ALL content lines to be indented
-    more deeply than the key that introduces the block.
-
-    Example (indent=10):
-        sourcequery: |          ← key at 8-space indent
-          SELECT                ← content at 10-space indent  ✓
-              col1,
-              col2
-          FROM public.events;
-
-    Args:
-        sql   : Cleaned SQL query string
-        indent: Number of spaces to prepend to every content line
-
-    Returns:
-        SQL with each line prefixed by 'indent' spaces.
-    """
-    prefix = " " * indent
-    lines  = sql.strip().splitlines()
-    return "\n".join(f"{prefix}{line}" for line in lines)
+def _to_single_line(sql: str) -> str:
+    """Collapse multi-line SQL to one space-separated line, 10-space indented for YAML block."""
+    single = " ".join(line.strip() for line in sql.splitlines() if line.strip())
+    return " " * _QUERY_INDENT + single

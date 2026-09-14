@@ -43,13 +43,14 @@ Or from the main CLI:
 
 from __future__ import annotations
 
-import getpass
 import os
 import re
 import sys
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+import click
 
 _SRC_DIR  = Path(__file__).parent
 _ROOT_DIR = _SRC_DIR.parent
@@ -105,13 +106,9 @@ def _box(title: str, items: List[str]) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _prompt(label: str, default: str = "", secret: bool = False) -> str:
-    bracket = f" [{_C.DIM}{'***' if secret else default}{_C.RESET}]" if default else ""
-    display = f"\n  {_C.BOLD}{label}{_C.RESET}{bracket}: "
-    if secret:
-        value = getpass.getpass(display)
-        return value.strip() if value.strip() else default
-    value = input(display).strip()
-    return value if value else default
+    text = f"\n  {click.style(label, bold=True)}"
+    value = click.prompt(text, default=default, show_default=not secret, hide_input=secret)
+    return value.strip() if value and value.strip() else default
 
 
 def _pick(options: List[str], prompt: str = "Choose", allow_new: bool = False) -> int:
@@ -139,9 +136,7 @@ def _pick(options: List[str], prompt: str = "Choose", allow_new: bool = False) -
 
 
 def _yn(question: str, default: bool = True) -> bool:
-    suffix = " [Y/n]: " if default else " [y/N]: "
-    ans = input(f"\n  {question}{suffix}").strip().lower()
-    return default if not ans else ans in ("y", "yes")
+    return click.confirm(f"\n  {question}", default=default)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -153,6 +148,7 @@ DB_TYPES: Dict[str, Tuple[str, int]] = {
     "mssql":      ("Microsoft SQL Server",    1433),
     "snowflake":  ("Snowflake (as source)",   443),
     "athena":     ("AWS Athena",              443),
+    "redshift":   ("AWS Redshift",            5439),
 }
 
 _DB_ALIASES = {
@@ -160,6 +156,7 @@ _DB_ALIASES = {
     "2": "mssql",
     "3": "snowflake",
     "4": "athena",
+    "5": "redshift",
     "pg": "postgresql",
     "postgres": "postgresql",
     "sql server": "mssql",
@@ -167,6 +164,8 @@ _DB_ALIASES = {
     "aws": "athena",
     "aws athena": "athena",
     "amazon athena": "athena",
+    "aws redshift": "redshift",
+    "amazon redshift": "redshift",
 }
 
 
@@ -185,7 +184,7 @@ def _pick_db_type() -> str:
             return _DB_ALIASES[raw]
         if raw in DB_TYPES:
             return raw
-        _warn("Please enter 1, 2, 3, or 4.")
+        _warn(f"Please enter a number 1–{len(DB_TYPES)}.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -910,9 +909,9 @@ def _collect_one_source(idx: int, total: int,
 
         # ── Schema — live discovery ───────────────────────────────────────────
         _blank()
-        schema_default = "public" if db_type == "postgresql" else "dbo"
+        schema_default = "public" if db_type in ("postgresql", "redshift") else "dbo"
         print(f"  {_C.DIM}Discovering schemas in {database} ...{_C.RESET}")
-        if db_type in ("postgresql", "postgres", "pg"):
+        if db_type in ("postgresql", "postgres", "pg", "redshift"):
             live_schemas = _discover_postgres_schemas(host, port, database, username, password)
         elif db_type in ("mssql", "sqlserver"):
             live_schemas = _discover_mssql_schemas(host, port, database, username, password)

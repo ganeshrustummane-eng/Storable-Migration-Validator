@@ -1,0 +1,192 @@
+{
+  "schema_version": 2,
+  "source": {
+    "database": "my_test_pg",
+    "db_type": "postgresql",
+    "schema": "public",
+    "table": "orders"
+  },
+  "target": {
+    "database": "MV_TEST",
+    "db_type": "snowflake",
+    "schema": "PUBLIC",
+    "table": "ORDERS"
+  },
+  "source_table": "my_test_pg.public.orders",
+  "target_table": "MV_TEST.PUBLIC.ORDERS",
+  "status": "complete",
+  "generated_at": "2026-09-13T14:28:50.076106",
+  "generated_by": "ai",
+  "model_used": "gpt-4o",
+  "ai_calls_made": 0,
+  "has_fivetran_active": false,
+  "source_filter": "",
+  "target_filter": "",
+  "population_scope": {},
+  "relationships": [],
+  "identity": {
+    "type": "primary_key",
+    "source_primary_keys": [
+      "id"
+    ],
+    "target_primary_keys": [
+      "ID"
+    ],
+    "candidate_keys": []
+  },
+  "row_hash": null,
+  "transformations": [],
+  "validations": [],
+  "requires_review": false,
+  "review_reasons": [],
+  "primary_keys": {
+    "source": [
+      "id"
+    ],
+    "target": [
+      "ID"
+    ],
+    "mismatch": false,
+    "mismatch_reason": ""
+  },
+  "stats": {
+    "total_source_columns": 9,
+    "active_mappings": 9,
+    "skipped_mappings": 0,
+    "exact_matches": 9,
+    "fuzzy_matches": 0,
+    "ai_resolved": 0,
+    "unmatched_source": 0
+  },
+  "exclusions": {
+    "total_source_columns": 9,
+    "validated": 9,
+    "excluded": [],
+    "excluded_count": 0,
+    "coverage_pct": 100.0
+  },
+  "warnings": [],
+  "ambiguities": [],
+  "unmatched_source_columns": [],
+  "unmatched_target_columns": [],
+  "mappings": [
+    {
+      "source_column": "id",
+      "source_type": "integer",
+      "source_normalized": "id",
+      "target_column": "ID",
+      "target_type": "NUMBER",
+      "target_normalized": "id",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)",
+      "is_primary_key": true
+    },
+    {
+      "source_column": "customer_id",
+      "source_type": "integer",
+      "source_normalized": "customerid",
+      "target_column": "CUSTOMER_ID",
+      "target_type": "NUMBER",
+      "target_normalized": "customerid",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "order_date",
+      "source_type": "date",
+      "source_normalized": "orderdate",
+      "target_column": "ORDER_DATE",
+      "target_type": "DATE",
+      "target_normalized": "orderdate",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "status",
+      "source_type": "character varying",
+      "source_normalized": "status",
+      "target_column": "STATUS",
+      "target_type": "TEXT",
+      "target_normalized": "status",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "total_amount",
+      "source_type": "numeric",
+      "source_normalized": "totalamount",
+      "target_column": "TOTAL_AMOUNT",
+      "target_type": "NUMBER",
+      "target_normalized": "totalamount",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "notes",
+      "source_type": "text",
+      "source_normalized": "notes",
+      "target_column": "NOTES",
+      "target_type": "TEXT",
+      "target_normalized": "notes",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "is_paid",
+      "source_type": "boolean",
+      "source_normalized": "ispaid",
+      "target_column": "IS_PAID",
+      "target_type": "BOOLEAN",
+      "target_normalized": "ispaid",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "created_at",
+      "source_type": "timestamp without time zone",
+      "source_normalized": "createdat",
+      "target_column": "CREATED_AT",
+      "target_type": "TIMESTAMP_NTZ",
+      "target_normalized": "createdat",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "updated_at",
+      "source_type": "timestamp without time zone",
+      "source_normalized": "updatedat",
+      "target_column": "UPDATED_AT",
+      "target_type": "TIMESTAMP_NTZ",
+      "target_normalized": "updatedat",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    }
+  ]
+}

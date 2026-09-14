@@ -1,0 +1,179 @@
+{
+  "schema_version": 2,
+  "source": {
+    "database": "mv_test_mssql",
+    "db_type": "mssql",
+    "schema": "dbo",
+    "table": "inventory"
+  },
+  "target": {
+    "database": "MV_TEST",
+    "db_type": "snowflake",
+    "schema": "PUBLIC",
+    "table": "INVENTORY"
+  },
+  "source_table": "mv_test_mssql.dbo.inventory",
+  "target_table": "MV_TEST.PUBLIC.INVENTORY",
+  "status": "complete",
+  "generated_at": "2026-09-13T14:39:02.572048",
+  "generated_by": "ai",
+  "model_used": "gpt-4o",
+  "ai_calls_made": 0,
+  "has_fivetran_active": false,
+  "source_filter": "",
+  "target_filter": "",
+  "population_scope": {},
+  "relationships": [],
+  "identity": {
+    "type": "primary_key",
+    "source_primary_keys": [
+      "id"
+    ],
+    "target_primary_keys": [
+      "ID"
+    ],
+    "candidate_keys": []
+  },
+  "row_hash": null,
+  "transformations": [],
+  "validations": [],
+  "requires_review": false,
+  "review_reasons": [],
+  "primary_keys": {
+    "source": [
+      "id"
+    ],
+    "target": [
+      "ID"
+    ],
+    "mismatch": false,
+    "mismatch_reason": ""
+  },
+  "stats": {
+    "total_source_columns": 8,
+    "active_mappings": 8,
+    "skipped_mappings": 0,
+    "exact_matches": 8,
+    "fuzzy_matches": 0,
+    "ai_resolved": 0,
+    "unmatched_source": 0
+  },
+  "exclusions": {
+    "total_source_columns": 8,
+    "validated": 8,
+    "excluded": [],
+    "excluded_count": 0,
+    "coverage_pct": 100.0
+  },
+  "warnings": [],
+  "ambiguities": [],
+  "unmatched_source_columns": [],
+  "unmatched_target_columns": [],
+  "mappings": [
+    {
+      "source_column": "id",
+      "source_type": "integer",
+      "source_normalized": "id",
+      "target_column": "ID",
+      "target_type": "NUMBER",
+      "target_normalized": "id",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)",
+      "is_primary_key": true
+    },
+    {
+      "source_column": "product_id",
+      "source_type": "integer",
+      "source_normalized": "productid",
+      "target_column": "PRODUCT_ID",
+      "target_type": "NUMBER",
+      "target_normalized": "productid",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "warehouse_code",
+      "source_type": "character varying",
+      "source_normalized": "warehousecode",
+      "target_column": "WAREHOUSE_CODE",
+      "target_type": "TEXT",
+      "target_normalized": "warehousecode",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "quantity",
+      "source_type": "integer",
+      "source_normalized": "quantity",
+      "target_column": "QUANTITY",
+      "target_type": "NUMBER",
+      "target_normalized": "quantity",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "reorder_level",
+      "source_type": "integer",
+      "source_normalized": "reorderlevel",
+      "target_column": "REORDER_LEVEL",
+      "target_type": "NUMBER",
+      "target_normalized": "reorderlevel",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "last_restocked",
+      "source_type": "timestamp without time zone",
+      "source_normalized": "lastrestocked",
+      "target_column": "LAST_RESTOCKED",
+      "target_type": "TIMESTAMP_NTZ",
+      "target_normalized": "lastrestocked",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "created_at",
+      "source_type": "timestamp without time zone",
+      "source_normalized": "createdat",
+      "target_column": "CREATED_AT",
+      "target_type": "TIMESTAMP_NTZ",
+      "target_normalized": "createdat",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "updated_at",
+      "source_type": "timestamp without time zone",
+      "source_normalized": "updatedat",
+      "target_column": "UPDATED_AT",
+      "target_type": "TIMESTAMP_NTZ",
+      "target_normalized": "updatedat",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    }
+  ]
+}

@@ -1,0 +1,338 @@
+{
+  "meta": {
+    "generatedAt": "2026-09-01T11:01:28.028Z",
+    "rangeLabel": "all",
+    "agents": [
+      "claude"
+    ],
+    "projectFilter": "all",
+    "totals": {
+      "sessions": 1,
+      "durationMs": 13775929,
+      "turns": 65,
+      "files": 16,
+      "netLines": 558,
+      "toolCallsTotal": 77,
+      "toolSuccessRate": 98.7,
+      "totalCostUSD": 12.697003800000001,
+      "cacheReadCostUSD": 1.4531118,
+      "pricedSessions": 1
+    },
+    "unpricedModels": [],
+    "coverage": [
+      {
+        "agentName": "claude",
+        "total": 1,
+        "priced": 1,
+        "withLog": 1
+      }
+    ],
+    "periodStart": "2026-09-01T06:04:12.209Z"
+  },
+  "sessions": [
+    {
+      "sessionId": "eaab3e57-fc48-41dc-aefa-1c07bd673610",
+      "agentName": "claude",
+      "provider": "ai-run-sso",
+      "title": "I think our logic for json/jsonb/hstore/array--> variant is working correctly write a document how we did it and how we can resolve this i have to provide to the lead about it. if possible could you please create more inserts into it so i can we view for multiple test cases run on tool to check whether its working correctly or not",
+      "project": "C:\\Gemini-Hackathon\\Migration-validator",
+      "branch": "version1",
+      "startTime": 1788242652209,
+      "durationMs": 13775929,
+      "turns": 65,
+      "fileOps": 16,
+      "linesAdded": 673,
+      "linesRemoved": 115,
+      "linesModified": 0,
+      "netLines": 558,
+      "filesChanged": 5,
+      "filesWritten": 1,
+      "filesEdited": 5,
+      "toolCallsTotal": 77,
+      "toolCallsSuccess": 76,
+      "toolCallsFailure": 1,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "languages": [
+        "markdown",
+        "python"
+      ],
+      "tools": [
+        {
+          "toolName": "Edit",
+          "totalCalls": 46,
+          "successCount": 45,
+          "failureCount": 1,
+          "successRate": 97.82608695652173
+        },
+        {
+          "toolName": "Read",
+          "totalCalls": 21,
+          "successCount": 21,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Glob",
+          "totalCalls": 3,
+          "successCount": 3,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Grep",
+          "totalCalls": 3,
+          "successCount": 3,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Bash",
+          "totalCalls": 3,
+          "successCount": 3,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Write",
+          "totalCalls": 1,
+          "successCount": 1,
+          "failureCount": 0,
+          "successRate": 100
+        }
+      ],
+      "tokens": {
+        "input": 12645,
+        "output": 206413,
+        "cacheRead": 4843706,
+        "cacheCreation": 1351627,
+        "cacheCreation1h": 1351627,
+        "total": 6414391
+      },
+      "costUSD": 12.697003800000001,
+      "cacheReadCostUSD": 1.4531118,
+      "perModelCost": [
+        {
+          "model": "claude-sonnet-4-6",
+          "tokens": {
+            "input": 12645,
+            "output": 206413,
+            "cacheRead": 4843706,
+            "cacheCreation": 1351627,
+            "cacheCreation1h": 1351627,
+            "total": 6414391
+          },
+          "costUSD": 12.697003800000001,
+          "unpriced": false
+        }
+      ],
+      "costSeries": [
+        {
+          "t": 1788243070669,
+          "cost": 0.275301,
+          "tokens": 45495
+        },
+        {
+          "t": 1788243087302,
+          "cost": 0.6974031,
+          "tokens": 168848
+        },
+        {
+          "t": 1788243428056,
+          "cost": 1.4451171,
+          "tokens": 260823
+        },
+        {
+          "t": 1788243668156,
+          "cost": 1.8185922,
+          "tokens": 418461
+        },
+        {
+          "t": 1788244133722,
+          "cost": 1.9429044,
+          "tokens": 580072
+        },
+        {
+          "t": 1788248945644,
+          "cost": 3.2239794,
+          "tokens": 764663
+        },
+        {
+          "t": 1788249089617,
+          "cost": 3.7358754,
+          "tokens": 849654
+        },
+        {
+          "t": 1788249130241,
+          "cost": 3.8382234,
+          "tokens": 1022722
+        },
+        {
+          "t": 1788249152707,
+          "cost": 4.4158893,
+          "tokens": 1198365
+        },
+        {
+          "t": 1788249293027,
+          "cost": 4.5352869,
+          "tokens": 1378302
+        },
+        {
+          "t": 1788249300952,
+          "cost": 4.569057,
+          "tokens": 1467681
+        },
+        {
+          "t": 1788249316060,
+          "cost": 4.6501668,
+          "tokens": 1647499
+        },
+        {
+          "t": 1788249329921,
+          "cost": 4.9973505,
+          "tokens": 1828652
+        },
+        {
+          "t": 1788249343145,
+          "cost": 5.0721726,
+          "tokens": 2011609
+        },
+        {
+          "t": 1788249353995,
+          "cost": 5.1103674,
+          "tokens": 2103735
+        },
+        {
+          "t": 1788249374024,
+          "cost": 5.2079679,
+          "tokens": 2289367
+        },
+        {
+          "t": 1788249393508,
+          "cost": 5.2920714,
+          "tokens": 2477390
+        },
+        {
+          "t": 1788249404712,
+          "cost": 5.3911743,
+          "tokens": 2667855
+        },
+        {
+          "t": 1788249413614,
+          "cost": 5.4402243,
+          "tokens": 2764544
+        },
+        {
+          "t": 1788249450118,
+          "cost": 5.5446249,
+          "tokens": 2960096
+        },
+        {
+          "t": 1788249469444,
+          "cost": 5.6334336,
+          "tokens": 3159648
+        },
+        {
+          "t": 1788253552848,
+          "cost": 5.8518948,
+          "tokens": 3374689
+        },
+        {
+          "t": 1788253739463,
+          "cost": 6.8139348,
+          "tokens": 3517799
+        },
+        {
+          "t": 1788253926434,
+          "cost": 7.9817013,
+          "tokens": 3795068
+        },
+        {
+          "t": 1788254255730,
+          "cost": 8.0961159,
+          "tokens": 4063797
+        },
+        {
+          "t": 1788254457298,
+          "cost": 9.0926364,
+          "tokens": 4356898
+        },
+        {
+          "t": 1788254602384,
+          "cost": 9.1759002,
+          "tokens": 4410130
+        },
+        {
+          "t": 1788254647204,
+          "cost": 9.3208338,
+          "tokens": 4523258
+        },
+        {
+          "t": 1788255643907,
+          "cost": 9.765048,
+          "tokens": 4650843
+        },
+        {
+          "t": 1788256144835,
+          "cost": 10.5691122,
+          "tokens": 4827191
+        },
+        {
+          "t": 1788256284322,
+          "cost": 10.7647359,
+          "tokens": 4919670
+        },
+        {
+          "t": 1788256307922,
+          "cost": 10.9594626,
+          "tokens": 5090830
+        },
+        {
+          "t": 1788256321525,
+          "cost": 11.0345478,
+          "tokens": 5263842
+        },
+        {
+          "t": 1788256341391,
+          "cost": 11.3640279,
+          "tokens": 5438962
+        },
+        {
+          "t": 1788256351450,
+          "cost": 11.3983512,
+          "tokens": 5527240
+        },
+        {
+          "t": 1788256372062,
+          "cost": 11.4830937,
+          "tokens": 5705132
+        },
+        {
+          "t": 1788256396791,
+          "cost": 11.5672926,
+          "tokens": 5885331
+        },
+        {
+          "t": 1788258861342,
+          "cost": 12.054972,
+          "tokens": 6095436
+        },
+        {
+          "t": 1788258864850,
+          "cost": 12.0863934,
+          "tokens": 6187166
+        },
+        {
+          "t": 1788259308843,
+          "cost": 12.6970038,
+          "tokens": 6414391
+        }
+      ],
+      "skillInvocations": [],
+      "agentInvocations": [],
+      "commandInvocations": [],
+      "sessionSource": "Pure chat"
+    }
+  ]
+}

@@ -15,7 +15,7 @@
   "source_table": "DevT5000.dbo.AcctSoftware",
   "target_table": "DEV_SITELINK_BRONZE.AWSDEV_DEVT5000_DBO.ACCTSOFTWARE",
   "status": "complete",
-  "generated_at": "2026-08-27T17:04:59.600565",
+  "generated_at": "2026-09-02T11:05:19.271217",
   "generated_by": "ai",
   "model_used": "gpt-4o",
   "ai_calls_made": 0,

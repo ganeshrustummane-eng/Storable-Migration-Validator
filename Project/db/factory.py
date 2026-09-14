@@ -26,6 +26,7 @@ _TYPE_ALIASES = {
     "postgresql": {"postgresql", "postgres"},
     "mssql": {"mssql", "mssqlserver"},
     "athena": {"athena", "aws_athena"},
+    "redshift": {"redshift", "aws_redshift"},
 }
 
 
@@ -55,23 +56,50 @@ def _find_source(env: dict, db_type: str) -> dict:
     )
 
 
-def get_database(db_type, BASE_DIR, environment):
+def get_database(db_type, BASE_DIR, environment,
+                 override_database: str = "", override_schema: str = ""):
+    """
+    Build a DB connector from .env credentials + optional YAML-level overrides.
+
+    override_database / override_schema come from the YAML config and take
+    precedence over whatever DATABASE/SCHEMA is in .env.  Only credentials
+    (host, port, user, password, driver) stay in .env — the database and schema
+    are the user's choice at generation time and travel with the YAML.
+    """
     env = _load_env(environment)
 
     if db_type == "postgresql":
         src = _find_source(env, "postgresql")
         return Postgres(
-            dbname=src["DATABASE"], host=src["HOST"],
-            user=src["USERNAME"], password=src.get("PASSWORD", ""),
+            dbname=override_database or src["DATABASE"],
+            host=src["HOST"],
+            user=src["USERNAME"],
+            password=src.get("PASSWORD", ""),
             port=int(src.get("PORT") or 5432),
+            schema=override_schema or src.get("SCHEMA", ""),
+        )
+
+    elif db_type == "redshift":
+        # Redshift speaks the PostgreSQL wire protocol — reuse Postgres as-is,
+        # just with a different default port.
+        src = _find_source(env, "redshift")
+        return Postgres(
+            dbname=override_database or src["DATABASE"],
+            host=src["HOST"],
+            user=src["USERNAME"],
+            password=src.get("PASSWORD", ""),
+            port=int(src.get("PORT") or 5439),
+            schema=override_schema or src.get("SCHEMA", ""),
         )
 
     elif db_type == "mssql":
         src = _find_source(env, "mssql")
         return Mssqlserver(
             DRIVER=src.get("DRIVER", "ODBC Driver 18 for SQL Server"),
-            SERVER=src["HOST"], DATABASE=src["DATABASE"],
-            UID=src.get("USERNAME", ""), PWD=src.get("PASSWORD", ""),
+            SERVER=src["HOST"],
+            DATABASE=override_database or src["DATABASE"],
+            UID=src.get("USERNAME", ""),
+            PWD=src.get("PASSWORD", ""),
         )
 
     elif db_type == "athena":
@@ -79,8 +107,11 @@ def get_database(db_type, BASE_DIR, environment):
         region = src.get("REGION") or src.get("HOST", "us-east-1")
         s3_output = src.get("QUERY_RESULT_LOCATION") or env.get("ATHENA_S3_OUTPUT", "")
         return Athena(
-            AWS_REGION=region, ATHENA_DB=src["DATABASE"], ATHENA_OUTPUT=s3_output,
-            ACCESS_KEY=src.get("USERNAME", ""), SECRET_KEY=src.get("PASSWORD", ""),
+            AWS_REGION=region,
+            ATHENA_DB=override_database or src["DATABASE"],
+            ATHENA_OUTPUT=s3_output,
+            ACCESS_KEY=src.get("USERNAME", ""),
+            SECRET_KEY=src.get("PASSWORD", ""),
         )
 
     elif db_type == "snowflake":
@@ -88,8 +119,8 @@ def get_database(db_type, BASE_DIR, environment):
             SNOWFLAKE_ACCOUNT=env.get("SNOWFLAKE_ACCOUNT", ""),
             SNOWFLAKE_USER=env.get("SNOWFLAKE_USERNAME", ""),
             SNOWFLAKE_PASSWORD=env.get("SNOWFLAKE_PASSWORD", ""),
-            SNOWFLAKE_DATABASE=env.get("SNOWFLAKE_DATABASE", ""),
-            SNOWFLAKE_SCHEMA=env.get("SNOWFLAKE_SCHEMA", ""),
+            SNOWFLAKE_DATABASE=override_database or env.get("SNOWFLAKE_DATABASE", ""),
+            SNOWFLAKE_SCHEMA=override_schema or env.get("SNOWFLAKE_SCHEMA", ""),
             SNOWFLAKE_WAREHOUSE=env.get("SNOWFLAKE_WAREHOUSE", ""),
         )
 

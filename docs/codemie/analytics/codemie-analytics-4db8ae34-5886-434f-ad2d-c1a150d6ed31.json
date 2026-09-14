@@ -1,0 +1,402 @@
+{
+  "meta": {
+    "generatedAt": "2026-09-01T15:18:56.580Z",
+    "rangeLabel": "all",
+    "agents": [
+      "claude"
+    ],
+    "projectFilter": "all",
+    "totals": {
+      "sessions": 1,
+      "durationMs": 8571329,
+      "turns": 127,
+      "files": 28,
+      "netLines": 1191,
+      "toolCallsTotal": 142,
+      "toolSuccessRate": 97.2,
+      "totalCostUSD": 12.9131856,
+      "cacheReadCostUSD": 3.4941666000000002,
+      "pricedSessions": 1
+    },
+    "unpricedModels": [],
+    "coverage": [
+      {
+        "agentName": "claude",
+        "total": 1,
+        "priced": 1,
+        "withLog": 1
+      }
+    ],
+    "periodStart": "2026-09-01T11:01:37.874Z"
+  },
+  "sessions": [
+    {
+      "sessionId": "4db8ae34-5886-434f-ad2d-c1a150d6ed31",
+      "agentName": "claude",
+      "provider": "ai-run-sso",
+      "title": "Give me a quick overview of this Migration Validator project. Read: Project/main.py, src/validate_cli.py, src/gemini_connector/gemini_agent.py, src/gemini_connector/tools.py, src/rule_book.py, and list the top-level directory structure. I need to understand: (1) what the tool currently does, (2) what connectors/databases it supports, (3) how Athena is integrated, (4) how YAML config generation works (single vs batch). Be concise - bullet points.",
+      "project": "C:\\Gemini-Hackathon\\Migration-validator",
+      "branch": "version1",
+      "startTime": 1788260497874,
+      "durationMs": 8571329,
+      "turns": 127,
+      "fileOps": 28,
+      "linesAdded": 1274,
+      "linesRemoved": 83,
+      "linesModified": 0,
+      "netLines": 1191,
+      "filesChanged": 14,
+      "filesWritten": 4,
+      "filesEdited": 11,
+      "toolCallsTotal": 142,
+      "toolCallsSuccess": 138,
+      "toolCallsFailure": 4,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "languages": [
+        "python",
+        "markdown",
+        "yaml",
+        "json"
+      ],
+      "tools": [
+        {
+          "toolName": "Read",
+          "totalCalls": 52,
+          "successCount": 52,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Edit",
+          "totalCalls": 42,
+          "successCount": 42,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "TaskUpdate",
+          "totalCalls": 10,
+          "successCount": 10,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Grep",
+          "totalCalls": 10,
+          "successCount": 9,
+          "failureCount": 1,
+          "successRate": 90
+        },
+        {
+          "toolName": "Bash",
+          "totalCalls": 9,
+          "successCount": 7,
+          "failureCount": 2,
+          "successRate": 77.77777777777779
+        },
+        {
+          "toolName": "Glob",
+          "totalCalls": 8,
+          "successCount": 7,
+          "failureCount": 1,
+          "successRate": 87.5
+        },
+        {
+          "toolName": "TaskCreate",
+          "totalCalls": 5,
+          "successCount": 5,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Write",
+          "totalCalls": 4,
+          "successCount": 4,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Agent",
+          "totalCalls": 1,
+          "successCount": 1,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "PowerShell",
+          "totalCalls": 1,
+          "successCount": 1,
+          "failureCount": 0,
+          "successRate": 100
+        }
+      ],
+      "tokens": {
+        "input": 1198,
+        "output": 91947,
+        "cacheRead": 11647222,
+        "cacheCreation": 1339370,
+        "cacheCreation1h": 1339370,
+        "total": 13079737
+      },
+      "costUSD": 12.9131856,
+      "cacheReadCostUSD": 3.4941666000000002,
+      "perModelCost": [
+        {
+          "model": "claude-sonnet-4-6",
+          "tokens": {
+            "input": 1198,
+            "output": 91947,
+            "cacheRead": 11647222,
+            "cacheCreation": 1339370,
+            "cacheCreation1h": 1339370,
+            "total": 13079737
+          },
+          "costUSD": 12.9131856,
+          "unpriced": false
+        }
+      ],
+      "costSeries": [
+        {
+          "t": 1788260533419,
+          "cost": 0.0832536,
+          "tokens": 46003
+        },
+        {
+          "t": 1788260640964,
+          "cost": 0.9826302,
+          "tokens": 222260
+        },
+        {
+          "t": 1788261246900,
+          "cost": 1.452207,
+          "tokens": 375869
+        },
+        {
+          "t": 1788261291379,
+          "cost": 2.0672076,
+          "tokens": 692541
+        },
+        {
+          "t": 1788261312776,
+          "cost": 2.4665061,
+          "tokens": 971649
+        },
+        {
+          "t": 1788261455252,
+          "cost": 2.5734177,
+          "tokens": 1253436
+        },
+        {
+          "t": 1788261465294,
+          "cost": 2.6670207,
+          "tokens": 1537201
+        },
+        {
+          "t": 1788261545749,
+          "cost": 3.2048505,
+          "tokens": 1934022
+        },
+        {
+          "t": 1788262185918,
+          "cost": 3.4760754,
+          "tokens": 2254934
+        },
+        {
+          "t": 1788262227610,
+          "cost": 3.7902804,
+          "tokens": 2605092
+        },
+        {
+          "t": 1788262247015,
+          "cost": 3.9372492,
+          "tokens": 2960119
+        },
+        {
+          "t": 1788262306900,
+          "cost": 4.1857686,
+          "tokens": 3444492
+        },
+        {
+          "t": 1788262326484,
+          "cost": 4.3408896,
+          "tokens": 3813748
+        },
+        {
+          "t": 1788262342659,
+          "cost": 4.475778,
+          "tokens": 4186861
+        },
+        {
+          "t": 1788262375995,
+          "cost": 4.6181028,
+          "tokens": 4562238
+        },
+        {
+          "t": 1788263659304,
+          "cost": 4.7906448,
+          "tokens": 4945340
+        },
+        {
+          "t": 1788263848509,
+          "cost": 5.600385,
+          "tokens": 5470836
+        },
+        {
+          "t": 1788265344115,
+          "cost": 5.8153611,
+          "tokens": 5881665
+        },
+        {
+          "t": 1788265678098,
+          "cost": 7.0087293,
+          "tokens": 6239280
+        },
+        {
+          "t": 1788265740806,
+          "cost": 7.2922965,
+          "tokens": 6440497
+        },
+        {
+          "t": 1788266677701,
+          "cost": 7.626096,
+          "tokens": 6719348
+        },
+        {
+          "t": 1788266827279,
+          "cost": 8.0435394,
+          "tokens": 6948443
+        },
+        {
+          "t": 1788266877130,
+          "cost": 8.1531855,
+          "tokens": 7179855
+        },
+        {
+          "t": 1788267008387,
+          "cost": 8.6038776,
+          "tokens": 7428162
+        },
+        {
+          "t": 1788267148239,
+          "cost": 9.1319499,
+          "tokens": 7789647
+        },
+        {
+          "t": 1788267199938,
+          "cost": 9.2715771,
+          "tokens": 8066555
+        },
+        {
+          "t": 1788267255810,
+          "cost": 9.3966321,
+          "tokens": 8351254
+        },
+        {
+          "t": 1788267309135,
+          "cost": 9.5602716,
+          "tokens": 8644046
+        },
+        {
+          "t": 1788267364644,
+          "cost": 9.6980484,
+          "tokens": 8941911
+        },
+        {
+          "t": 1788267450052,
+          "cost": 9.8800539,
+          "tokens": 9347367
+        },
+        {
+          "t": 1788267519778,
+          "cost": 10.0299336,
+          "tokens": 9659167
+        },
+        {
+          "t": 1788267579504,
+          "cost": 10.5110217,
+          "tokens": 9974911
+        },
+        {
+          "t": 1788267629935,
+          "cost": 10.6267596,
+          "tokens": 10293072
+        },
+        {
+          "t": 1788267711640,
+          "cost": 10.8218043,
+          "tokens": 10729395
+        },
+        {
+          "t": 1788268613677,
+          "cost": 11.0193672,
+          "tokens": 11075007
+        },
+        {
+          "t": 1788268701287,
+          "cost": 11.2660125,
+          "tokens": 11433371
+        },
+        {
+          "t": 1788268782409,
+          "cost": 11.406537,
+          "tokens": 11799252
+        },
+        {
+          "t": 1788268898084,
+          "cost": 12.1143486,
+          "tokens": 12303461
+        },
+        {
+          "t": 1788268984304,
+          "cost": 12.7424025,
+          "tokens": 12688262
+        },
+        {
+          "t": 1788269069203,
+          "cost": 12.9131856,
+          "tokens": 13079737
+        }
+      ],
+      "dispatches": [
+        {
+          "kind": "agent",
+          "name": "Explore",
+          "start": 1788260533419,
+          "durationMs": 74262,
+          "costUSD": 0.792306,
+          "tokens": {
+            "input": 4,
+            "output": 2960,
+            "cacheRead": 0,
+            "cacheCreation": 124649,
+            "cacheCreation1h": 124649,
+            "total": 127613
+          },
+          "tools": [
+            {
+              "name": "Read",
+              "calls": 5
+            },
+            {
+              "name": "Bash",
+              "calls": 1
+            }
+          ]
+        }
+      ],
+      "skillInvocations": [],
+      "agentInvocations": [
+        {
+          "name": "Explore",
+          "totalCalls": 9,
+          "successCount": 9,
+          "failureCount": 0
+        }
+      ],
+      "commandInvocations": [],
+      "sessionSource": "Pure chat"
+    }
+  ]
+}

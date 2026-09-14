@@ -15,7 +15,7 @@
   "source_table": "DevT5000.dbo.Addresses",
   "target_table": "DEV_SITELINK_BRONZE.AWSDEV_DEVT5000_DBO.ADDRESSES",
   "status": "complete",
-  "generated_at": "2026-08-27T17:05:20.627217",
+  "generated_at": "2026-09-02T15:17:16.127944",
   "generated_by": "ai",
   "model_used": "gpt-4o",
   "ai_calls_made": 0,
@@ -32,17 +32,17 @@
     "mismatch_reason": "Source PK ['AddressID'] does not match target PK ['ADDRESSID', '_FIVETRAN_START'] (normalized: ['addressid'] vs ['addressid', 'fivetranstart']). Using fuzzy/AI matching — verify manually."
   },
   "stats": {
-    "total_source_columns": 26,
-    "active_mappings": 26,
+    "total_source_columns": 25,
+    "active_mappings": 25,
     "skipped_mappings": 0,
-    "exact_matches": 26,
+    "exact_matches": 25,
     "fuzzy_matches": 0,
     "ai_resolved": 0,
     "unmatched_source": 0
   },
   "exclusions": {
-    "total_source_columns": 26,
-    "validated": 26,
+    "total_source_columns": 25,
+    "validated": 25,
     "excluded": [],
     "excluded_count": 0,
     "coverage_pct": 100.0
@@ -205,19 +205,6 @@
       "target_column": "SPOSTALCODE",
       "target_type": "TEXT",
       "target_normalized": "spostalcode",
-      "match_method": "exact",
-      "confidence": 1.0,
-      "transformation_rule": "text",
-      "validation_rules": [],
-      "reason": "Matched by exact (confidence=1.00)"
-    },
-    {
-      "source_column": "sCountry",
-      "source_type": "character varying",
-      "source_normalized": "scountry",
-      "target_column": "SCOUNTRY",
-      "target_type": "TEXT",
-      "target_normalized": "scountry",
       "match_method": "exact",
       "confidence": 1.0,
       "transformation_rule": "text",

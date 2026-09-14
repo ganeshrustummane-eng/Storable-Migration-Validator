@@ -19,8 +19,9 @@ Tool catalogue:
   get_applicable_rules       get_validation_plan    generate_validation_plan
   generate_validation_sql    execute_validation     get_validation_result
   get_validation_failures    get_migration_summary  get_coverage
-  approve_mapping            reject_mapping         modify_mapping
-  approve_rule               approve_plan           get_business_metrics
+  approve_mapping            batch_approve_mappings  reject_mapping
+  modify_mapping             approve_rule            approve_plan
+  get_business_metrics
 """
 
 from __future__ import annotations
@@ -1118,6 +1119,8 @@ def approve_mapping(
     Approve a pending column mapping.
 
     Rule: AI recommends. Human approves. This action is audited.
+    Idempotent: approving an already-approved mapping returns ok with action="already_approved".
+    Auto-accepted mappings (confidence >= threshold, never stored) are acknowledged without error.
 
     Args:
         record_id: Format "<table>.<source_column>"
@@ -1128,6 +1131,32 @@ def approve_mapping(
         return _err("approve_mapping requires an authenticated human actor. AI cannot self-approve.")
 
     try:
+        existing = approval_store.get(record_id)
+
+        # Already approved — idempotent
+        if existing is not None and existing.status == ApprovalStatus.APPROVED.value:
+            return _ok(
+                record_id=record_id,
+                action="already_approved",
+                actor=existing.decided_by,
+                decided_at=existing.decided_at,
+                mapping=f"{existing.source_column} → {existing.target_column}",
+                table=existing.table,
+                note="Mapping was already approved — no change made.",
+            )
+
+        # Auto-accepted mapping (high-confidence, never written to store)
+        if existing is None:
+            return _ok(
+                record_id=record_id,
+                action="auto_accepted",
+                actor="system",
+                note=(
+                    f"No pending record found for '{record_id}'. "
+                    "This mapping was likely auto-accepted (confidence >= threshold) and needs no human action."
+                ),
+            )
+
         result = approval_store.approve(record_id, actor, reason)
         if result is None:
             return _err(f"No pending mapping found for '{record_id}'.")
@@ -1155,6 +1184,63 @@ def approve_mapping(
 
 
 # ---------------------------------------------------------------------------
+# 18b. batch_approve_mappings
+# ---------------------------------------------------------------------------
+
+def batch_approve_mappings(
+    record_ids: List[str],
+    actor: str,
+    reason: str = "",
+) -> Dict[str, Any]:
+    """
+    Approve multiple pending column mappings in a single call.
+
+    Designed for agent workflows where many mappings need human sign-off:
+    the agent collects all IDs from get_pending_reviews, presents them to
+    the human, receives approval, then calls this once.
+
+    Args:
+        record_ids: List of "<table>.<source_column>" identifiers
+        actor:      Authenticated human user
+        reason:     Shared rationale applied to every approval
+
+    Returns:
+        Summary with per-record outcome (approved / already_approved / auto_accepted / error).
+    """
+    if not actor or actor.lower() in ("", "gemini_ai", "ai"):
+        return _err("batch_approve_mappings requires an authenticated human actor.")
+    if not record_ids:
+        return _err("record_ids must be a non-empty list.")
+
+    results = []
+    approved_count = 0
+    skipped_count = 0
+    error_count = 0
+
+    for rec_id in record_ids:
+        outcome = approve_mapping(rec_id, actor, reason)
+        action = outcome.get("action", "error")
+        if outcome.get("status") == "error":
+            error_count += 1
+            results.append({"id": rec_id, "outcome": "error", "message": outcome.get("message", "")})
+        elif action in ("already_approved", "auto_accepted"):
+            skipped_count += 1
+            results.append({"id": rec_id, "outcome": action})
+        else:
+            approved_count += 1
+            results.append({"id": rec_id, "outcome": "approved"})
+
+    return _ok(
+        total=len(record_ids),
+        approved=approved_count,
+        skipped=skipped_count,
+        errors=error_count,
+        actor=actor,
+        results=results,
+    )
+
+
+# ---------------------------------------------------------------------------
 # 19. reject_mapping
 # ---------------------------------------------------------------------------
 
@@ -1162,6 +1248,7 @@ def reject_mapping(
     record_id: str,
     actor: str,
     reason: str,
+    create_jira_ticket: bool = True,
 ) -> Dict[str, Any]:
     """
     Reject a pending column mapping.
@@ -1170,6 +1257,7 @@ def reject_mapping(
         record_id: Format "<table>.<source_column>"
         actor: Authenticated user identity
         reason: Required — why this mapping is rejected
+        create_jira_ticket: Auto-create JIRA ticket (default True if JIRA configured)
     """
     if not actor or actor.lower() in ("", "gemini_ai", "ai"):
         return _err("reject_mapping requires an authenticated human actor.")
@@ -1191,13 +1279,47 @@ def reject_mapping(
             reason=reason,
         ))
 
-        return _ok(
+        response = _ok(
             record_id=record_id,
             action="rejected",
             actor=actor,
             decided_at=result.decided_at,
             reason=reason,
         )
+
+        # Optionally create JIRA ticket for rejected mapping
+        if create_jira_ticket:
+            from gemini_connector import jira_client
+            if jira_client.is_configured():
+                try:
+                    table_name = record_id.split(".")[0] if "." in record_id else record_id
+                    jira_result = jira_client.create_ticket(
+                        summary=f"Rejected Mapping: {record_id}",
+                        description=(
+                            f"A column mapping was rejected during migration validation review.\n\n"
+                            f"📋 Mapping Details:\n"
+                            f"  - Record ID: {record_id}\n"
+                            f"  - Source Column: {record_id.split('.')[-1] if '.' in record_id else 'N/A'}\n"
+                            f"  - Confidence: {result.confidence if hasattr(result, 'confidence') else 'N/A'}\n\n"
+                            f"❌ Rejection Reason:\n"
+                            f"{reason}\n\n"
+                            f"👤 Rejected By: {actor}\n"
+                            f"📅 Rejected At: {result.decided_at}\n\n"
+                            f"🔍 Next Steps:\n"
+                            f"1. Review source and target column definitions\n"
+                            f"2. Confirm correct target column in Snowflake\n"
+                            f"3. Update mapping using modify_mapping tool\n"
+                            f"4. Re-run validation"
+                        ),
+                        labels=["migration-validator", "rejected-mapping", table_name]
+                    )
+                    response["jira_ticket"] = jira_result
+                    response["message"] = f"Mapping rejected and JIRA ticket {jira_result['key']} created."
+                except jira_client.JiraError as je:
+                    logger.warning(f"Failed to create JIRA ticket: {je}")
+                    response["jira_warning"] = f"Mapping rejected but JIRA ticket creation failed: {je}"
+
+        return response
     except Exception as exc:
         return _err(f"reject_mapping failed: {exc}")
 
@@ -1495,6 +1617,107 @@ def get_coverage(
 
 
 # ---------------------------------------------------------------------------
+# 24. create_jira_ticket
+# ---------------------------------------------------------------------------
+
+def create_jira_ticket(
+    summary: str,
+    description: str,
+    table: str = "",
+    labels: Optional[List[str]] = None,
+    priority: str = "Medium",
+) -> Dict[str, Any]:
+    """
+    Create a JIRA ticket for a migration issue.
+
+    Use this when you need to escalate an issue, track a complex mapping decision,
+    or create a follow-up task for the migration team.
+
+    Args:
+        summary: Brief description (becomes JIRA ticket title)
+        description: Detailed explanation of the issue
+        table: Optional table name (added to labels automatically)
+        labels: Additional labels for the ticket
+        priority: Ticket priority (Low, Medium, High, Highest)
+    """
+    try:
+        from gemini_connector import jira_client
+
+        if not jira_client.is_configured():
+            return _ok(
+                status="skipped",
+                message=(
+                    "JIRA is not configured. To enable ticket creation, set "
+                    "JIRA_URL, JIRA_EMAIL, JIRA_API_TOKEN, and JIRA_PROJECT_KEY "
+                    "in your .env file. See docs/deployment/jira-integration.md for details."
+                ),
+            )
+
+        # Build labels list
+        ticket_labels = ["migration-validator"]
+        if table:
+            ticket_labels.append(table)
+        if labels:
+            ticket_labels.extend(labels)
+        result = jira_client.create_ticket(
+            summary=summary,
+            description=description,
+            labels=ticket_labels,
+            priority=priority,
+        )
+
+        # Log audit event
+        audit_logger.log(AuditRecord(
+            action="create_jira_ticket",
+            entity_type="jira_ticket",
+            entity_id=result["key"],
+            actor="system",
+            previous={},
+            new_state={"summary": summary, "url": result["url"]},
+            reason=f"Manual ticket creation: {summary}",
+        ))
+
+        return _ok(
+            jira_key=result["key"],
+            jira_url=result["url"],
+            message=f"JIRA ticket {result['key']} created successfully.",
+            summary=summary,
+            labels=ticket_labels,
+        )
+
+    except Exception as exc:
+        return _err(f"create_jira_ticket failed: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# 25. get_jira_ticket_status
+# ---------------------------------------------------------------------------
+
+def get_jira_ticket_status(
+    ticket_key: str,
+) -> Dict[str, Any]:
+    """
+    Get the current status of a JIRA ticket.
+
+    Args:
+        ticket_key: JIRA ticket key (e.g., "MIG-123")
+    """
+    try:
+        from gemini_connector import jira_client
+
+        if not jira_client.is_configured():
+            return _err("JIRA is not configured.")
+
+        ticket = jira_client.get_ticket(ticket_key)
+        return _ok(**ticket)
+
+    except jira_client.JiraError as exc:
+        return _err(f"JIRA error: {exc}")
+    except Exception as exc:
+        return _err(f"get_jira_ticket_status failed: {exc}")
+
+
+# ---------------------------------------------------------------------------
 # Tool registry for Gemini function-calling
 # ---------------------------------------------------------------------------
 
@@ -1518,11 +1741,14 @@ _RAW_TOOL_FUNCTIONS: Dict[str, Any] = {
     "get_migration_summary":     get_migration_summary,
     "get_coverage":              get_coverage,
     "approve_mapping":           approve_mapping,
+    "batch_approve_mappings":    batch_approve_mappings,
     "reject_mapping":            reject_mapping,
     "modify_mapping":            modify_mapping,
     "approve_rule":              approve_rule,
     "approve_plan":              approve_plan,
     "get_business_metrics":      get_business_metrics,
+    "create_jira_ticket":        create_jira_ticket,
+    "get_jira_ticket_status":    get_jira_ticket_status,
 }
 
 # Wrap every registered tool with the observability decorator

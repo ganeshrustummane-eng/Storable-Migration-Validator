@@ -10,19 +10,29 @@ import sys
 def generate_runid():
     return datetime.now().strftime("%Y%m%d_%H%M%S_%f"),datetime.now().strftime("%d-%b-%Y %H:%M:%S.%f")
 
-#Return sql based on load_type[Historical/Incremental]
-def generate_sql(load_type,source_query,target_query,from_date,to_date,col):
 
-    if load_type.lower() == 'historical':
-        source_query = source_query 
-        target_query = target_query 
+def count_validation_match(source_rows: int, target_rows: int, threshold_pct: float = 0):
+    """Decide PASS/FAIL for count_validation. threshold_pct=0 means exact match
+    required (the historical default — every existing YAML keeps this behavior
+    unless it explicitly sets count_mismatch_threshold_pct). Returns (is_match, diff_pct)."""
+    if threshold_pct > 0 and source_rows > 0:
+        diff_pct = abs(target_rows - source_rows) / source_rows * 100
+        return diff_pct <= threshold_pct, diff_pct
+    return source_rows == target_rows, (0.0 if source_rows == target_rows else float("inf"))
 
-    elif load_type.lower() == 'incremental':
-        incremental_query = f" where {col} between {from_date} and {to_date}"
-        source_query = source_query + incremental_query
-        target_query = target_query + incremental_query
 
-    return source_query,target_query
+def row_hash_fallback_looks_like_column_drift(n_source_only: int, n_target_only: int, total_rows: int) -> bool:
+    """Heuristic for the row_hash PK fallback: when no primary key is configured,
+    the row's identity IS the hash of every common column, so one un-normalized
+    column (e.g. timestamp precision) desyncs every hash on both sides — every
+    row looks "missing" from the other side's index instead of one clear
+    column-level mismatch. Roughly-equal SOURCE_ONLY/TARGET_ONLY counts across
+    most of the table is that failure mode's signature, not real row loss."""
+    if total_rows <= 0 or n_source_only == 0 or n_target_only == 0:
+        return False
+    closeness = 1 - abs(n_source_only - n_target_only) / max(n_source_only, n_target_only)
+    return closeness >= 0.9 and (n_source_only + n_target_only) / total_rows >= 0.5
+
 
 #Function to read the correct configuration file based on the parameters passed
 def get_config_output_paths(run_id,layer_type,base_dir,config_path,validation_dirs,table_list):
@@ -67,14 +77,20 @@ def get_config_output_paths(run_id,layer_type,base_dir,config_path,validation_di
             )
 
             yaml_paths = []
+            config_root = Path(base_dir) / "config" / layer_type[0]
+            report_root = Path(base_dir) / "config" / "report"
+            search_roots = [config_root] + ([report_root] if report_root.exists() else [])
             if 'all' in table_list:
-                all_configs = (os.listdir(os.path.join(base_dir, "config", layer_type[0], validation)))
-                for table in all_configs:
-                    yaml_paths.extend([(os.path.join(base_dir, "config", layer_type[0], validation,f"{table}"))])
-
+                yaml_paths = [str(p) for root in search_roots
+                              for p in root.rglob("*.yaml") if p.parent.name == validation]
             else:
+                all_valid_yamls = {p.stem: str(p) for root in search_roots
+                                   for p in root.rglob("*.yaml") if p.parent.name == validation}
                 for table in table_list:
-                    yaml_paths.extend([(os.path.join(base_dir, "config", layer_type[0], validation,f"{table}.yaml"))])
+                    if table in all_valid_yamls:
+                        yaml_paths.append(all_valid_yamls[table])
+                    else:
+                        yaml_paths.append(str(config_root / validation / f"{table}.yaml"))
 
             configpaths[validation] = yaml_paths
             outputpaths[validation] = path

@@ -38,6 +38,7 @@ uvicorn[standard]             # ASGI server for FastAPI
 PyJWT>=2.8.0                  # JWT token validation (auth layer)
 httpx>=0.27.0                 # async HTTP client (FastAPI TestClient)
 requests>=2.31.0               # Jira REST API client (Review & Approve ticket creation)
+apscheduler>=3.10.0            # Scheduled validation runs (sidebar scheduler UI)
 
 # Development dependencies (optional)
 # For testing

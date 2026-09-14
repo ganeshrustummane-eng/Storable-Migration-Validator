@@ -10,6 +10,7 @@ Supported sources:
     mssql / sqlserver / sql_server → MSSQLExtractor
     snowflake                     → SnowflakeExtractor
     athena / aws_athena           → AthenaExtractor
+    redshift / aws_redshift       → RedshiftExtractor
 """
 
 import importlib
@@ -137,6 +138,12 @@ class BaseExtractor(ABC):
         return PrimaryKeyInfo(table_name=table, columns=[], detected=False,
                               detection_note="PK detection not implemented for this extractor")
 
+    def detect_foreign_keys(self, schema: str, table: str) -> List[dict]:
+        """Return FK relationships for table as list of dicts:
+        {fk_column, ref_schema, ref_table, ref_column}
+        Base implementation returns empty — override in DB-specific subclasses."""
+        return []
+
     @staticmethod
     def has_fivetran_active(columns: List[ColumnMetadata]) -> bool:
         return any(col.column_name.upper() == "_FIVETRAN_ACTIVE" for col in columns)
@@ -178,6 +185,19 @@ class PostgresExtractor(BaseExtractor):
         WHERE tc.constraint_type = 'PRIMARY KEY'
           AND tc.table_schema    = %s AND tc.table_name = %s
         ORDER BY kcu.ordinal_position;
+    """
+    _FK_SQL = """
+        SELECT kcu.column_name AS fk_column,
+               ccu.table_schema AS ref_schema,
+               ccu.table_name   AS ref_table,
+               ccu.column_name  AS ref_column
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+        JOIN information_schema.constraint_column_usage ccu
+          ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema
+        WHERE tc.constraint_type = 'FOREIGN KEY'
+          AND tc.table_schema = %s AND tc.table_name = %s;
     """
 
     def __init__(self, host=None, port=None, database=None, username=None, password=None, **_):
@@ -259,6 +279,21 @@ class PostgresExtractor(BaseExtractor):
             return PrimaryKeyInfo(table_name=table, columns=[], detected=False,
                                   detection_note=f"Detection failed: {e}")
 
+    def detect_foreign_keys(self, schema: str, table: str) -> List[dict]:
+        try:
+            import psycopg2.extras
+            conn = self._get_connection()
+            try:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute(self._FK_SQL, (schema, table.lower()))
+                    rows = cur.fetchall()
+            finally:
+                conn.close()
+            return [dict(r) for r in rows]
+        except Exception as e:
+            print(f"  ⚠ [PostgreSQL] FK detection failed for {schema}.{table}: {e}")
+            return []
+
     @staticmethod
     def _row_to_column(row: dict) -> ColumnMetadata:
         nullable_val = row.get("is_nullable")
@@ -324,6 +359,20 @@ class MSSQLExtractor(BaseExtractor):
          AND tc.TABLE_NAME = kcu.TABLE_NAME
         WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY' AND tc.TABLE_SCHEMA = ? AND tc.TABLE_NAME = ?
         ORDER BY kcu.ORDINAL_POSITION;
+    """
+    _FK_SQL = """
+        SELECT kcu.COLUMN_NAME AS fk_column,
+               ccu.TABLE_SCHEMA AS ref_schema,
+               ccu.TABLE_NAME   AS ref_table,
+               ccu.COLUMN_NAME  AS ref_column
+        FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+        JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+          ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME AND tc.TABLE_SCHEMA = kcu.TABLE_SCHEMA
+        JOIN INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS rc
+          ON rc.CONSTRAINT_NAME = tc.CONSTRAINT_NAME AND rc.CONSTRAINT_SCHEMA = tc.TABLE_SCHEMA
+        JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE ccu
+          ON ccu.CONSTRAINT_NAME = rc.UNIQUE_CONSTRAINT_NAME AND ccu.TABLE_SCHEMA = rc.UNIQUE_CONSTRAINT_SCHEMA
+        WHERE tc.CONSTRAINT_TYPE = 'FOREIGN KEY' AND tc.TABLE_SCHEMA = ? AND tc.TABLE_NAME = ?;
     """
 
     def __init__(self, host=None, port=None, database=None, username=None, password=None,
@@ -406,6 +455,21 @@ class MSSQLExtractor(BaseExtractor):
             print(f"  ⚠ [MSSQL] PK detection failed for {schema}.{table}: {e}")
             return PrimaryKeyInfo(table_name=table, columns=[], detected=False,
                                   detection_note=f"Detection failed: {e}")
+
+    def detect_foreign_keys(self, schema: str, table: str) -> List[dict]:
+        try:
+            conn = self._get_connection()
+            try:
+                cur = conn.cursor()
+                cur.execute(self._FK_SQL, (schema, table))
+                cols = [d[0].lower() for d in cur.description]
+                rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+            finally:
+                conn.close()
+            return rows
+        except Exception as e:
+            print(f"  ⚠ [MSSQL] FK detection failed for {schema}.{table}: {e}")
+            return []
 
     @staticmethod
     def _row_to_column(row: dict) -> ColumnMetadata:
@@ -716,6 +780,38 @@ class AthenaExtractor(BaseExtractor):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# SECTION 6b — Redshift extractor (Postgres wire protocol, different type names)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_REDSHIFT_TYPE_MAP = {
+    "super": "json",       # semi-structured type — closest PG-compatible bucket
+    "varbyte": "bytea",
+    "hllsketch": "text",
+    "geometry": "text",
+    "geography": "text",
+}
+
+
+def _normalise_redshift_type(raw: str) -> str:
+    """Redshift's information_schema reports standard types (varchar, int4,
+    int8, numeric, timestamp, boolean, ...) identically to PostgreSQL — only
+    Redshift-only types need mapping to a PostgreSQL-compatible name."""
+    return _REDSHIFT_TYPE_MAP.get(raw.lower().strip(), raw)
+
+
+class RedshiftExtractor(PostgresExtractor):
+    """Redshift speaks the PostgreSQL wire protocol and shares Postgres's
+    information_schema shape (including PK constraint metadata) — only type
+    normalization differs."""
+
+    @staticmethod
+    def _row_to_column(row: dict) -> ColumnMetadata:
+        col = PostgresExtractor._row_to_column(row)
+        col.data_type = _normalise_redshift_type(col.data_type)
+        return col
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # SECTION 7 — Factory
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -731,12 +827,15 @@ _REGISTRY = {
     "snowflake":  ("sql_extractor.extractors", "SnowflakeExtractor"),
     "athena":     ("sql_extractor.extractors", "AthenaExtractor"),
     "aws_athena": ("sql_extractor.extractors", "AthenaExtractor"),
+    "redshift":     ("sql_extractor.extractors", "RedshiftExtractor"),
+    "aws_redshift": ("sql_extractor.extractors", "RedshiftExtractor"),
 }
 
 _DEFAULT_PORTS = {
     "postgresql": 5432, "postgres": 5432, "pg": 5432,
     "mssql": 1433, "sqlserver": 1433, "sql_server": 1433,
     "snowflake": 443, "athena": 443, "aws_athena": 443,
+    "redshift": 5439, "aws_redshift": 5439,
 }
 
 

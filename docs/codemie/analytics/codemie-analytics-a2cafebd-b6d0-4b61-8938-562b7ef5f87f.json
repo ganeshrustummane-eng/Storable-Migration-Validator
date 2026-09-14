@@ -1,0 +1,171 @@
+{
+  "meta": {
+    "generatedAt": "2026-09-07T09:28:14.907Z",
+    "rangeLabel": "all",
+    "agents": [
+      "claude"
+    ],
+    "projectFilter": "all",
+    "totals": {
+      "sessions": 1,
+      "durationMs": 228467,
+      "turns": 8,
+      "files": 5,
+      "netLines": 0,
+      "toolCallsTotal": 13,
+      "toolSuccessRate": 100,
+      "totalCostUSD": 0.924105,
+      "cacheReadCostUSD": 0.095052,
+      "pricedSessions": 1
+    },
+    "unpricedModels": [],
+    "coverage": [
+      {
+        "agentName": "claude",
+        "total": 1,
+        "priced": 1,
+        "withLog": 1
+      }
+    ],
+    "periodStart": "2026-09-07T06:19:58.197Z"
+  },
+  "sessions": [
+    {
+      "sessionId": "a2cafebd-b6d0-4b61-8938-562b7ef5f87f",
+      "agentName": "claude",
+      "provider": "ai-run-sso",
+      "title": "/ponytail:ponytail Act as an Data Quality AI-Native Engineer with 15+ Years of Experience We have different deployment modes such as local,dev,prod,uat etc suppose i want to test in prod then how should i run anything i can do with UI where we will provide an option to selct the mode and based on that will run",
+      "project": "C:\\Gemini-Hackathon\\Migration-validator",
+      "branch": "version1.2",
+      "startTime": 1788761998197,
+      "durationMs": 228467,
+      "turns": 8,
+      "fileOps": 5,
+      "linesAdded": 0,
+      "linesRemoved": 0,
+      "linesModified": 0,
+      "netLines": 0,
+      "filesChanged": 0,
+      "filesWritten": 0,
+      "filesEdited": 0,
+      "toolCallsTotal": 13,
+      "toolCallsSuccess": 13,
+      "toolCallsFailure": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "languages": [
+        "python"
+      ],
+      "tools": [
+        {
+          "toolName": "Read",
+          "totalCalls": 10,
+          "successCount": 10,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Grep",
+          "totalCalls": 2,
+          "successCount": 2,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Glob",
+          "totalCalls": 1,
+          "successCount": 1,
+          "failureCount": 0,
+          "successRate": 100
+        }
+      ],
+      "tokens": {
+        "input": 3101,
+        "output": 3498,
+        "cacheRead": 316840,
+        "cacheCreation": 127880,
+        "cacheCreation1h": 127880,
+        "total": 451319
+      },
+      "costUSD": 0.924105,
+      "cacheReadCostUSD": 0.095052,
+      "perModelCost": [
+        {
+          "model": "claude-sonnet-4-6",
+          "tokens": {
+            "input": 3101,
+            "output": 3498,
+            "cacheRead": 316840,
+            "cacheCreation": 127880,
+            "cacheCreation1h": 127880,
+            "total": 451319
+          },
+          "costUSD": 0.924105,
+          "unpriced": false
+        }
+      ],
+      "costSeries": [
+        {
+          "t": 1788762151895,
+          "cost": 0.0947286,
+          "tokens": 48184
+        },
+        {
+          "t": 1788762158513,
+          "cost": 0.2065002,
+          "tokens": 100057
+        },
+        {
+          "t": 1788762162867,
+          "cost": 0.2455632,
+          "tokens": 153900
+        },
+        {
+          "t": 1788762169832,
+          "cost": 0.3834078,
+          "tokens": 209161
+        },
+        {
+          "t": 1788762175345,
+          "cost": 0.7291428,
+          "tokens": 266472
+        },
+        {
+          "t": 1788762191195,
+          "cost": 0.813384,
+          "tokens": 325276
+        },
+        {
+          "t": 1788762202911,
+          "cost": 0.8576586,
+          "tokens": 386913
+        },
+        {
+          "t": 1788762234547,
+          "cost": 0.924105,
+          "tokens": 451319
+        }
+      ],
+      "dispatches": [
+        {
+          "kind": "command",
+          "name": "ponytail:ponytail",
+          "start": 1788762141370,
+          "durationMs": 0
+        }
+      ],
+      "skillInvocations": [],
+      "agentInvocations": [],
+      "commandInvocations": [
+        {
+          "name": "ponytail:ponytail",
+          "totalCalls": 1,
+          "successCount": 1,
+          "failureCount": 0
+        }
+      ],
+      "sessionSource": "Pure chat"
+    }
+  ]
+}

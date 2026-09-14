@@ -1,0 +1,173 @@
+{
+  "schema_version": 1,
+  "source": {
+    "database": "migration_test",
+    "db_type": "mssql",
+    "schema": "dbo",
+    "table": "employees"
+  },
+  "target": {
+    "database": "MIGRATION_TEST",
+    "db_type": "snowflake",
+    "schema": "PUBLIC",
+    "table": "EMPLOYEES"
+  },
+  "source_table": "migration_test.dbo.employees",
+  "target_table": "MIGRATION_TEST.PUBLIC.EMPLOYEES",
+  "status": "complete",
+  "generated_at": "2026-09-01T18:40:33.977362",
+  "generated_by": "ai",
+  "model_used": "gpt-4o",
+  "ai_calls_made": 0,
+  "has_fivetran_active": false,
+  "primary_keys": {
+    "source": [
+      "employee_id"
+    ],
+    "target": [
+      "EMPLOYEE_ID"
+    ],
+    "mismatch": false,
+    "mismatch_reason": ""
+  },
+  "stats": {
+    "total_source_columns": 9,
+    "active_mappings": 9,
+    "skipped_mappings": 0,
+    "exact_matches": 9,
+    "fuzzy_matches": 0,
+    "ai_resolved": 0,
+    "unmatched_source": 0
+  },
+  "exclusions": {
+    "total_source_columns": 9,
+    "validated": 9,
+    "excluded": [],
+    "excluded_count": 0,
+    "coverage_pct": 100.0
+  },
+  "warnings": [],
+  "ambiguities": [],
+  "unmatched_source_columns": [],
+  "unmatched_target_columns": [],
+  "mappings": [
+    {
+      "source_column": "employee_id",
+      "source_type": "integer",
+      "source_normalized": "employeeid",
+      "target_column": "EMPLOYEE_ID",
+      "target_type": "NUMBER",
+      "target_normalized": "employeeid",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)",
+      "is_primary_key": true
+    },
+    {
+      "source_column": "first_name",
+      "source_type": "character varying",
+      "source_normalized": "firstname",
+      "target_column": "FIRST_NAME",
+      "target_type": "TEXT",
+      "target_normalized": "firstname",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "last_name",
+      "source_type": "character varying",
+      "source_normalized": "lastname",
+      "target_column": "LAST_NAME",
+      "target_type": "TEXT",
+      "target_normalized": "lastname",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "email",
+      "source_type": "character varying",
+      "source_normalized": "email",
+      "target_column": "EMAIL",
+      "target_type": "TEXT",
+      "target_normalized": "email",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "hire_date",
+      "source_type": "date",
+      "source_normalized": "hiredate",
+      "target_column": "HIRE_DATE",
+      "target_type": "DATE",
+      "target_normalized": "hiredate",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "dept_id",
+      "source_type": "integer",
+      "source_normalized": "deptid",
+      "target_column": "DEPT_ID",
+      "target_type": "NUMBER",
+      "target_normalized": "deptid",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "manager_id",
+      "source_type": "integer",
+      "source_normalized": "managerid",
+      "target_column": "MANAGER_ID",
+      "target_type": "NUMBER",
+      "target_normalized": "managerid",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "job_title",
+      "source_type": "character varying",
+      "source_normalized": "jobtitle",
+      "target_column": "JOB_TITLE",
+      "target_type": "TEXT",
+      "target_normalized": "jobtitle",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "years_exp",
+      "source_type": "integer",
+      "source_normalized": "yearsexp",
+      "target_column": "YEARS_EXP",
+      "target_type": "NUMBER",
+      "target_normalized": "yearsexp",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    }
+  ]
+}

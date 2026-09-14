@@ -10,12 +10,12 @@
     "database": "dev_edge_bronze",
     "db_type": "snowflake",
     "schema": "storedge_fms_public",
-    "table": "general_ledger_line_items"
+    "table": "GENERAL_LEDGER_LINE_ITEMS"
   },
   "source_table": "fms.public.general_ledger_line_items",
-  "target_table": "dev_edge_bronze.storedge_fms_public.general_ledger_line_items",
+  "target_table": "dev_edge_bronze.storedge_fms_public.GENERAL_LEDGER_LINE_ITEMS",
   "status": "complete",
-  "generated_at": "2026-08-27T17:40:02.982203",
+  "generated_at": "2026-09-04T16:45:49.559278",
   "generated_by": "ai",
   "model_used": "gpt-4o",
   "ai_calls_made": 0,
@@ -30,17 +30,17 @@
     "mismatch_reason": ""
   },
   "stats": {
-    "total_source_columns": 19,
-    "active_mappings": 19,
+    "total_source_columns": 17,
+    "active_mappings": 17,
     "skipped_mappings": 0,
-    "exact_matches": 19,
+    "exact_matches": 17,
     "fuzzy_matches": 0,
     "ai_resolved": 0,
     "unmatched_source": 0
   },
   "exclusions": {
-    "total_source_columns": 19,
-    "validated": 19,
+    "total_source_columns": 17,
+    "validated": 17,
     "excluded": [],
     "excluded_count": 0,
     "coverage_pct": 100.0
@@ -170,19 +170,6 @@
       "reason": "Matched by exact (confidence=1.00)"
     },
     {
-      "source_column": "uuid",
-      "source_type": "uuid",
-      "source_normalized": "uuid",
-      "target_column": "UUID",
-      "target_type": "TEXT",
-      "target_normalized": "uuid",
-      "match_method": "exact",
-      "confidence": 1.0,
-      "transformation_rule": "text",
-      "validation_rules": [],
-      "reason": "Matched by exact (confidence=1.00)"
-    },
-    {
       "source_column": "reversal",
       "source_type": "boolean",
       "source_normalized": "reversal",
@@ -267,19 +254,6 @@
       "target_column": "REFERENCE_NUMBER",
       "target_type": "TEXT",
       "target_normalized": "referencenumber",
-      "match_method": "exact",
-      "confidence": 1.0,
-      "transformation_rule": "text",
-      "validation_rules": [],
-      "reason": "Matched by exact (confidence=1.00)"
-    },
-    {
-      "source_column": "display_code",
-      "source_type": "character varying",
-      "source_normalized": "displaycode",
-      "target_column": "DISPLAY_CODE",
-      "target_type": "TEXT",
-      "target_normalized": "displaycode",
       "match_method": "exact",
       "confidence": 1.0,
       "transformation_rule": "text",

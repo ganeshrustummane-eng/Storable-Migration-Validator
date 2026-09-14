@@ -29,7 +29,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 # Bumped whenever the persisted plan JSON changes shape incompatibly.
-PLAN_SCHEMA_VERSION = 1
+PLAN_SCHEMA_VERSION = 2
 
 
 # ---------------------------------------------------------------------------
@@ -54,6 +54,101 @@ class MatchMethod(Enum):
     AI              = "ai"               # AI direct match (rare)
     STATIC          = "static"           # Legacy static mapper (backward compat)
     SKIP            = "skip"             # Column intentionally skipped
+
+
+@dataclass
+class RelationshipSpec:
+    """Metadata-backed relationship used by population or comparison validation."""
+
+    left_table: str
+    left_columns: List[str]
+    right_table: str
+    right_columns: List[str]
+    purpose: str = "population"
+    join_type: str = "inner"
+    cardinality: str = "unknown"
+    source_right_table: str = ""
+    target_right_table: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "left_table": self.left_table, "left_columns": list(self.left_columns),
+            "right_table": self.right_table, "right_columns": list(self.right_columns),
+            "purpose": self.purpose, "join_type": self.join_type,
+            "cardinality": self.cardinality, "source_right_table": self.source_right_table,
+            "target_right_table": self.target_right_table,
+        }
+
+    @classmethod
+    def from_dict(cls, value: Dict[str, Any]) -> "RelationshipSpec":
+        return cls(left_table=value.get("left_table", ""), left_columns=list(value.get("left_columns", [])),
+                   right_table=value.get("right_table", ""), right_columns=list(value.get("right_columns", [])),
+                   purpose=value.get("purpose", "population"), join_type=value.get("join_type", "inner"),
+                   cardinality=value.get("cardinality", "unknown"),
+                   source_right_table=value.get("source_right_table", ""),
+                   target_right_table=value.get("target_right_table", ""))
+
+
+@dataclass
+class RowHashSpec:
+    """Normalized content fingerprint specification, separate from identity."""
+
+    algorithm: str = "SHA256"
+    columns: List[str] = field(default_factory=list)
+    normalization: Dict[str, Any] = field(default_factory=dict)
+    excluded_columns: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"algorithm": self.algorithm, "columns": list(self.columns),
+                "normalization": dict(self.normalization), "excluded_columns": list(self.excluded_columns)}
+
+    @classmethod
+    def from_dict(cls, value: Optional[Dict[str, Any]]) -> Optional["RowHashSpec"]:
+        return cls(algorithm=value.get("algorithm", "SHA256"), columns=list(value.get("columns", [])),
+                   normalization=dict(value.get("normalization", {})),
+                   excluded_columns=list(value.get("excluded_columns", []))) if value else None
+
+
+@dataclass
+class TransformationCheck:
+    """Expected source-to-target expression comparison."""
+
+    name: str
+    source_expression: str
+    target_expression: str
+    tolerance: Optional[float] = None
+    rule_id: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return self.__dict__.copy()
+
+    @classmethod
+    def from_dict(cls, value: Dict[str, Any]) -> "TransformationCheck":
+        return cls(name=value.get("name", ""), source_expression=value.get("source_expression", ""),
+                   target_expression=value.get("target_expression", ""), tolerance=value.get("tolerance"),
+                   rule_id=value.get("rule_id", ""))
+
+
+@dataclass
+class ValidationSpec:
+    """One composable validation intent within a plan."""
+
+    validation_type: str
+    name: str = ""
+    columns: List[str] = field(default_factory=list)
+    expected_behavior: str = ""
+    options: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"validation_type": self.validation_type, "name": self.name,
+                "columns": list(self.columns), "expected_behavior": self.expected_behavior,
+                "options": dict(self.options)}
+
+    @classmethod
+    def from_dict(cls, value: Dict[str, Any]) -> "ValidationSpec":
+        return cls(validation_type=value.get("validation_type", ""), name=value.get("name", ""),
+                   columns=list(value.get("columns", [])), expected_behavior=value.get("expected_behavior", ""),
+                   options=dict(value.get("options", {})))
 
 
 # ---------------------------------------------------------------------------
@@ -238,6 +333,24 @@ class CanonicalValidationPlan:
     unmatched_source_columns: List[str] = field(default_factory=list)
     unmatched_target_columns: List[str] = field(default_factory=list)
 
+    # ── Migration filters ──────────────────────────────────────────────────
+    # WHERE predicate (no "WHERE" keyword) applied during SQL generation.
+    # source_filter scopes the source query; target_filter scopes the target.
+    # Empty string = no filter (full-table scan, original behaviour).
+    # Example: source_filter="created_at >= '2024-01-01'"
+    source_filter: str = ""
+    target_filter: str = ""  # if blank, mirrors source_filter at generate time
+
+    population_scope: Dict[str, Any] = field(default_factory=dict)
+    relationships: List[RelationshipSpec] = field(default_factory=list)
+    identity_type: str = "primary_key"
+    candidate_keys: List[List[str]] = field(default_factory=list)
+    row_hash: Optional[RowHashSpec] = None
+    transformations: List[TransformationCheck] = field(default_factory=list)
+    validations: List[ValidationSpec] = field(default_factory=list)
+    requires_review: bool = False
+    review_reasons: List[str] = field(default_factory=list)
+
     # ── Generation metadata ────────────────────────────────────────────────
     ai_calls_made:   int = 0
     model_used:      str = "N/A"
@@ -356,6 +469,21 @@ class CanonicalValidationPlan:
             "model_used":     self.model_used,
             "ai_calls_made":  self.ai_calls_made,
             "has_fivetran_active": self.has_fivetran_active,
+            "source_filter": self.source_filter,
+            "target_filter": self.target_filter,
+            "population_scope": self.population_scope,
+            "relationships": [r.to_dict() for r in self.relationships],
+            "identity": {
+                "type": self.identity_type,
+                "source_primary_keys": list(self.source_primary_keys),
+                "target_primary_keys": list(self.target_primary_keys),
+                "candidate_keys": [list(key) for key in self.candidate_keys],
+            },
+            "row_hash": self.row_hash.to_dict() if self.row_hash else None,
+            "transformations": [t.to_dict() for t in self.transformations],
+            "validations": [v.to_dict() for v in self.validations],
+            "requires_review": self.requires_review,
+            "review_reasons": list(self.review_reasons),
             "primary_keys": {
                 "source": self.source_primary_keys,
                 "target": self.target_primary_keys,
@@ -403,6 +531,17 @@ class CanonicalValidationPlan:
             target_table=target.get("table", ""),
             mappings=[ColumnMappingEntry.from_dict(m) for m in d.get("mappings", [])],
             has_fivetran_active=bool(d.get("has_fivetran_active", False)),
+            source_filter=d.get("source_filter", ""),
+            target_filter=d.get("target_filter", ""),
+            population_scope=dict(d.get("population_scope", {})),
+            relationships=[RelationshipSpec.from_dict(r) for r in d.get("relationships", [])],
+            identity_type=(d.get("identity") or {}).get("type", "primary_key"),
+            candidate_keys=[list(key) for key in (d.get("identity") or {}).get("candidate_keys", [])],
+            row_hash=RowHashSpec.from_dict(d.get("row_hash")),
+            transformations=[TransformationCheck.from_dict(t) for t in d.get("transformations", [])],
+            validations=[ValidationSpec.from_dict(v) for v in d.get("validations", [])],
+            requires_review=bool(d.get("requires_review", False)),
+            review_reasons=list(d.get("review_reasons", [])),
             source_primary_keys=list(pks.get("source", [])),
             target_primary_keys=list(pks.get("target", [])),
             pk_mismatch=bool(pks.get("mismatch", False)),
@@ -430,6 +569,14 @@ class CanonicalValidationPlan:
             f"Fuzzy matches     : {len(self.fuzzy_matches)}",
             f"AI-resolved       : {len(self.ai_resolved_matches)}",
             f"Fivetran filter   : {self.has_fivetran_active}",
+            *(
+                [f"Source filter     : {self.source_filter}"]
+                if self.source_filter else []
+            ),
+            *(
+                [f"Target filter     : {self.target_filter}"]
+                if self.target_filter else []
+            ),
             f"AI calls made     : {self.ai_calls_made}",
             f"Model used        : {self.model_used}",
             f"Status            : {self.status.upper()}",

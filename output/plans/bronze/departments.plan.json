@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "source": {
+    "database": "migration_test",
+    "db_type": "mssql",
+    "schema": "dbo",
+    "table": "departments"
+  },
+  "target": {
+    "database": "MIGRATION_TEST",
+    "db_type": "snowflake",
+    "schema": "PUBLIC",
+    "table": "DEPARTMENTS"
+  },
+  "source_table": "migration_test.dbo.departments",
+  "target_table": "MIGRATION_TEST.PUBLIC.DEPARTMENTS",
+  "status": "complete",
+  "generated_at": "2026-09-01T18:40:00.125022",
+  "generated_by": "ai",
+  "model_used": "gpt-4o",
+  "ai_calls_made": 0,
+  "has_fivetran_active": false,
+  "primary_keys": {
+    "source": [
+      "dept_id"
+    ],
+    "target": [
+      "DEPT_ID"
+    ],
+    "mismatch": false,
+    "mismatch_reason": ""
+  },
+  "stats": {
+    "total_source_columns": 6,
+    "active_mappings": 6,
+    "skipped_mappings": 0,
+    "exact_matches": 6,
+    "fuzzy_matches": 0,
+    "ai_resolved": 0,
+    "unmatched_source": 0
+  },
+  "exclusions": {
+    "total_source_columns": 6,
+    "validated": 6,
+    "excluded": [],
+    "excluded_count": 0,
+    "coverage_pct": 100.0
+  },
+  "warnings": [],
+  "ambiguities": [],
+  "unmatched_source_columns": [],
+  "unmatched_target_columns": [],
+  "mappings": [
+    {
+      "source_column": "dept_id",
+      "source_type": "integer",
+      "source_normalized": "deptid",
+      "target_column": "DEPT_ID",
+      "target_type": "NUMBER",
+      "target_normalized": "deptid",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)",
+      "is_primary_key": true
+    },
+    {
+      "source_column": "dept_name",
+      "source_type": "character varying",
+      "source_normalized": "deptname",
+      "target_column": "DEPT_NAME",
+      "target_type": "TEXT",
+      "target_normalized": "deptname",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "location",
+      "source_type": "character varying",
+      "source_normalized": "location",
+      "target_column": "LOCATION",
+      "target_type": "TEXT",
+      "target_normalized": "location",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "budget",
+      "source_type": "numeric",
+      "source_normalized": "budget",
+      "target_column": "BUDGET",
+      "target_type": "NUMBER",
+      "target_normalized": "budget",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "created_date",
+      "source_type": "date",
+      "source_normalized": "createddate",
+      "target_column": "CREATED_DATE",
+      "target_type": "DATE",
+      "target_normalized": "createddate",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "is_active",
+      "source_type": "boolean",
+      "source_normalized": "isactive",
+      "target_column": "IS_ACTIVE",
+      "target_type": "BOOLEAN",
+      "target_normalized": "isactive",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    }
+  ]
+}

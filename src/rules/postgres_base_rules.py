@@ -109,6 +109,12 @@ class BaseValidationRule(ABC):
     def is_skip_rule(self) -> bool:
         return False
 
+    # When True, the Snowflake expression cannot be a scalar subquery because
+    # LATERAL FLATTEN inside a correlated scalar subquery is unsupported.
+    # Rules that set this must also implement snowflake_cte_sql(),
+    # snowflake_cte_join_clause(), and snowflake_cte_select_expr().
+    snowflake_needs_cte: bool = False
+
     @staticmethod
     def _coalesce_pg(expr: str) -> str:
         return f"COALESCE(CAST({expr} AS TEXT), '{NULL_PLACEHOLDER}')"
@@ -440,27 +446,40 @@ class UUIDRule(BaseValidationRule):
 
 
 class JSONRule(BaseValidationRule):
-    """JSON/JSONB → path-flattened canonical representation.
+    """JSON/JSONB → raw document text; canonicalized in Python, not in SQL.
 
-    Source (PostgreSQL):
-      Recursively flattens the JSONB value using a recursive CTE that walks
-      every key/index.  Each leaf is emitted as  path=<typed-value>  where the
-      value retains its JSON datatype (number unquoted, string double-quoted,
-      boolean as true/false, json-null as 'null').  Object keys are sorted
-      alphabetically at every level; array elements keep their 0-based index.
-      Empty objects {} and empty arrays [] are emitted as distinct sentinels.
-      SQL NULL → '<<NULL>>' via the outer COALESCE wrapper (inherited).
+    Both sides emit the document as-is and
+    Project/utils/semantic_normalize.canonicalize_value() parses, recursively
+    sorts and re-serializes it before comparison.
 
-    Target (Snowflake VARIANT / STRING):
-      Uses LATERAL FLATTEN(INPUT => PARSE_JSON(col), RECURSIVE => TRUE) to
-      traverse the full document in one pass.  Leaf rows are assembled into
-      path=<typed-value> pairs using the same conventions as the PG side.
-      Pairs are sorted and concatenated so the final string is order-stable.
+    Why not canonicalize in SQL:
+      An earlier version built a byte-identical canonical string in SQL on both
+      sides — a recursive CTE with string_agg(... ORDER BY path) on Postgres,
+      LATERAL FLATTEN + LISTAGG(... WITHIN GROUP (ORDER BY f.path)) on
+      Snowflake. Two engines cannot be relied on to agree, and they did not:
+
+        * Snowflake LISTAGG returns '' (not NULL) when every input is NULL, so
+          COALESCE(_listagg, _fallback) always picked '' and the NULL/empty
+          sentinel fallback was dead code. A NULL column read '<<EMPTY>>' on
+          the source and '' on the target — a guaranteed false mismatch.
+        * ORDER BY collation differs: Postgres uses the database collation
+          (en_US.UTF-8 ignores '_' and case at the primary level), Snowflake
+          orders by codepoint. Mixed-case keys sorted 'apple, Zebra' on one
+          side and 'Zebra, apple' on the other.
+        * jsonb_each() hard-errors on a top-level array or scalar. The
+          recursive term evaluated it unconditionally, so one row holding
+          [1,2,3] aborted the whole source query.
+        * A value that is a *string containing JSON* was compared byte-for-byte,
+          so any re-serialization by the loader read as data drift.
+        * path=value pairs joined by '|' were ambiguous for values containing
+          '=' or '|'.
+
+      Canonicalizing once in Python makes symmetry structural instead of
+      something two dialects have to coincidentally agree on.
 
     Why no TRIM():
-      Whitespace inside a JSON string value is semantically significant and
-      must not be stripped.  The outer COALESCE cast (inherited from
-      BaseValidationRule) is the only wrapper applied after flattening.
+      Whitespace inside a JSON string value is semantically significant. The
+      inherited COALESCE cast is the only wrapper applied.
     """
 
     @property
@@ -469,10 +488,9 @@ class JSONRule(BaseValidationRule):
     @property
     def description(self) -> str:
         return (
-            "JSON/JSONB → path-flattened canonical text. "
-            "Leaf values retain their datatype (number/string/bool/null). "
-            "Object keys sorted; array indexes retained. "
-            "SQL NULL → '<<NULL>>'; JSON null/{}/ [] are distinct sentinels."
+            "JSON/JSONB → raw document text; canonicalized in Python "
+            "(recursive key sort, JSON-in-string recursion, number "
+            "normalization) before comparison. SQL NULL → '<<NULL>>'."
         )
 
     @property
@@ -484,122 +502,37 @@ class JSONRule(BaseValidationRule):
         ]
 
     def _pg_expression(self, col: str) -> str:
-        # Recursive CTE that flattens a JSONB document into sorted path=value pairs.
-        # jsonb_typeof() lets us distinguish objects, arrays, scalars, and null.
-        #
-        # PostgreSQL only allows a recursive CTE's recursive term to reference
-        # itself (_jf) exactly once in its FROM clause — an earlier version of
-        # this rule split object-traversal and array-traversal into two
-        # separate "FROM _jf" branches joined by UNION ALL, which Postgres
-        # rejects outright ("recursive reference ... must not appear within
-        # its non-recursive term" / "... more than once"). The single LATERAL
-        # subquery below unifies both traversal cases behind one "FROM _jf",
-        # satisfying that restriction. Verified directly against Postgres —
-        # this used to fail to parse at all, silently making JSON/JSONB
-        # validation unusable for every table that hit this rule.
-        return (
-            f"(WITH RECURSIVE _jf(path, val) AS ("
-            f"SELECT k, v "
-            f"FROM jsonb_each({col}::jsonb) AS t(k, v) "
-            f"UNION ALL "
-            f"SELECT "
-            f"  CASE WHEN jsonb_typeof(_jf.val) = 'object' THEN _jf.path || '.' || kv.k "
-            f"       ELSE _jf.path || '[' || kv.k || ']' END, "
-            f"  kv.v "
-            f"FROM _jf, LATERAL ("
-            f"  SELECT key AS k, value AS v FROM jsonb_each(_jf.val) WHERE jsonb_typeof(_jf.val) = 'object' "
-            f"  UNION ALL "
-            f"  SELECT ord::text AS k, v FROM jsonb_array_elements(_jf.val) WITH ORDINALITY AS t(v, ord) WHERE jsonb_typeof(_jf.val) = 'array' "
-            f") AS kv(k, v) "
-            f"WHERE jsonb_typeof(_jf.val) IN ('object','array') "
-            f") "
-            f"SELECT COALESCE("
-            f"  CASE WHEN {col} IS NULL THEN NULL "
-            f"       WHEN {col}::jsonb = '{{}}' THEN '{{}}' "
-            f"       WHEN {col}::jsonb = '[]'   THEN '[]' "
-            f"       ELSE ("
-            f"         SELECT string_agg("
-            f"           path || '=' || CASE jsonb_typeof(val) "
-            f"             WHEN 'string'  THEN '\"' || (val #>> '{{}}') || '\"' "
-            f"             WHEN 'null'    THEN 'null' "
-            f"             ELSE val::text END, "
-            f"           '|' ORDER BY path) "
-            f"         FROM _jf "
-            f"         WHERE jsonb_typeof(val) NOT IN ('object','array') "
-            f"       ) END, '<<EMPTY>>') "
-            f")"
-        )
+        # Raw document text. No jsonb_each()/jsonb_array_elements() traversal,
+        # so top-level arrays and scalars are handled like anything else instead
+        # of aborting the query.
+        return f"CAST({col} AS TEXT)"
 
     def _sf_expression(self, col: str) -> str:
-        # LATERAL FLATTEN with RECURSIVE => TRUE visits every leaf in the document.
-        # PATH gives the dotted/bracketed path; VALUE is the leaf VARIANT cell.
-        # TYPEOF() distinguishes datatypes; IS_NULL_VALUE() detects JSON null vs SQL NULL.
-        # Pairs are sorted and concatenated via LISTAGG.
+        # Works whether the target column is VARIANT or VARCHAR, without needing
+        # to know which at generation time:
+        #   VARCHAR holding JSON text -> TRY_PARSE_JSON parses it -> compact JSON
+        #   VARIANT object/array      -> CAST yields its (pretty-printed) JSON
+        #                                text, re-parsed -> compact JSON
+        #   non-JSON text (e.g. a native hstore literal "k"=>"v", or a bare
+        #                                scalar string) -> TRY_PARSE_JSON is
+        #                                NULL, so the raw text passes through
+        #                                for Python to handle
+        #   SQL NULL                  -> NULL -> '<<NULL>>' via the wrapper
         #
-        # NOTE: Snowflake rejects this as a correlated scalar subquery
-        # ("Unsupported subquery type cannot be evaluated") when {col} is a
-        # column reference from an enclosing query — LATERAL FLATTEN can't be
-        # used inside a scalar subquery that correlates to an outer row this
-        # way. This form only works when {col} is NOT correlated (e.g. a
-        # literal, or already resolved). For the normal case — generating one
-        # column's comparison expression inside a table's full SELECT list —
-        # use apply_snowflake_correlated() instead, which works around this
-        # via an explicit self-join rather than an implicit correlated
-        # reference. Verified against a live Snowflake instance.
+        # TYPEOF() is deliberately NOT used: it rejects VARCHAR outright
+        # ("Invalid argument types for function 'TYPEOF': (VARCHAR)"), and these
+        # columns are frequently landed as VARCHAR rather than VARIANT.
+        # Verified against live Snowflake.
         return (
-            f"(SELECT COALESCE("
-            f"  CASE WHEN {col} IS NULL THEN NULL "
-            f"       WHEN {col} = PARSE_JSON('{{}}') THEN '{{}}' "
-            f"       WHEN {col} = PARSE_JSON('[]')   THEN '[]' "
-            f"       ELSE ("
-            f"         SELECT LISTAGG("
-            f"           f.path || '=' || "
-            f"             CASE WHEN IS_NULL_VALUE(f.value) THEN 'null' "
-            f"                  WHEN TYPEOF(f.value) = 'VARCHAR'    THEN '\"' || f.value::STRING || '\"' "
-            f"                  WHEN TYPEOF(f.value) = 'BOOLEAN' THEN f.value::STRING "
-            f"                  ELSE f.value::STRING END, "
-            f"           '|') WITHIN GROUP (ORDER BY f.path) "
-            f"         FROM LATERAL FLATTEN(INPUT => PARSE_JSON(CAST({col} AS STRING)), RECURSIVE => TRUE) f "
-            f"         WHERE TYPEOF(f.value) NOT IN ('OBJECT', 'ARRAY') "
-            f"       ) END, '<<EMPTY>>')"
-            f")"
+            f"COALESCE(TO_JSON(TRY_PARSE_JSON(CAST({col} AS STRING))), "
+            f"CAST({col} AS STRING))"
         )
 
     def _ms_expression(self, col: str) -> str:
-        # SQL Server has no recursive JSON flattening equivalent in pure SQL.
-        # Cast to NVARCHAR for transport; comparison correctness relies on the
-        # Snowflake target side producing the canonical form.
         return f"CAST({col} AS NVARCHAR(MAX))"
 
     def _athena_expression(self, col: str) -> str:
         return f"CAST({col} AS VARCHAR)"
-
-    def apply_snowflake_correlated(self, col: str, table_fqn: str, pk_col: str, alias: Optional[str] = None) -> str:
-        """Same canonical flattening as apply_snowflake(), but as a scalar
-        subquery correlated via an explicit self-join on pk_col instead of a
-        direct outer-column reference inside LATERAL FLATTEN — Snowflake
-        rejects the latter ("Unsupported subquery type cannot be evaluated").
-        Use this when generating the column's expression inside a table's
-        full SELECT list (the outer query must reference the same table,
-        unaliased or aliased consistently with table_fqn/pk_col below); use
-        apply_snowflake() only where col is already an uncorrelated value.
-        Verified against a live Snowflake instance.
-        """
-        expr = (
-            f"(SELECT LISTAGG("
-            f"    f.path || '=' || "
-            f"      CASE WHEN IS_NULL_VALUE(f.value) THEN 'null' "
-            f"           WHEN TYPEOF(f.value) = 'VARCHAR'    THEN '\"' || f.value::STRING || '\"' "
-            f"           WHEN TYPEOF(f.value) = 'BOOLEAN' THEN f.value::STRING "
-            f"           ELSE f.value::STRING END, "
-            f"    '|') WITHIN GROUP (ORDER BY f.path) "
-            f" FROM {table_fqn} AS _flt, "
-            f"   LATERAL FLATTEN(INPUT => PARSE_JSON(CAST(_flt.{col} AS STRING)), RECURSIVE => TRUE) f "
-            f" WHERE _flt.{pk_col} = {table_fqn}.{pk_col} "
-            f"   AND TYPEOF(f.value) NOT IN ('OBJECT', 'ARRAY'))"
-        )
-        wrapped = f"COALESCE(CAST({expr} AS STRING), '{NULL_PLACEHOLDER}')"
-        return f"{wrapped} AS {alias}" if alias else wrapped
 
 
 class ByteaRule(BaseValidationRule):
@@ -625,23 +558,27 @@ class ByteaRule(BaseValidationRule):
 
 
 class HStoreRule(BaseValidationRule):
-    """HStore → sorted key=value canonical representation.
+    """HStore → raw JSON text; canonicalized in Python, not in SQL.
 
     Source (PostgreSQL):
-      hstore_to_jsonb() converts the hstore to a JSONB object, then keys are
-      extracted via jsonb_each() and assembled into sorted key=value pairs
-      separated by '|'.  This produces a deterministic string regardless of
-      insertion order.  Whitespace inside values is preserved (no TRIM).
-      SQL NULL → '<<NULL>>'; empty hstore → '<<EMPTY>>'.
+      hstore_to_json() emits the map as a JSON object. This is lossless — hstore
+      values are always text-or-NULL — and means the Python side never has to
+      parse the native "k"=>"v" literal for Postgres sources.
 
-    Target (Snowflake VARCHAR / VARIANT):
-      Fivetran and most loaders migrate hstore as a JSON-formatted string
-      (e.g. '{"a":"1","b":"2"}').  PARSE_JSON + LATERAL FLATTEN produces the
-      same sorted key=value pairs as the PG side.
+    Target (Snowflake VARIANT / VARCHAR):
+      Fivetran and most loaders migrate hstore as a JSON object, so TO_JSON
+      renders it directly. Rows migrated in *native* hstore format instead are
+      still handled: they arrive as text and
+      semantic_normalize.parse_hstore_text() reads them.
+
+    Why not canonicalize in SQL — see JSONRule for the full list. The one that
+    bit this rule hardest: an hstore value can be a *string containing a JSON
+    document* (e.g. "payables"=>"[{...}]"), and the SQL form compared those
+    byte-for-byte, so any re-serialization during migration read as data drift.
+    The Python canonicalizer recurses into them.
 
     Why no TRIM():
-      Whitespace is semantically meaningful inside hstore values and must not
-      be stripped.  Trimming is reserved for pure character/text columns.
+      Whitespace is semantically meaningful inside hstore values.
     """
 
     @property
@@ -650,9 +587,9 @@ class HStoreRule(BaseValidationRule):
     @property
     def description(self) -> str:
         return (
-            "HStore → sorted key=value canonical text. "
-            "Keys sorted alphabetically; values preserve whitespace (no TRIM). "
-            "SQL NULL → '<<NULL>>'; empty hstore → '<<EMPTY>>'."
+            "HStore → raw JSON text; canonicalized in Python (recursive key "
+            "sort, JSON-in-string recursion, number normalization) before "
+            "comparison. Values preserve whitespace. SQL NULL → '<<NULL>>'."
         )
 
     @property
@@ -663,40 +600,19 @@ class HStoreRule(BaseValidationRule):
         ]
 
     def _pg_expression(self, col: str) -> str:
-        # hstore_to_jsonb converts hstore → jsonb preserving string values.
-        # jsonb_each extracts key/value pairs; string_agg sorts and joins them.
-        return (
-            f"(SELECT COALESCE("
-            f"  CASE WHEN {col} IS NULL THEN NULL "
-            f"       WHEN {col} = ''::hstore THEN '<<EMPTY>>' "
-            f"       ELSE ("
-            f"         SELECT string_agg("
-            f"           k || '=' || (v #>> '{{}}'), "
-            f"           '|' ORDER BY k) "
-            f"         FROM jsonb_each(hstore_to_jsonb({col})) AS t(k, v) "
-            f"       ) END, '<<EMPTY>>') "
-            f")"
-        )
+        # hstore_to_json emits a real JSON object, so the Python canonicalizer
+        # takes the same code path for hstore as for json/jsonb. Lossless:
+        # hstore values are always text or NULL.
+        return f"CAST(hstore_to_json({col}) AS TEXT)"
 
     def _sf_expression(self, col: str) -> str:
-        # Fivetran stores hstore as a JSON string in Snowflake.
-        # LATERAL FLATTEN produces one row per key; LISTAGG sorts and joins them.
-        #
-        # NOTE: same limitation as JSONRule — Snowflake rejects this as a
-        # correlated scalar subquery when {col} is an outer-row reference.
-        # Use apply_snowflake_correlated() when generating this column's
-        # expression inside a table's full SELECT list.
+        # Same form as JSONRule — see there for why TYPEOF() is avoided.
+        # A row migrated in native hstore format ("k"=>"v") is not valid JSON,
+        # so TRY_PARSE_JSON returns NULL and the raw literal passes through for
+        # semantic_normalize.parse_hstore_text() to read.
         return (
-            f"(SELECT COALESCE("
-            f"  CASE WHEN {col} IS NULL THEN NULL "
-            f"       WHEN TRIM(CAST({col} AS STRING)) IN ('{{}}', '') THEN '<<EMPTY>>' "
-            f"       ELSE ("
-            f"         SELECT LISTAGG("
-            f"           f.key || '=' || f.value::STRING, "
-            f"           '|') WITHIN GROUP (ORDER BY f.key) "
-            f"         FROM LATERAL FLATTEN(INPUT => PARSE_JSON(CAST({col} AS STRING))) f "
-            f"       ) END, '<<EMPTY>>')"
-            f")"
+            f"COALESCE(TO_JSON(TRY_PARSE_JSON(CAST({col} AS STRING))), "
+            f"CAST({col} AS STRING))"
         )
 
     def _ms_expression(self, col: str) -> str:
@@ -706,18 +622,67 @@ class HStoreRule(BaseValidationRule):
     def _athena_expression(self, col: str) -> str:
         return f"CAST({col} AS VARCHAR)"
 
-    def apply_snowflake_correlated(self, col: str, table_fqn: str, pk_col: str, alias: Optional[str] = None) -> str:
-        """Same canonical flattening as apply_snowflake(), but correlated via
-        an explicit self-join on pk_col — see JSONRule.apply_snowflake_correlated
-        for why. Verified against a live Snowflake instance."""
-        expr = (
-            f"(SELECT LISTAGG(f.key || '=' || f.value::STRING, '|') WITHIN GROUP (ORDER BY f.key) "
-            f" FROM {table_fqn} AS _flt, "
-            f"   LATERAL FLATTEN(INPUT => PARSE_JSON(CAST(_flt.{col} AS STRING))) f "
-            f" WHERE _flt.{pk_col} = {table_fqn}.{pk_col})"
+
+class ArrayRule(BaseValidationRule):
+    """PostgreSQL ARRAY → raw JSON text; canonicalized in Python.
+
+    Before this rule existed, an array column matched nothing specific and fell
+    through to TextRule's ("*", "*") catch-all, which applies TRIM(col). That
+    compared two different serializations and could never pass:
+        source  TRIM(col)  ->  {a,b,c}          (PostgreSQL array literal)
+        target  TRIM(col)  ->  ["a","b","c"]    (Snowflake VARIANT/ARRAY as JSON)
+
+    array_to_json() converts the array to real JSON on the source side — the
+    same trick HStoreRule uses with hstore_to_json() — so both sides hand the
+    Python canonicalizer a JSON document. Multidimensional arrays nest
+    naturally ([[1,2],[3,4]]), SQL NULL elements become JSON null, and an empty
+    array becomes [].
+
+    Element order is PRESERVED, not sorted: a JSON/SQL array is ordered, so a
+    reordered array is genuine drift and must stay visible. Only object keys
+    are sorted.
+    """
+
+    @property
+    def rule_name(self) -> str: return "array"
+
+    @property
+    def description(self) -> str:
+        return (
+            "ARRAY → array_to_json() text; canonicalized in Python. "
+            "Element order preserved (arrays are ordered); nested objects have "
+            "their keys sorted. SQL NULL → '<<NULL>>'."
         )
-        wrapped = f"COALESCE(CAST({expr} AS STRING), '{NULL_PLACEHOLDER}')"
-        return f"{wrapped} AS {alias}" if alias else wrapped
+
+    @property
+    def trigger_pairs(self) -> List[Tuple[str, str]]:
+        # PostgreSQL's information_schema reports array columns with
+        # data_type = 'ARRAY' (udt_name is _text/_int4/...), and the extractor
+        # only substitutes udt_name for 'USER-DEFINED', so 'ARRAY' is the string
+        # that reaches the registry.
+        return [
+            ("ARRAY", "VARIANT"), ("ARRAY", "ARRAY"),
+            ("ARRAY", "VARCHAR"), ("ARRAY", "STRING"), ("ARRAY", "TEXT"),
+        ]
+
+    def _pg_expression(self, col: str) -> str:
+        return f"CAST(array_to_json({col}) AS TEXT)"
+
+    def _sf_expression(self, col: str) -> str:
+        # Identical to JSONRule/HStoreRule — see JSONRule for why TYPEOF() is
+        # avoided and why the raw text falls through when parsing fails.
+        return (
+            f"COALESCE(TO_JSON(TRY_PARSE_JSON(CAST({col} AS STRING))), "
+            f"CAST({col} AS STRING))"
+        )
+
+    def _ms_expression(self, col: str) -> str:
+        # SQL Server has no array type; treat as raw text if encountered.
+        return f"CAST({col} AS NVARCHAR(MAX))"
+
+    def _athena_expression(self, col: str) -> str:
+        # Trino/Presto: render the array as JSON so Python sees a document.
+        return f"CAST(json_format(CAST({col} AS JSON)) AS VARCHAR)"
 
 
 class NullPlaceholderRule(BaseValidationRule):

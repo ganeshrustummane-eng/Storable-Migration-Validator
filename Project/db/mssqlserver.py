@@ -2,8 +2,9 @@ from db.base import Database
 import pandas as pd
 import pyodbc
 
+
 class Mssqlserver(Database):
-    def __init__(self,DRIVER,SERVER,DATABASE,UID,PWD):
+    def __init__(self, DRIVER, SERVER, DATABASE, UID, PWD):
         self.DRIVER = DRIVER
         self.SERVER = SERVER
         self.DATABASE = DATABASE
@@ -11,37 +12,38 @@ class Mssqlserver(Database):
         self.PWD = PWD
 
     def connect(self):
-        if self.UID and self.PWD: 
-            conn = pyodbc.connect(
-                    f"DRIVER={{{self.DRIVER}}};"
-                    f"SERVER=tcp:{self.SERVER},1400;"#,1400 add for storable mssqlserver
-                    f"DATABASE={self.DATABASE};"
-                    f"UID={self.UID};"
-                    f"PWD={self.PWD};"
-                    "TrustServerCertificate=yes;"
-                )
-        else:
-            conn = pyodbc.connect(
-                        f"DRIVER={{{self.DRIVER}}};"
-                        f"SERVER={self.SERVER};"
-                        f"DATABASE={self.DATABASE};"
-                        "Trusted_Connection=yes;"
-                        "Encrypt=yes;"
-                        "TrustServerCertificate=yes;"
-                        )
-            return conn
-
-    def execute_query(self,query):
-        
-        conn = self.connect()
-
-        try:
-            df = pd.read_sql(
-                query,
-                conn
+        if self.UID and self.PWD:
+            # SQL Server authentication (username + password)
+            conn_str = (
+                f"DRIVER={{{self.DRIVER}}};"
+                f"SERVER={self.SERVER};"
+                f"DATABASE={self.DATABASE};"
+                f"UID={self.UID};"
+                f"PWD={self.PWD};"
+                "TrustServerCertificate=yes;"
             )
-        finally:
-            assert conn is not None
-            conn.close()
+        else:
+            # Windows / Azure AD integrated authentication
+            conn_str = (
+                f"DRIVER={{{self.DRIVER}}};"
+                f"SERVER={self.SERVER};"
+                f"DATABASE={self.DATABASE};"
+                "Trusted_Connection=yes;"
+                "Encrypt=yes;"
+                "TrustServerCertificate=yes;"
+            )
+        return pyodbc.connect(conn_str)
 
-        return df 
+    def execute_query(self, query):
+        conn = self.connect()
+        cur = None
+        try:
+            cur = conn.cursor()
+            cur.execute(query)
+            columns = [col[0] for col in cur.description]
+            rows = cur.fetchall()
+            return pd.DataFrame.from_records(rows, columns=columns)
+        finally:
+            if cur is not None:
+                cur.close()
+            conn.close()

@@ -64,6 +64,12 @@ class _QueryBlock(BaseModel):
     source_name: Optional[str] = None
     target_name: Optional[str] = None
     comparison_note: Optional[str] = None
+    source_database: Optional[str] = None
+    source_schema: Optional[str] = None
+    target_database: Optional[str] = None
+    target_schema: Optional[str] = None
+    source_audit_column: Optional[str] = None
+    target_audit_column: Optional[str] = None
 
     @field_validator("source", "target")
     @classmethod
@@ -93,8 +99,14 @@ class CountValidationBlock(_QueryBlock):
 class DataValidationBlock(_QueryBlock):
     """A ``data_validation`` block: normalised row-by-row comparison."""
 
-    pksourcecolumn: Optional[str] = None
-    pktargetcolumn: Optional[str] = None
+    pksourcecolumn: Optional[Any] = None   # str (single PK) or List[str] (composite)
+    pktargetcolumn: Optional[Any] = None   # str (single PK) or List[str] (composite)
+    # Custom SQL-only fields
+    report_tile: Optional[str] = None
+    test_case: Optional[str] = None
+    summary: Optional[str] = None
+    sourcecolumn: Optional[str] = None
+    targetcolumn: Optional[str] = None
 
 
 class TableValidations(BaseModel):
@@ -252,10 +264,8 @@ def is_validation_config(path: Path) -> bool:
     against the validation schema would produce noise that trains people to
     ignore lint output.
     """
-    return any(
-        parent.name in {"count_validation", "data_validation"}
-        for parent in path.parents
-    )
+    parents = {p.name for p in path.parents}
+    return "count_validation" in parents or "data_validation" in parents
 
 
 def validate_config_dir(

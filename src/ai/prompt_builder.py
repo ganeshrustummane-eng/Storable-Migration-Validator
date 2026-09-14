@@ -53,9 +53,9 @@ Apply the MOST SPECIFIC matching rule. Use "text" as the default fallback.
 | text            | character varying, varchar, text, *  | TEXT, VARCHAR, *   | TRIM() — DEFAULT FALLBACK          |
 | uuid            | uuid                                 | TEXT, VARCHAR      | UPPER(TRIM())                      |
 | integer         | integer, bigint, smallint, serial    | NUMBER, INTEGER    | CAST to text                       |
-| json            | json, jsonb                          | VARIANT, VARCHAR   | Canonical JSON serialization       |
+| json            | json, jsonb                          | VARIANT, VARCHAR   | Raw text; canonicalized in Python  |
 | bytea           | bytea, binary                        | BINARY, VARCHAR    | Hex encoding                       |
-| hstore          | hstore                               | TEXT, VARCHAR      | CAST to TEXT then TRIM             |
+| hstore          | hstore                               | TEXT, VARCHAR, VARIANT | Raw JSON text; canon. in Python |
 
 IMPORTANT: timestamp → VARCHAR is a VALID migration transformation, not an error.
 Use rule "text" for timestamp→VARCHAR (Fivetran may convert timestamps to strings).

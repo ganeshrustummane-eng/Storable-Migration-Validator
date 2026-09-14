@@ -1,675 +1,452 @@
 # Migration Validator
 
-> **Migration Validator is a Gemini-enabled enterprise migration intelligence connector that allows users to validate heterogeneous database migrations through natural language while maintaining governed human approval, deterministic validation rules, secure enterprise access, and auditable execution.**
+> AI-assisted database migration testing platform. Validates heterogeneous source migrations (PostgreSQL, MSSQL, and AWS Athena) into Snowflake with automated SQL generation, row-level comparison, human-governed approvals, and full audit trail.
 
-[![Stream 3 — Gemini Connector](https://img.shields.io/badge/Hackathon-Stream%203%20Gemini%20Connector-blue)](#)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-green)](#)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110%2B-009688)](#)
 [![Streamlit](https://img.shields.io/badge/UI-Streamlit-FF4B4B)](#)
-[![Status: Prototype](https://img.shields.io/badge/Status-Hackathon%20Prototype-orange)](#)
+[![Status: Production](https://img.shields.io/badge/Status-Production-brightgreen)](#)
 
 ---
 
 ## Table of Contents
 
-1. [The Problem](#1-the-problem)
-2. [Why This Matters](#2-why-this-matters)
-3. [Why Gemini?](#3-why-gemini)
-4. [Solution Architecture](#4-solution-architecture)
-5. [What the Connector Does](#5-what-the-connector-does)
-6. [Supported Enterprise Systems](#6-supported-enterprise-systems)
-7. [Human-in-the-Loop](#7-human-in-the-loop)
-8. [Rule Book](#8-rule-book)
-9. [Authentication & Security](#9-authentication--security)
-10. [Write-Back](#10-write-back)
-11. [Client Use Cases](#11-client-use-cases)
-12. [Quickstart](#12-quickstart)
-13. [Connecting Gemini](#13-connecting-gemini)
-14. [Gemini Tools Exposed](#14-gemini-tools-exposed)
-15. [Demo Scenario](#15-demo-scenario)
-16. [Business Value & ROI](#16-business-value--roi)
-17. [Documentation Index](#17-documentation-index)
+1. [What It Does](#1-what-it-does)
+2. [Architecture](#2-architecture)
+3. [Supported Systems](#3-supported-systems)
+4. [Quickstart](#4-quickstart)
+5. [Web UI](#5-web-ui)
+6. [Validation Workflow](#6-validation-workflow)
+7. [Automation — Full Pipeline](#7-automation--full-pipeline)
+8. [AI SQL Generation](#8-ai-sql-generation)
+9. [Rule Book](#9-rule-book)
+10. [Human Review & Approvals](#10-human-review--approvals)
+11. [Scheduled Runs & Notifications](#11-scheduled-runs--notifications)
+12. [Authentication & Security](#12-authentication--security)
+13. [Jira Integration](#13-jira-integration)
+14. [Environment Variables](#14-environment-variables)
+15. [Repository Structure](#15-repository-structure)
+16. [Documentation Index](#16-documentation-index)
 
 ---
 
-## 1. The Problem
+## 1. What It Does
 
-Enterprise database migrations from heterogeneous sources (PostgreSQL, MSSQL, AWS Athena) into Snowflake medallion architectures are high-risk, labour-intensive operations.
+Migration Validator automates the most labour-intensive parts of a database migration:
 
-**Today's process:**
+| Manual today | Automated by this tool |
+|---|---|
+| Write column-mapping SQL per table | AI generates mapping + SQL from schema discovery |
+| Run source/target queries, compare in spreadsheets | Row-level deterministic comparison engine |
+| Chase architects for ambiguous mappings | Confidence-scored queue → human review UI |
+| Re-run validations after every ETL change | Scheduled background runs with Slack/email alerts |
+| Track which tables passed / failed | History dashboard + SQLite results store |
+| File Jira tickets for failures | Attach validation result to assigned Jira ticket |
 
-```
-Data Engineer
-  → Write column-mapping scripts manually
-  → Generate SQL queries per table
-  → Run validation queries
-  → Compare source vs. target row counts
-  → Manually review mismatches in spreadsheets
-  → Escalate to architects for ambiguous mappings
-  → Repeat across hundreds of tables
-```
-
-**Failure modes:**
-- Silent data loss due to wrong column mappings
-- Missed Fivetran audit columns polluting comparisons
-- No governed approval trail for mapping decisions
-- No systematic rule enforcement across tables
-- Engineers spending 60–80% of migration time on validation mechanics
+**What it does NOT do:** It does not move data. It reads source and target, compares them, and tells you what's wrong.
 
 ---
 
-## 2. Why This Matters
-
-| Dimension | Impact |
-|-----------|--------|
-| **Scale** | Enterprise migrations involve 100–1,000+ tables across multiple source systems |
-| **Risk** | Undetected row count mismatches, type coercion errors, and mapping mistakes cause production incidents |
-| **Compliance** | Financial and healthcare data requires auditable approval trails for every mapping decision |
-| **Cost** | Senior data engineers spend weeks on validation mechanics instead of architecture |
-| **Speed** | Migrations that take 3 months can be reduced to days with automated validation + AI investigation |
-
----
-
-## 3. Why Gemini?
-
-Migration validation has traditionally been a manual, script-driven process. This is the wrong tool for the job.
-
-### Traditional vs. AI-Enabled Workflow
-
-```
-TRADITIONAL WORKFLOW
-────────────────────
-Engineer → custom scripts → database → raw SQL output → manual spreadsheet review
-Problem: No natural language. No reasoning. No investigation. No governance.
-
-
-GEMINI-ENABLED WORKFLOW
-────────────────────────
-User ──→ Gemini (natural language)
-           ↓
-     Migration Connector (24 governed tools)
-           ↓
-     Migration Validator (deterministic engine)
-           ↓
-     PostgreSQL / MSSQL / Athena → Snowflake
-           ↓
-     Explanation + recommendations delivered back to user
-```
-
-### What Gemini Provides That Scripts Cannot
-
-| Capability | Scripts | Gemini + Connector |
-|------------|---------|-------------------|
-| Natural language queries | ✗ | ✓ |
-| Cross-table investigation | Manual | Automated |
-| Ambiguity resolution | Engineer time | AI-proposed + human-approved |
-| Root-cause explanation | None | Conversational |
-| Confidence-based routing | None | Auto-accept / review / reject thresholds |
-| Audit trail on decisions | None | Append-only JSONL per action |
-| Multi-source federation | Complex | Single query |
-| Controlled action execution | Scripts run unchecked | Write tools require human actor |
-
-### Gemini Is Not Just a Chatbot Here
-
-Gemini drives a **structured tool-calling workflow**. Every action it takes is:
-- Backed by a deterministic tool implementation
-- Permission-checked against RBAC
-- Version-checked against optimistic concurrency
-- Audit-logged with actor, timestamp, and reason
-- Subject to human approval before write-back
-
----
-
-## 4. Solution Architecture
+## 2. Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    GEMINI CLIENT                                 │
-│              (gemini.google.com / Vertex AI)                    │
-└─────────────────────┬───────────────────────────────────────────┘
-                      │  Natural language + function calling
-                      ▼
-┌─────────────────────────────────────────────────────────────────┐
-│              MIGRATION VALIDATOR CONNECTOR                       │
-│                  FastAPI · Port 8001                            │
-│                                                                  │
-│  ┌─────────────┐  ┌─────────────┐  ┌──────────────────────┐   │
-│  │   Auth      │  │   Authz     │  │   24 Tool Functions   │   │
-│  │ JWT/Static/ │  │ 5 Roles     │  │ Discovery · Mapping   │   │
-│  │ Dev modes   │  │ 15 Perms    │  │ Rules · Approvals     │   │
-│  └─────────────┘  └─────────────┘  │ Validation · Metrics  │   │
-│                                     └──────────────────────┘   │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │                  Persistence Layer                        │  │
-│  │  ApprovalStore · AuditLogger · VersionStore · Metrics    │  │
-│  └──────────────────────────────────────────────────────────┘  │
-└─────────────────────┬───────────────────────────────────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────────────────────────┐
-│              MIGRATION VALIDATOR ENGINE                          │
-│                                                                  │
-│  ValidationPipeline → CanonicalValidationPlan                   │
-│  ExclusionManager  → RuleBook  → SQLQueryGenerator              │
-│  ConfidenceScorer  → FuzzyMatcher → AIRulePlanner               │
-└──────┬──────────────────────────────────────┬───────────────────┘
-       │                                      │
-       ▼                                      ▼
-┌──────────────────┐                ┌───────────────────┐
-│  SOURCE SYSTEMS  │                │  TARGET SYSTEM    │
-│                  │                │                   │
-│  PostgreSQL      │                │  Snowflake        │
-│  MSSQL           │                │  (Bronze/Silver/  │
-│  AWS Athena      │                │   Gold layers)    │
-└──────────────────┘                └───────────────────┘
+│                    STREAMLIT WEB UI                              │
+│                   webapp/app.py  :8501                          │
+│  Generate YAML · Run Validation · Review · Jira · Usage & Cost  │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+              ┌────────────┴────────────┐
+              ▼                         ▼
+┌─────────────────────┐    ┌────────────────────────────┐
+│  VALIDATION ENGINE  │    │   GEMINI CONNECTOR         │
+│  Project/main.py    │    │   src/gemini_connector/    │
+│                     │    │   FastAPI  :8001           │
+│  get_database()     │    │   24 tools · RBAC · Audit  │
+│  canonicalize_frames│    └────────────────────────────┘
+│  row-level compare  │
+│  mismatch threshold │
+│  notify_failure()   │
+└──────┬──────────────┘
+       │
+  ┌────┴─────────────────────────────────┐
+  ▼                                      ▼
+SOURCE SYSTEMS                      TARGET SYSTEM
+PostgreSQL / MSSQL / Athena         Snowflake
 ```
 
-**Full architecture documentation:** [`docs/architecture/system-architecture.md`](docs/architecture/system-architecture.md)
+---
+
+## 3. Supported Systems
+
+| System | Role | Notes |
+|---|---|---|
+| PostgreSQL | Source | All schemas; `search_path` aware |
+| Microsoft SQL Server | Source | Windows + SQL auth |
+| AWS Athena | Source | S3 staging dir required |
+| Snowflake | Target | Bronze / Silver / Gold / Reporting layers |
+| Google Gemini / Vertex AI | AI backend | SQL generation, column mapping |
+| EPAM DIAL | AI proxy | GPT-4o, Claude, Gemini, Llama |
+| Anthropic Claude | AI backend | Direct fallback |
 
 ---
 
-## 5. What the Connector Does
-
-The connector is a **FastAPI REST server** (`start_connector.py`) that:
-
-1. **Exposes 24 structured tools** to Gemini via a `/tools` endpoint returning Gemini function-calling declarations
-2. **Dispatches tool calls** from Gemini via `POST /tools/{tool_name}`
-3. **Enforces authentication** on every write operation (JWT, static token, or dev mode)
-4. **Enforces RBAC authorization** — 5 roles, 15 fine-grained permissions
-5. **Applies optimistic concurrency control** — version conflict detection prevents concurrent write conflicts
-6. **Audit-logs every action** to an append-only JSONL file
-7. **Prevents AI self-approval** — write tools reject any actor string matching `gemini_ai` or `ai`
-8. **Keeps all credentials server-side** — Gemini never receives passwords, keys, or raw connection strings
-
-**Connector documentation:** [`docs/architecture/gemini-integration.md`](docs/architecture/gemini-integration.md)
-
----
-
-## 6. Supported Enterprise Systems
-
-| System | Role | Status |
-|--------|------|--------|
-| **PostgreSQL** | Source database | Implemented |
-| **Microsoft SQL Server (MSSQL)** | Source database | Implemented |
-| **AWS Athena** | Source database | Implemented |
-| **Snowflake** | Target data warehouse | Implemented |
-| **EPAM DIAL** | AI proxy (GPT-4o, Claude, Gemini, Llama) | Implemented |
-| **Google Gemini** | Conversational agent + function calling | Implemented |
-| **Anthropic Claude** | Direct AI backend (fallback) | Implemented |
-
-**Medallion layers supported:** Bronze, Silver, Gold, Reporting
-
-**Multi-connection registry:** Up to N named source connections (`SRC_1`, `SRC_2`, `SRC_3`, ...) discoverable via `discover_connections` tool
-
----
-
-## 7. Human-in-the-Loop
-
-Migration Validator enforces a **governed approval workflow** for every column mapping decision. AI recommendations are proposals — humans decide.
-
-### Confidence Thresholds
-
-| Confidence | Action | Who decides |
-|------------|--------|-------------|
-| ≥ 95% | Auto-accepted | System (configurable) |
-| 75–94% | Queued for human review | Human reviewer |
-| < 75% | Mandatory human review | Human reviewer |
-
-### Approval Flow
-
-```
-Gemini AI
-   ↓ generates recommendation
-AI Recommendation (with confidence score)
-   ↓ if confidence < 95%
-Human Review Queue (ApprovalStore)
-   ├── Approve  → ApprovalRecord{status: APPROVED, actor, timestamp, reason, version}
-   ├── Modify   → ApprovalRecord{status: MODIFIED, new_target_column, new_rule, ...}
-   └── Reject   → ApprovalRecord{status: REJECTED, rejection_reason, ...}
-         ↓
-CanonicalValidationPlan (immutable plan with all approved mappings)
-   ↓
-SQL Generation (deterministic from plan)
-   ↓
-Validation Execution
-```
-
-### Human Review Interfaces
-
-- **Streamlit Web UI** — Tab: Review & Approve (`webapp/app.py`)
-- **Gemini Chat** — `approve_mapping`, `reject_mapping`, `modify_mapping` tools (require actor)
-- **REST API** — `POST /approve/mapping/{record_id}`
-
-**Full HITL documentation:** [`docs/human-in-the-loop/review-workflow.md`](docs/human-in-the-loop/review-workflow.md)
-
----
-
-## 8. Rule Book
-
-The Rule Book governs how columns are mapped and validated across all tables.
-
-### Rule Categories
-
-| Category | Description | Storage |
-|----------|-------------|---------|
-| **Base Rules** | Built-in Fivetran column exclusions | `config/exclusions.yaml` |
-| **Global Exclusions** | Per-DB-type user-defined exclusions | `config/postgresql_exclusions.yaml` etc. |
-| **Pattern Rules** | Regex-based column exclusion patterns | Config YAML |
-| **Transformation Rules** | Type coercion rules (boolean→text, timestamp→text) | Validation plan |
-| **Normalization Rules** | Cross-dialect SQL normalization | Generated YAML |
-| **Learned Rules** | AI-proposed rules pending or approved | `rule_book_learned.json` |
-
-### Rule Lifecycle
-
-```
-AI Proposal
-   ↓
-Draft (saved to rule_book_learned.json)
-   ↓
-Human Review (RULE_ADMIN role required for activation)
-   ↓
-Approved → Active
-   ↓
-Versioned (every change tracked via VersionStore)
-```
-
-**Rule Book documentation:** [`docs/rules/rule-book.md`](docs/rules/rule-book.md)
-
----
-
-## 9. Authentication & Security
-
-### Authentication Modes
-
-| Mode | Mechanism | Use Case |
-|------|-----------|----------|
-| `static` (default) | `CONNECTOR_API_TOKEN` env var | Hackathon demo, CI/CD |
-| `jwt` | HS256 JWT with configurable issuer/audience | Enterprise integration |
-| `dev` | No validation, ADMIN role | Local development only |
-
-### Authorization (RBAC)
-
-| Role | Key Permissions |
-|------|----------------|
-| `VIEWER` | Read-only: schema, mappings, rules, plans |
-| `REVIEWER` | VIEWER + approve/modify/reject mappings, approve plans |
-| `RULE_ADMIN` | REVIEWER + create/approve/activate rules |
-| `VALIDATION_OPERATOR` | VIEWER + approve mappings/plans, execute validation |
-| `ADMIN` | All 15 permissions |
-
-### Security Guarantees
-
-- **No credentials exposed to Gemini** — connection strings stay server-side
-- **AI self-approval blocked** — `gemini_ai` and `ai` actor strings rejected at tool level
-- **Optimistic concurrency control** — version conflict detection (HTTP 409) prevents concurrent write conflicts
-- **Append-only audit trail** — `output/audit_log.jsonl` — immutable, no secrets logged
-- **Resource-level allowlists** — `AUTHZ_SOURCE_ALLOWLIST`, `AUTHZ_DB_ALLOWLIST`, `AUTHZ_SCHEMA_ALLOWLIST`
-- **Per-user table restrictions** — JWT `allowed_tables` claim for row-level access control
-
-**Security documentation:** [`docs/architecture/security-architecture.md`](docs/architecture/security-architecture.md)
-
----
-
-## 10. Write-Back
-
-Write-back actions in Migration Validator are:
-
-1. **Approval decisions** — `approve_mapping`, `reject_mapping`, `modify_mapping` → persisted to `output/approval_store.jsonl`
-2. **Plan approvals** — `approve_plan` → triggers validation SQL generation
-3. **Validation execution** — `execute_validation` → runs generated SQL against live databases
-4. **Rule activation** — `approve_rule` → promotes draft rule to active status
-
-Every write-back:
-- Requires an authenticated human actor (not AI)
-- Checks the expected version (optimistic concurrency)
-- Writes an `AuditRecord` to the audit log
-- Returns the new version number for subsequent operations
-
----
-
-## 11. Client Use Cases
-
-| # | Use Case | Gemini Prompt | Tools Used |
-|---|----------|---------------|-----------|
-| 1 | Validate migration | `"Validate the customer table migration"` | `generate_validation_plan`, `execute_validation` |
-| 2 | Investigate failure | `"Why did the events table fail validation?"` | `get_validation_failures`, `get_validation_result` |
-| 3 | Migration health | `"Give me a migration health dashboard"` | `get_migration_summary`, `get_business_metrics` |
-| 4 | Review ambiguous mappings | `"Show me all mappings needing review"` | `get_pending_reviews`, `get_column_mappings` |
-| 5 | Explain validation rules | `"What rules apply to the general_ledger table?"` | `get_applicable_rules`, `get_rule` |
-| 6 | Approve mapping | `"Approve the created_at mapping"` | `approve_mapping` |
-| 7 | Approve learned rules | `"Approve the timestamp normalization rule"` | `approve_rule` |
-| 8 | Compare migration runs | `"How does today's run compare to yesterday?"` | `get_migration_summary`, `get_coverage` |
-| 9 | Find low-coverage tables | `"Which tables are below 95% coverage?"` | `get_coverage` |
-| 10 | Investigate data quality | `"Show me all failed rows in customer"` | `get_validation_failures`, `get_validation_result` |
-
----
-
-## 12. Quickstart
-
-### Prerequisites
-
-- Python 3.10+
-- Access to at least one source database (PostgreSQL, MSSQL, or AWS Athena)
-- Snowflake account
-- Google Gemini API key (for `gemini-2.5-flash` agent) **or** EPAM DIAL API key
-
-### 1. Install dependencies
+## 4. Quickstart
 
 ```bash
+# 1. Install
 pip install -r requirements.txt
-```
 
-### 2. Configure environment
-
-```bash
+# 2. Configure credentials
 cp .env.example .env
-# Edit .env with your credentials
-```
+# Fill in SRC_1_*, SNOWFLAKE_*, GEMINI_API_KEY or DIAL_API_KEY
 
-Minimum `.env` for Gemini connector:
+# 3. Start the web UI
+streamlit run webapp/app.py
 
-```bash
-# Source database (PostgreSQL example)
-SRC_1_DB_TYPE=postgresql
-SRC_1_HOST=your-postgres-host
-SRC_1_PORT=5432
-SRC_1_USERNAME=your-user
-SRC_1_PASSWORD=your-password
-
-# Snowflake target
-SNOWFLAKE_ACCOUNT=your-account
-SNOWFLAKE_USERNAME=your-user
-SNOWFLAKE_PASSWORD=your-password
-SNOWFLAKE_WAREHOUSE=your-warehouse
-SNOWFLAKE_ROLE=your-role
-
-# Gemini API key
-GOOGLE_API_KEY=your-gemini-api-key
-
-# Connector authentication
-AUTH_MODE=static
-CONNECTOR_API_TOKEN=your-secret-token
-CONNECTOR_ROLES=ADMIN
-```
-
-### 3. Start the connector server
-
-```bash
+# 4. (Optional) Start the Gemini connector API
 python start_connector.py
 ```
 
-Output:
-```
-Migration Validator Connector
-  URL:    http://0.0.0.0:8001
-  Docs:   http://localhost:8001/docs
-  Health: http://localhost:8001/health
-  Tools:  http://localhost:8001/tools
-```
-
-### 4. Start the Streamlit web UI (optional)
-
-```bash
-streamlit run webapp/app.py
-```
-
-### 5. Run the CLI validator
-
-```bash
-python -m src.validate_cli
-```
-
-**Full setup guide:** [`docs/deployment/local-setup.md`](docs/deployment/local-setup.md)
-
-### 6. Deploy to Google Cloud (Cloud Run)
-
-```bash
-gcloud builds submit --tag YOUR_REGION-docker.pkg.dev/YOUR_PROJECT_ID/migration-validator/connector:latest .
-gcloud run deploy migration-connector --image YOUR_REGION-docker.pkg.dev/YOUR_PROJECT_ID/migration-validator/connector:latest --region YOUR_REGION
-```
-
-**Full GCP deployment guide (Secret Manager, VPC access, rollback):** [`docs/deployment/gcp-deployment.md`](docs/deployment/gcp-deployment.md)
+Open `http://localhost:8501` in your browser.
 
 ---
 
-## 13. Connecting Gemini
+## 5. Web UI
 
-The connector exposes a `/tools` endpoint that returns Gemini-compatible function declarations.
+The Streamlit app (`webapp/app.py`) has 11 tabs:
 
-### Register as a Gemini Extension
+| Tab | Purpose |
+|---|---|
+| ▶️ Generate Single YAML | Pick one source table → AI maps columns → generate validation YAML |
+| 📋 Generate Batch YAML | Multi-table, multi-schema, JOIN, and Excel report YAML generation with progress |
+| ✍️ Custom SQL Validation | Write or AI-generate your own source + Snowflake SQL, build YAML |
+| 🚀 Run Validation | Execute count + data validation, set mismatch threshold |
+| 📈 History & Trends | Pass/fail history, trend charts from SQLite results store |
+| 📖 Rule Book | Manage normalization and exclusion rules |
+| 🚫 Exclusions | Column-level exclusion config per source type |
+| ✅ Review & Approve | Human approval queue for AI-proposed column mappings |
+| 🎫 My Jira Tickets | View assigned tickets, transition status, attach validation results |
+| 💰 Usage & Cost | AI token usage and estimated cost by model/call type |
+| 📘 Guide | Quickstart and feature walkthrough |
 
-1. Start the connector: `python start_connector.py`
-2. Point Gemini at: `http://your-host:8001`
-3. Gemini will call `GET /tools` to discover all 24 tool schemas
-4. Tool calls arrive as `POST /tools/{tool_name}` with JSON `{"arguments": {...}}`
+Sidebar provides: connection test, AI usage summary, scheduled run controls.
 
-### Direct API Usage
+---
+
+## 6. Validation Workflow
+
+### Count Validation
+
+Runs `SELECT COUNT(*)` on source and target. Pass = counts match exactly.
+
+### Data Validation
+
+1. Execute `sourcequery` and `targetquery` from YAML config
+2. Canonicalize both DataFrames (JSON key order, whitespace, type coercion)
+3. Join on primary key column(s)
+4. Emit `PASS` / `FAIL` / `SOURCE_ONLY` / `TARGET_ONLY` per row
+5. Write row-level CSV to `output/<layer>/validation_<run_id>/`
+6. Apply mismatch threshold: `actual_mismatch_pct <= threshold_pct` → PASS
+
+The batch workflow also supports multi-schema validation prompts, including
+required `LEFT JOIN` rules, and can generate one YAML configuration per prompt.
+
+### YAML Config Format
+
+```yaml
+tables:
+  customer:
+    validations:
+      data_validation:
+        source_table_name: customer
+        source: postgresql
+        source_database: mydb
+        source_schema: public
+        sourcequery: |
+          SELECT id, name, email FROM public.customer ORDER BY id
+        target_table_name: customer
+        target: snowflake
+        target_database: DEV_DB
+        target_schema: PUBLIC
+        targetquery: |
+          SELECT id, name, email FROM DEV_DB.PUBLIC.CUSTOMER ORDER BY id
+        pksourcecolumn: id
+        pktargetcolumn: id
+        mismatch_threshold_pct: 0.5   # optional: tolerate up to 0.5% mismatch
+```
+
+### Running from CLI
+
+```bash
+cd Project
+python main.py \
+  --layer_type bronze \
+  --tables customer orders \
+  --count_validation yes \
+  --data_validation yes \
+  --environment local
+```
+
+---
+
+## 7. Automation — Full Pipeline
+
+The goal: zero manual steps between "ETL run finished" and "validation results in Jira".
+
+**Current state of each automation piece:**
+
+| Step | Status | How |
+|---|---|---|
+| Schema discovery | ✅ Done | `ExtractorFactory` → `cached_source_columns()` |
+| AI column mapping | ✅ Done | `AISQLQueryGenerator.generate_schema_aware_query()` |
+| YAML generation | ✅ Done | UI builder or `yaml_config_writer.py` |
+| Validation execution | ✅ Done | `runner.py` → `main.py` subprocess |
+| Results stored | ✅ Done | `results_store.py` SQLite |
+| Scheduled runs | ✅ Done | APScheduler in sidebar |
+| Failure notifications | ✅ Done | `notifier.py` → Slack webhook + SMTP |
+| Jira status update | ✅ Done | `jira_client.py` transition + comment |
+| Source data profiling | ✅ Done | Direct driver connections, single-query |
+| Schema drift detection | ✅ Done | Compares live columns vs saved YAML |
+
+**What to build next for full automation:**
+
+1. **Trigger on ETL completion** — webhook receiver or S3 event listener that fires `run_validation()` when a Fivetran/dbt run finishes. Currently: manual button or schedule.
+2. **CI/CD integration** — `python Project/main.py ...` returns exit code 1 on failure. Wire it into your pipeline (`github actions`, `Airflow`, `dbt tests`).
+3. **Auto-generate YAML for new tables** — when schema discovery finds a table with no YAML, auto-generate and queue for review instead of requiring manual UI step.
+4. **Multi-environment promotion** — run validation against dev → flag regressions before promoting to uat → prod.
+
+---
+
+## 8. AI SQL Generation
+
+The Custom SQL tab generates dialect-specific SQL using schema context:
 
 ```python
-import requests
-
-# Discover available tools
-tools = requests.get("http://localhost:8001/tools").json()
-
-# Call a tool
-result = requests.post(
-    "http://localhost:8001/tools/get_migration_summary",
-    json={"arguments": {"layer": "bronze"}},
-    headers={"Authorization": "Bearer your-token"}
-).json()
-
-# Conversational agent
-response = requests.post(
-    "http://localhost:8001/chat",
-    json={"message": "Validate the customer table", "actor": "jane.doe@company.com"}
-).json()
+AISQLQueryGenerator.generate_schema_aware_query(
+    prompt="validate customer migration",
+    schema_context={col: dtype, ...},
+    db_type="postgresql",      # or "mssql", "athena", "snowflake"
+    default_schema="public",
+)
 ```
 
-### Gemini Function Calling
+Generated SQL includes a `-- PK: col1, col2` comment so the UI auto-fills the primary key fields.
 
-```python
-import google.generativeai as genai
-# See docs/architecture/gemini-integration.md for full example
+Supported dialects: `postgresql`, `mssql`, `athena`, `snowflake`.
+
+---
+
+## 9. Rule Book
+
+Rules govern column exclusions, type normalization, and mapping patterns.
+
+| Rule type | Storage | Applies to |
+|---|---|---|
+| Fivetran exclusions | `config/exclusions.yaml` | All tables |
+| DB-type exclusions | `config/postgresql_exclusions.yaml` etc. | Per source |
+| Pattern rules | UI Rule Book tab → `rule_book_learned.json` | Regex match |
+| Transformation rules | Validation plan | Type coercion |
+| Normalization rules | `Project/utils/semantic_normalize.py` | JSON/JSONB/HStore |
+
+Rule lifecycle: AI proposes → Draft → Human activates (RULE_ADMIN role) → Active → Versioned.
+
+---
+
+## 10. Human Review & Approvals
+
+Column mappings below the confidence threshold go to the Review & Approve tab.
+
+| Confidence | Action |
+|---|---|
+| ≥ 95% | Auto-accepted |
+| 75–94% | Queued for human review |
+| < 75% | Mandatory human review |
+
+Approval actions: `approve_mapping`, `modify_mapping`, `reject_mapping`.  
+Every action writes an `AuditRecord` with actor, timestamp, reason, and version.
+
+---
+
+## 11. Scheduled Runs & Notifications
+
+**Scheduler** (sidebar → Scheduled Runs):
+- Intervals: every 1h / 6h / 12h / daily
+- Runs `run_validation(layer, env, ["all"], count=True, data=True)` in background thread
+- Shows active config (layer, env, interval) while running
+
+**Failure notifications** — configure in `.env`:
+
+```bash
+# Slack
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
+
+# Email
+NOTIFY_EMAIL_TO=team@company.com
+SMTP_HOST=smtp.company.com
+SMTP_PORT=587
+SMTP_USERNAME=alerts@company.com
+SMTP_PASSWORD=...
+```
+
+`notifier.notify_failure(subject, body)` is called automatically by `Project/main.py` on any validation failure.
+
+---
+
+## 12. Authentication & Security
+
+The Gemini Connector API (`start_connector.py`) enforces:
+
+| Mode | Set via | Use case |
+|---|---|---|
+| `static` | `CONNECTOR_API_TOKEN` | CI/CD, internal tooling |
+| `jwt` | HS256 JWT with configurable issuer | Enterprise SSO |
+| `dev` | `AUTH_MODE=dev` | Local development |
+
+RBAC roles: `VIEWER`, `REVIEWER`, `RULE_ADMIN`, `VALIDATION_OPERATOR`, `ADMIN`.
+
+Security guarantees:
+- Credentials never sent to AI — stay server-side
+- AI self-approval blocked (`gemini_ai` / `ai` actor strings rejected)
+- Append-only audit log — no secrets logged
+- Optimistic concurrency control — HTTP 409 on version conflict
+
+---
+
+## 13. Jira Integration
+
+Set in `.env`:
+
+```bash
+JIRA_URL=https://your-company.atlassian.net
+JIRA_EMAIL=your.email@company.com
+JIRA_API_TOKEN=your-api-token
+JIRA_PROJECT_KEY=MIG
+```
+
+The **My Jira Tickets** tab:
+- Fetches tickets assigned to you via JQL (`/rest/api/3/search/jql`)
+- Shows status badge, summary, priority
+- Transition buttons: To Do → In Progress → Done
+- Attach validation run result as a Jira comment (YAML file picker)
+
+---
+
+## 14. Environment Variables
+
+See `.env.example` for the full list. Key variables:
+
+```bash
+# AI backend (choose one)
+GEMINI_API_KEY=                    # Gemini Developer API
+GEMINI_MODEL=gemini-2.5-flash
+DIAL_API_KEY=                      # EPAM DIAL proxy
+DIAL_API_BASE=
+
+# Source connections (repeat for SRC_2, SRC_3, ...)
+SRC_1_TYPE=postgresql              # postgresql | mssql | athena
+SRC_1_HOST=
+SRC_1_PORT=5432
+SRC_1_DATABASE=
+SRC_1_SCHEMA=public
+SRC_1_USERNAME=
+SRC_1_PASSWORD=
+
+# Snowflake target
+SNOWFLAKE_ACCOUNT=
+SNOWFLAKE_USERNAME=
+SNOWFLAKE_PASSWORD=
+SNOWFLAKE_DATABASE=
+SNOWFLAKE_SCHEMA=
+
+# Notifications
+SLACK_WEBHOOK_URL=
+NOTIFY_EMAIL_TO=
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USERNAME=
+SMTP_PASSWORD=
+
+# Jira
+JIRA_URL=
+JIRA_EMAIL=
+JIRA_API_TOKEN=
+JIRA_PROJECT_KEY=MIG
 ```
 
 ---
 
-## 14. Gemini Tools Exposed
-
-The connector exposes **24 tools** organized into 6 categories:
-
-| Category | Tools | Description |
-|----------|-------|-------------|
-| **Discovery** | `discover_connections`, `list_databases`, `list_schemas`, `list_tables`, `get_table_schema` | Explore connected databases |
-| **Mapping** | `get_table_mapping`, `get_column_mappings`, `get_pending_reviews` | Column mapping analysis |
-| **Rules** | `get_rule`, `get_applicable_rules` | Rule Book access |
-| **Plans** | `get_validation_plan`, `generate_validation_plan`, `generate_validation_sql` | Validation planning |
-| **Execution** | `execute_validation`, `get_validation_result`, `get_validation_failures` | Run validations |
-| **Summary** | `get_migration_summary`, `get_coverage`, `get_business_metrics` | Portfolio view |
-| **Write-Back** | `approve_mapping`, `reject_mapping`, `modify_mapping`, `approve_rule`, `approve_plan` | Governed decisions |
-
-**Full tool documentation with schemas and examples:** [`docs/api/connector-tools.md`](docs/api/connector-tools.md)
-
----
-
-## 15. Demo Scenario
-
-**Business context:** An enterprise is migrating `customer` table data from PostgreSQL (`fms.public.customer`) into Snowflake Bronze (`DEV_DB.PUBLIC.CUSTOMER`).
-
-**Step-by-step Gemini interaction:**
-
-```
-User: "Validate the customer migration."
-
-Gemini calls: discover_connections()
-→ Returns: PostgreSQL (fms), Snowflake (DEV_DB)
-
-Gemini calls: get_table_schema(table="customer", source="postgresql")
-→ Returns: 42 columns including id, email, created_at, _fivetran_synced
-
-Gemini calls: generate_validation_plan(source_table="customer", layer="bronze")
-→ Returns: Plan with 38 active mappings (4 excluded as Fivetran audit cols)
-→ 2 mappings at 82% confidence → queued for human review
-
-Gemini: "I've generated a validation plan. 38 columns mapped, 4 excluded
-         (Fivetran audit columns). 2 mappings need your review:
-         - 'created_timestamp' → 'CREATED_AT' (82% confidence)
-         - 'cust_id' → 'CUSTOMER_ID' (78% confidence)"
-
-User: "Approve the created_timestamp mapping."
-
-Gemini calls: approve_mapping(record_id="...", actor="jane.doe@corp.com",
-                              reason="Confirmed via source DDL review")
-→ ApprovalRecord written, AuditRecord logged, version bumped
-
-Gemini calls: execute_validation(source_table="customer", actor="jane.doe@corp.com")
-→ Returns: {status: "WARNING", coverage: 99.1%, failed_checks: 1}
-
-Gemini: "Validation complete. 99.1% coverage. One check failed:
-         'email' column has 12 NULLs in source, 0 in target.
-         This may indicate a filtering difference in the Snowflake load."
-```
-
-**Full demo script:** [`docs/hackathon/demo-script.md`](docs/hackathon/demo-script.md)
-
----
-
-## 16. Business Value & ROI
-
-> **Note:** The following metrics are from demo/pilot measurements in a controlled environment. Production results will vary by migration scale and complexity.
-
-| Metric | Demo Benchmark | Notes |
-|--------|---------------|-------|
-| Tables validated per run | 4 (pilot) | Scales linearly |
-| Columns auto-mapped (exact match) | 100% (events table) | 38/38 exact |
-| Mappings requiring human review | 0–25% | Depends on schema similarity |
-| Manual SQL queries avoided per table | 2–4 | Count + data validation SQL |
-| Validation plan generation time | < 30 seconds | Per table, AI calls included |
-| Audit records per approval action | 1 | Append-only, immutable |
-| Mismatch detection rate | 100% (simulated failures) | Deterministic SQL comparison |
-
-### Qualitative Business Impact
-
-- **Compliance:** Every mapping decision has an auditable human actor, timestamp, reason, and version
-- **Risk reduction:** Confidence scoring surfaces ambiguous mappings before they reach production
-- **Investigation speed:** Gemini can explain failures in natural language — no SQL expertise required
-- **Scale:** Multi-table batch processing with portfolio-level coverage dashboard
-
-**Full ROI documentation:** [`docs/hackathon/business-value.md`](docs/hackathon/business-value.md)
-
----
-
-## 17. Documentation Index
-
-| Section | Document | Description |
-|---------|----------|-------------|
-| **Architecture** | [`docs/architecture/system-architecture.md`](docs/architecture/system-architecture.md) | Full system design with Mermaid diagrams |
-| | [`docs/architecture/gemini-integration.md`](docs/architecture/gemini-integration.md) | Gemini function calling deep dive |
-| | [`docs/architecture/security-architecture.md`](docs/architecture/security-architecture.md) | Auth, authz, audit, concurrency |
-| | [`docs/architecture/data-flow.md`](docs/architecture/data-flow.md) | Data flow and normalization |
-| | [`docs/architecture/sequence-diagrams.md`](docs/architecture/sequence-diagrams.md) | End-to-end sequence diagrams |
-| **API** | [`docs/api/connector-tools.md`](docs/api/connector-tools.md) | All 24 tools: inputs, outputs, examples |
-| | [`docs/api/schemas.md`](docs/api/schemas.md) | Data structures and plan schema |
-| | [`docs/api/authentication.md`](docs/api/authentication.md) | Auth modes and token setup |
-| | [`docs/api/authorization.md`](docs/api/authorization.md) | RBAC roles and permissions |
-| **Rules** | [`docs/rules/rule-book.md`](docs/rules/rule-book.md) | Rule categories, lifecycle, examples |
-| | [`docs/rules/rule-examples.md`](docs/rules/rule-examples.md) | Normalization rule examples |
-| **Human-in-the-Loop** | [`docs/human-in-the-loop/review-workflow.md`](docs/human-in-the-loop/review-workflow.md) | Approval flow and confidence model |
-| | [`docs/human-in-the-loop/approval-model.md`](docs/human-in-the-loop/approval-model.md) | ApprovalStore schema and states |
-| | [`docs/human-in-the-loop/audit-trail.md`](docs/human-in-the-loop/audit-trail.md) | AuditLogger and audit record format |
-| **Validation** | [`docs/validation/validation-strategies.md`](docs/validation/validation-strategies.md) | Count and data validation strategies |
-| | [`docs/validation/supported-databases.md`](docs/validation/supported-databases.md) | Source system capabilities |
-| | [`docs/validation/normalization-rules.md`](docs/validation/normalization-rules.md) | Type normalization across dialects |
-| **Deployment** | [`docs/deployment/local-setup.md`](docs/deployment/local-setup.md) | Step-by-step local setup |
-| | [`docs/deployment/environment.md`](docs/deployment/environment.md) | All environment variables |
-| | [`docs/deployment/gcp-deployment.md`](docs/deployment/gcp-deployment.md) | Cloud Run deployment for the connector + review UI |
-| **Hackathon** | [`docs/hackathon/demo-script.md`](docs/hackathon/demo-script.md) | Rehearsed demo script |
-| | [`docs/hackathon/presentation-outline.md`](docs/hackathon/presentation-outline.md) | 8-slide deck content |
-| | [`docs/hackathon/business-value.md`](docs/hackathon/business-value.md) | ROI analysis |
-| | [`docs/hackathon/video-script.md`](docs/hackathon/video-script.md) | 5-minute video script |
-| **Submission** | [`JUDGING_RUBRIC.md`](JUDGING_RUBRIC.md) | Criterion-by-criterion evidence mapping |
-| | [`SUBMISSION_CHECKLIST.md`](SUBMISSION_CHECKLIST.md) | Pre-submission verification checklist |
-
----
-
-## Repository Structure
+## 15. Repository Structure
 
 ```
 Migration-validator/
-├── README.md                          # This file
-├── JUDGING_RUBRIC.md                  # Hackathon rubric evidence mapping
-├── SUBMISSION_CHECKLIST.md            # Pre-submission checklist
+├── webapp/app.py                   # Streamlit web UI (11 tabs + sidebar controls)
+├── start_connector.py              # Gemini connector FastAPI server
+├── requirements.txt
+├── .env.example
 │
-├── start_connector.py                 # FastAPI connector entry point
-├── webapp/app.py                      # Streamlit web UI
-├── demo_security.py                   # Security demonstration script
-├── Dockerfile                         # Container image for Cloud Run (see docs/deployment/gcp-deployment.md)
+├── Project/
+│   ├── main.py                     # Validation runner (CLI entry point)
+│   ├── runner.py                   # Subprocess wrapper + results recorder
+│   ├── results_store.py            # SQLite history store
+│   ├── db/
+│   │   ├── factory.py              # Connector factory (reads SRC_N_* env vars)
+│   │   ├── postgres.py
+│   │   ├── mssqlserver.py
+│   │   ├── athena.py
+│   │   └── snowflake.py
+│   ├── utils/
+│   │   ├── utility.py              # run_id, summary CSV, logging
+│   │   └── semantic_normalize.py   # JSON/JSONB canonicalization
+│   └── output/                     # Project-level validation output
 │
 ├── src/
-│   ├── validate_cli.py                # CLI interface (3,700+ lines)
+│   ├── notifier.py                 # Slack + email failure notifications
+│   ├── rule_book.py                # Rule management
+│   ├── validation_pipeline.py      # AI column mapping pipeline
+│   ├── sql_extractor/extractors.py # Schema-only extractors (list tables/columns)
+│   ├── generated_queries/
+│   │   ├── ai_sql_generator.py     # AI SQL generation (dialect-aware)
+│   │   └── yaml_config_writer.py   # YAML config file writer
 │   ├── gemini_connector/
-│   │   ├── api.py                     # FastAPI REST server
-│   │   ├── tools.py                   # 24 tool implementations
-│   │   ├── gemini_agent.py            # GeminiAgent + TOOL_DECLARATIONS
-│   │   ├── auth.py                    # JWT/Static/Dev auth providers
-│   │   ├── authz.py                   # RBAC (5 roles, 15 permissions)
-│   │   ├── approval_store.py          # Human approval persistence
-│   │   ├── audit.py                   # Append-only audit logger
-│   │   ├── version_store.py           # Optimistic concurrency control
-│   │   └── metrics.py                 # Business metrics tracker
-│   └── core/
-│       ├── validation_plan.py         # CanonicalValidationPlan
-│       ├── plan_store.py              # Plan persistence
-│       └── validation_pipeline.py    # AI matching pipeline
+│   │   ├── api.py                  # FastAPI app
+│   │   ├── tools.py                # 24 tool implementations
+│   │   ├── gemini_agent.py         # GeminiAgent + tool declarations
+│   │   ├── jira_client.py          # Jira REST API client
+│   │   ├── auth.py                 # JWT / static / dev auth
+│   │   ├── approval_store.py       # Mapping approval persistence
+│   │   └── audit.py                # Append-only audit logger
+│   └── matching/                   # Fuzzy + exact column matching
 │
 ├── config/
-│   ├── exclusions.yaml                # Base exclusion rules
-│   ├── postgresql_exclusions.yaml     # PostgreSQL-specific exclusions
-│   ├── mssql_exclusions.yaml          # MSSQL-specific exclusions
-│   └── database_registry.yaml        # Non-secret connection metadata
+│   ├── exclusions.yaml             # Global column exclusions
+│   ├── postgresql_exclusions.yaml
+│   ├── mssql_exclusions.yaml
+│   ├── athena_exclusions.yaml
+│   └── redshift_exclusions.yaml
 │
-├── output/
-│   ├── plans/                         # Generated validation plans (JSON)
-│   ├── audit_log.jsonl                # Immutable audit trail
-│   ├── approval_store.jsonl           # Approval decisions
-│   └── entity_versions.json          # OCC version store
-│
-├── Project/config/
-│   ├── bronze/                        # Bronze layer validation configs
-│   ├── silver/                        # Silver layer validation configs
-│   └── gold/                          # Gold layer validation configs
-│
-├── tests/
-│   ├── test_security.py              # 31 security tests (auth, authz, audit)
-│   ├── test_plan_contract.py         # Plan serialization contract tests
-│   ├── test_exclusion_manager.py     # Exclusion config tests
-│   ├── test_config_schema.py         # YAML config generation tests
-│   ├── test_ai_only_generation.py    # AI-required regression guards
-│   └── e2e/run_all_tests.py          # Orchestrated end-to-end runner
-│
-├── docs/                              # Enterprise documentation package
-│   ├── architecture/
-│   ├── api/
-│   ├── rules/
-│   ├── human-in-the-loop/
-│   ├── validation/
-│   ├── deployment/
-│   └── hackathon/
-│
-└── requirements.txt                   # Python dependencies
+├── output/                         # Validation results, audit log, plans
+├── token_usage_analysis/           # AI token logging + cost reporting
+├── docs/                           # Architecture, API, deployment docs
+└── _unused/                        # Archived files no longer in use
 ```
 
 ---
 
-## Status Labels Used in This Repository
+## 16. Documentation Index
 
-| Label | Meaning |
-|-------|---------|
-| **Implemented** | Feature is built, tested, and working |
-| **Prototype** | Feature works in demo conditions; not hardened for production scale |
-| **Planned** | Feature is designed but not yet built |
-| **Demo-only** | Feature works for the demo scenario; may have rough edges outside it |
-
----
-
-*Migration Validator — Hackathon Stream 3: Connectors for Gemini Applications*
+| Topic | Document |
+|---|---|
+| System architecture | `docs/architecture/system-architecture.md` |
+| Gemini connector integration | `docs/architecture/gemini-integration.md` |
+| Security & auth | `docs/architecture/security-architecture.md` |
+| All 24 connector tools | `docs/api/connector-tools.md` |
+| RBAC roles & permissions | `docs/api/authorization.md` |
+| Rule Book | `docs/rules/rule-book.md` |
+| Approval workflow | `docs/human-in-the-loop/review-workflow.md` |
+| Audit trail format | `docs/human-in-the-loop/audit-trail.md` |
+| Validation strategies | `docs/validation/validation-strategies.md` |
+| Supported databases | `docs/validation/supported-databases.md` |
+| Local setup | `docs/deployment/local-setup.md` |
+| All environment variables | `docs/deployment/environment.md` |
+| GCP Cloud Run deployment | `docs/deployment/gcp-deployment.md` |

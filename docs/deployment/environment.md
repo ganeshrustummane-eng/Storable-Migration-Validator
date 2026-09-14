@@ -53,7 +53,7 @@ For each source connection N (1, 2, 3, ...):
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `SRC_N_DB_TYPE` | Yes | `postgresql`, `mssql`, `athena` |
+| `SRC_N_DB_TYPE` | Yes | `postgresql`, `mssql`, or `athena` |
 | `SRC_N_HOST` | Yes | Database host |
 | `SRC_N_PORT` | No | Database port (default varies by type) |
 | `SRC_N_USERNAME` | Yes | Username or AWS access key |
@@ -110,3 +110,27 @@ Set by CLI/pipeline during validation run:
 |----------|---------|-------------|
 | `CONFIDENCE_AUTO_ACCEPT` | `0.95` | Above this: auto-accept mapping |
 | `CONFIDENCE_REVIEW` | `0.75` | Below this: mandatory human review |
+
+---
+
+## JIRA Integration
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `JIRA_URL` | No | — | JIRA Cloud instance URL (e.g., `https://company.atlassian.net`) |
+| `JIRA_EMAIL` | No | — | JIRA account email |
+| `JIRA_API_TOKEN` | No | — | API token from [JIRA Account Settings](https://id.atlassian.com/manage-profile/security/api-tokens) |
+| `JIRA_PROJECT_KEY` | No | — | Project key for ticket creation (e.g., `MIG`, `DW`) |
+| `JIRA_ISSUE_TYPE` | No | `Task` | Issue type to create (Task, Bug, Story, etc.) |
+
+**When enabled:**
+- Automatically creates JIRA tickets for rejected mappings
+- Creates tickets for validation failures exceeding thresholds
+- Tracks all issues with full traceability
+- Links tickets to audit log entries
+
+**Setup:**
+1. Generate API token: https://id.atlassian.com/manage-profile/security/api-tokens
+2. Add variables to `.env` file
+3. Test: `python verify_jira_config.py --create-test-ticket`
+4. Full docs: [jira-integration.md](jira-integration.md)

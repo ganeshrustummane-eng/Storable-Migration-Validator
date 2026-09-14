@@ -282,6 +282,8 @@ class ValidationPipeline:
         source_db_type: Optional[str] = None,
         output_dir: Optional[Path] = None,
         layer: str = "bronze",
+        source_filter: str = "",
+        target_filter: str = "",
     ) -> "tuple[GenerationResult, CanonicalValidationPlan]":
         """
         Run the full new pipeline using the CanonicalValidationPlan architecture.
@@ -462,6 +464,8 @@ class ValidationPipeline:
             ai_calls_made=ai_calls_made,
             model_used=self._rule_mapper.active_model if self._rule_mapper.is_ai_active else "N/A",
             generated_by="ai" if self._rule_mapper.is_ai_active else "fuzzy",
+            source_filter=source_filter,
+            target_filter=target_filter or source_filter,  # mirror source when target not set
         )
 
         # ── Step 6: Validate plan ─────────────────────────────────────────────

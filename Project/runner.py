@@ -35,8 +35,14 @@ def list_configured_tables(layer: str) -> dict:
             cfg = yaml.safe_load(f) or {}
         count_tables = sorted((cfg.get("tables") or {}).keys())
 
-    data_dir = PROJECT_DIR / "config" / layer / "data_validation"
-    data_tables = sorted(p.stem for p in data_dir.glob("*.yaml")) if data_dir.exists() else []
+    config_root = PROJECT_DIR / "config" / layer
+    report_root = PROJECT_DIR / "config" / "report"
+    # Layer-scoped + report/ (independent of layer) data_validation YAMLs
+    search_roots = [config_root] + ([report_root] if report_root.exists() else [])
+    data_tables = sorted(
+        p.stem for root in search_roots for p in root.rglob("*.yaml")
+        if p.parent.name == "data_validation"
+    )
 
     return {"count_validation": count_tables, "data_validation": data_tables}
 
@@ -53,7 +59,8 @@ def run_validation(layer: str, environment: str, tables: list,
             "returncode": int,
             "stdout_tail": str,
             "summaries": {"count_validation": DataFrame, "data_validation": DataFrame},
-            "diff_files": [Path, ...],   # per-table mismatch CSVs, if any
+            "diff_files": [Path, ...],   # per-table full result CSVs (all rows), if any
+            "failed_files": [Path, ...], # per-table failed-rows-only CSVs, if any
             "run_dir": Path | None,
         }
     """
@@ -86,6 +93,7 @@ def run_validation(layer: str, environment: str, tables: list,
         "stderr_tail": "\n".join(proc.stderr.splitlines()[-60:]),
         "summaries": {},
         "diff_files": [],
+        "failed_files": [],
         "run_dir": None,
     }
     if not run_id:
@@ -102,6 +110,7 @@ def run_validation(layer: str, environment: str, tables: list,
             result["summaries"][vtype] = pd.read_csv(summary_path)
 
     result["diff_files"] = sorted(Path(p) for p in glob.glob(str(run_dir / "**" / "*_result_*.csv"), recursive=True))
+    result["failed_files"] = sorted(Path(p) for p in glob.glob(str(run_dir / "**" / "*_failed_*.csv"), recursive=True))
 
     if result["summaries"]:
         results_store.record_run(run_id, layer, environment, proc.returncode, result["summaries"])

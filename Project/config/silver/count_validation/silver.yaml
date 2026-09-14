@@ -13,86 +13,33 @@
 # ============================================================
 
 tables:
-  events:
+  customers:
     validations:
       count_validation:
-        source_table_name: events
+        source_table_name: customers
         source: postgresql
-        sourcequery: |
-          SELECT COUNT(*) AS source_row_count
-          FROM public.events;
-        target_table_name: events
+        source_database: my_test_pg
+        source_schema: public
+        sourcequery: |-
+          SELECT COUNT(*) AS source_row_count FROM public.customers;
+        target_table_name: CUSTOMERS
         target: snowflake
-        targetquery: |
-          SELECT COUNT(*) AS target_row_count
-          FROM dev_edge_bronze.storedge_fms_public.events
-          WHERE _FIVETRAN_ACTIVE = TRUE;
-  general_ledger_line_items:
+        target_database: MV_TEST
+        target_schema: PUBLIC
+        targetquery: |-
+          SELECT COUNT(*) AS target_row_count FROM MV_TEST.PUBLIC.CUSTOMERS;
+  orders:
     validations:
       count_validation:
-        source_table_name: general_ledger_line_items
+        source_table_name: orders
         source: postgresql
-        sourcequery: |
-          SELECT COUNT(*) AS source_row_count
-          FROM public.general_ledger_line_items;
-        target_table_name: GENERAL_LEDGER_LINE_ITEMS
+        source_database: my_test_pg
+        source_schema: public
+        sourcequery: |-
+          SELECT COUNT(*) AS source_row_count FROM public.orders;
+        target_table_name: ORDERS
         target: snowflake
-        targetquery: |
-          SELECT COUNT(*) AS target_row_count
-          FROM dev_edge_bronze.storedge_fms_public.GENERAL_LEDGER_LINE_ITEMS
-          WHERE _FIVETRAN_ACTIVE = TRUE;
-  migration_test:
-    validations:
-      count_validation:
-        source_table_name: migration_test
-        source: postgresql
-        sourcequery: |
-          SELECT COUNT(*) AS source_row_count
-          FROM public.migration_test;
-        target_table_name: migration_test
-        target: snowflake
-        targetquery: |
-          SELECT COUNT(*) AS target_row_count
-          FROM dev_edge_bronze.storedge_fms_public.migration_test
-          WHERE _FIVETRAN_ACTIVE = TRUE;
-  xyz:
-    validations:
-      count_validation:
-        source_table_name: xyz
-        source: postgresql
-        sourcequery: |
-          SELECT COUNT(*) AS source_row_count
-          FROM public.xyz;
-        target_table_name: XYZ
-        target: snowflake
-        targetquery: |
-          SELECT COUNT(*) AS target_row_count
-          FROM dev_edge_bronze.storedge_fms_public.XYZ;
-  AcctSoftware:
-    validations:
-      count_validation:
-        source_table_name: AcctSoftware
-        source: mssql
-        sourcequery: |
-          SELECT COUNT(*) AS source_row_count
-          FROM dbo.AcctSoftware;
-        target_table_name: AcctSoftware
-        target: snowflake
-        targetquery: |
-          SELECT COUNT(*) AS target_row_count
-          FROM DEV_SITELINK_BRONZE.AWSDEV_DEVT5000_DBO.AcctSoftware
-          WHERE _FIVETRAN_ACTIVE = TRUE;
-  Addresses:
-    validations:
-      count_validation:
-        source_table_name: Addresses
-        source: mssql
-        sourcequery: |
-          SELECT COUNT(*) AS source_row_count
-          FROM dbo.Addresses;
-        target_table_name: Addresses
-        target: snowflake
-        targetquery: |
-          SELECT COUNT(*) AS target_row_count
-          FROM DEV_SITELINK_BRONZE.AWSDEV_DEVT5000_DBO.Addresses
-          WHERE _FIVETRAN_ACTIVE = TRUE;
+        target_database: MV_TEST
+        target_schema: PUBLIC
+        targetquery: |-
+          SELECT COUNT(*) AS target_row_count FROM MV_TEST.PUBLIC.ORDERS;

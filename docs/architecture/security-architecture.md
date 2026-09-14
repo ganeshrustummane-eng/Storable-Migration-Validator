@@ -277,30 +277,14 @@ The connector acts as a **secrets boundary**. Gemini only receives tool results 
 
 ---
 
-## Security Test Coverage
+## Security Verification
 
-`tests/test_security.py` contains 31 security tests across 6 test classes:
+Verify connector behavior through the FastAPI health endpoint, authenticated
+tool requests, audit records, and the repository's available checks.
 
-| Class | Tests | Coverage |
-|-------|-------|---------|
-| `TestAuthentication` | 6 | Missing token, bad scheme, invalid token, expired JWT, wrong issuer, wrong audience |
-| `TestAuthorization` | 6 | Role-permission matrix, AI actor guard, per-user table restriction |
-| `TestVersioning` | 4 | Stale version rejection, correct increment, duplicate approval, idempotent init |
-| `TestAudit` | 4 | Record creation, no secrets in JSONL, roundtrip, append-only |
-| `TestSecretLeakage` | 3 | Health endpoint, discover_connections, get_migration_summary |
-| `TestAPIAuthFlow` | 4 | Missing token → 401, wrong token → 401, REVIEWER can't activate rule → 403, version conflict → 409 |
+Keep credentials in `.env`; never include secrets in requests, logs, or documentation.
 
----
-
-## Demo Security Walkthrough
-
-`demo_security.py` provides a runnable demonstration of all security controls:
-
-```bash
-python demo_security.py
-```
-
-Demonstrates:
+Security controls cover:
 1. Governed approval workflow with audit trail
 2. Authorization denial (VIEWER cannot activate rule)
 3. Stale version / concurrent write conflict

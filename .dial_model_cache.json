@@ -1,29 +1,29 @@
 {
-  "timestamp": 1787934269.1086047,
+  "timestamp": 1789402979.9745123,
   "api_key_prefix": "dial-eedlqdc",
   "results": {
+    "gpt-5.6-terra-2026-07-09": false,
     "gpt-4o-mini": false,
+    "gpt-4o": false,
     "gpt-4-turbo": false,
+    "gpt-4o-2024-11-20": false,
     "gpt-5": false,
     "o3": false,
     "o3-mini": false,
-    "o4-mini": false,
-    "gpt-4o-2024-11-20": true,
-    "anthropic.claude-opus-4": false,
     "anthropic.claude-sonnet-4": false,
-    "gpt-5.6-terra-2026-07-09": false,
+    "o4-mini": false,
+    "anthropic.claude-sonnet-5": false,
+    "anthropic.claude-opus-4": false,
     "anthropic.claude-haiku-4-5": false,
     "claude-3-5-sonnet": false,
     "claude-3-7-sonnet": false,
     "gemini-2.0-flash": false,
     "gemini-2.0-flash-thinking": false,
+    "gemini-2.5-pro": false,
     "gemini-pro": false,
-    "gpt-4o": true,
     "meta-llama-3-70b-instruct": false,
     "meta-llama-3-1-405b-instruct": false,
     "mistral-large": false,
-    "mistral-large-2": false,
-    "anthropic.claude-sonnet-5": true,
-    "gemini-2.5-pro": true
+    "mistral-large-2": false
   }
 }

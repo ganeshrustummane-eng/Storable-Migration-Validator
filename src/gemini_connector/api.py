@@ -22,7 +22,8 @@ Endpoint groups:
   GET  /metrics                    — business metrics
   GET  /audit                      — audit log
   GET  /versions                   — entity version snapshot
-  POST /approve/mapping/{id}       — approve a column mapping
+  POST /approve/mapping/{id}       — approve a column mapping (idempotent)
+  POST /approve/mappings/batch     — approve multiple mappings in one call
   POST /reject/mapping/{id}        — reject a column mapping
   POST /modify/mapping/{id}        — modify then approve a mapping
   POST /approve/rule/{rule_id}     — activate a learned rule (RULE_ADMIN)
@@ -94,7 +95,7 @@ app.add_middleware(
 )
 
 _WRITE_TOOLS = {
-    "approve_mapping", "reject_mapping", "modify_mapping",
+    "approve_mapping", "batch_approve_mappings", "reject_mapping", "modify_mapping",
     "approve_rule", "approve_plan", "execute_validation",
 }
 
@@ -155,6 +156,10 @@ class ExecuteRequest(BaseModel):
     reason:           str = ""
     expected_version: int = 0
 
+class BatchApproveRequest(BaseModel):
+    record_ids: List[str]
+    reason:     str = ""
+
 
 # ---------------------------------------------------------------------------
 # Health
@@ -214,9 +219,10 @@ def call_tool(
     if tool_name in _WRITE_TOOLS:
         auth = _auth(authorization)
         _perm = {
-            "approve_mapping":   Permission.MAPPING_APPROVE,
-            "reject_mapping":    Permission.MAPPING_REJECT,
-            "modify_mapping":    Permission.MAPPING_MODIFY,
+            "approve_mapping":        Permission.MAPPING_APPROVE,
+            "batch_approve_mappings": Permission.MAPPING_APPROVE,
+            "reject_mapping":         Permission.MAPPING_REJECT,
+            "modify_mapping":         Permission.MAPPING_MODIFY,
             "approve_rule":      Permission.RULE_ACTIVATE,   # highest gate
             "approve_plan":      Permission.PLAN_APPROVE,
             "execute_validation": Permission.VALIDATION_EXECUTE,
@@ -400,6 +406,38 @@ def approve_mapping_endpoint(
         plan_version = new_ver,
     ))
     return {**result, "plan_version": new_ver}
+
+
+@app.post("/approve/mappings/batch")
+def batch_approve_mappings_endpoint(
+    body: BatchApproveRequest,
+    req: Request,
+    authorization: Optional[str] = Header(default=None),
+):
+    """Approve multiple pending mappings in a single round-trip."""
+    auth   = _auth(authorization)
+    req_id = _request_id(req)
+    _check(auth, Permission.MAPPING_APPROVE)
+
+    result = dispatch_tool("batch_approve_mappings", {
+        "record_ids": body.record_ids,
+        "actor":      auth.actor,
+        "reason":     body.reason,
+    })
+    if result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result.get("message"))
+
+    audit_logger.log(AuditRecord(
+        action      = "BATCH_APPROVE_MAPPINGS",
+        entity_type = "mapping",
+        entity_id   = f"batch:{len(body.record_ids)}_records",
+        actor       = auth.actor,
+        user_id     = auth.user_id,
+        request_id  = req_id,
+        new_state   = {"approved": result.get("approved"), "skipped": result.get("skipped")},
+        reason      = body.reason,
+    ))
+    return result
 
 
 @app.post("/reject/mapping/{record_id}")

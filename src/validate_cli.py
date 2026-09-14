@@ -57,6 +57,11 @@ _SRC_DIR = Path(__file__).parent
 sys.path.insert(0, str(_SRC_DIR))
 sys.path.insert(0, str(_SRC_DIR.parent))
 
+# Single shared implementation of JSON/JSONB/HStore canonicalization, also used
+# by Project/main.py (the runtime comparison engine). Resolved via the project
+# root added to sys.path just above.
+from Project.utils.semantic_normalize import canonicalize_value  # noqa: E402
+
 # Windows consoles default to cp1252, which cannot encode the box-drawing and
 # arrow characters used throughout this CLI — including inside argparse help,
 # so even `--help` would crash. Force UTF-8 on every stream we write to.
@@ -128,6 +133,7 @@ _DB_TYPE_NORMALIZE = {
     "sqlserver": "mssql", "sql_server": "mssql",
     "mssqlserver": "mssql", "microsoftsqlserver": "mssql",
     "aws_athena": "athena", "aws athena": "athena",
+    "redshift": "redshift", "aws_redshift": "redshift", "aws redshift": "redshift",
 }
 
 _DB_TYPE_LABELS = {
@@ -135,6 +141,7 @@ _DB_TYPE_LABELS = {
     "mssql":      "MS SQL Server",
     "snowflake":  "Snowflake (source)",
     "athena":     "AWS Athena",
+    "redshift":   "AWS Redshift",
 }
 
 
@@ -177,6 +184,7 @@ _EXCLUSION_FILE_BY_DB_TYPE = {
     "postgresql": _EXCLUSIONS_DIR / "postgresql_exclusions.yaml",
     "mssql":      _EXCLUSIONS_DIR / "mssql_exclusions.yaml",
     "athena":     _EXCLUSIONS_DIR / "athena_exclusions.yaml",
+    "redshift":   _EXCLUSIONS_DIR / "redshift_exclusions.yaml",
 }
 
 
@@ -2523,28 +2531,25 @@ def cmd_add_exclusion(args):
 
 
 def _canonical_validation_value(column_name: str, value):
-    """Normalize equivalent JSON/HStore representations before comparison."""
+    """Normalize equivalent JSON/HStore representations before comparison.
+
+    Delegates to Project/utils/semantic_normalize.py, which is the single
+    implementation shared with Project/main.py — the runtime comparison engine.
+
+    The previous inline version stayed behind it in three ways, all of which
+    produced false mismatches on real data:
+      * it dispatched on the column *name* ("json" in column_name), so a
+        semi-structured column named anything else was skipped entirely;
+      * it did not recurse into values that are themselves serialized JSON
+        documents (the common hstore case), so a re-serialized inner document
+        read as data drift;
+      * its hstore regex — r'"([^"]+)"\\s*=>\\s*"([^"]*)"' — truncated any value
+        containing an escaped quote, e.g.
+        "payables"=>"[{\\"ledger_id\\":6752258}]".
+    """
     if value is None:
         return None
-    text = str(value).strip()
-    lowered_name = column_name.lower()
-    if "json" in lowered_name:
-        try:
-            import json
-            return json.dumps(json.loads(text), sort_keys=True, separators=(",", ":"))
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return text
-    if "hstore" in lowered_name:
-        try:
-            import json
-            if text.startswith("{"):
-                return json.dumps(json.loads(text), sort_keys=True, separators=(",", ":"))
-            pairs = re.findall(r'"([^"]+)"\s*=>\s*"([^"]*)"', text)
-            if pairs:
-                return json.dumps(dict(pairs), sort_keys=True, separators=(",", ":"))
-        except (TypeError, ValueError, json.JSONDecodeError):
-            pass
-    return text
+    return canonicalize_value(str(value).strip())
 
 
 def _run_parameterized_tables(args, current_model: str, exclude_cols: list) -> None:
@@ -3405,10 +3410,16 @@ def cmd_lint(args):
                 _err(f"{plan_path.name}: {exc}")
                 continue
 
-            expected = config_dir / "bronze" / "data_validation" / f"{plan.source_table.lower()}.yaml"
-            if not expected.exists():
+            _layers = ("bronze", "silver", "gold")
+            expected = next(
+                (config_dir / ly / "data_validation" / f"{plan.source_table.lower()}.yaml"
+                 for ly in _layers
+                 if (config_dir / ly / "data_validation" / f"{plan.source_table.lower()}.yaml").exists()),
+                None,
+            )
+            if expected is None:
                 total_errors += 1
-                _err(f"{plan.source_table}: plan exists but {expected.name} is missing — regenerate.")
+                _err(f"{plan.source_table}: plan exists but no matching YAML found in bronze/silver/gold — regenerate.")
                 continue
 
             coverage = plan.exclusion_summary()
@@ -3491,6 +3502,54 @@ def cmd_batch(args):
         if verbose:
             import traceback
             traceback.print_exc()
+        sys.exit(1)
+
+
+def cmd_excel_batch(args):
+    """
+    Excel-driven batch validation for report packs.
+
+    Reads an XLSX mapping sheet where each row is a report validation spec.
+    Generates AI SQL for empty query cells, applies env substitution, and
+    writes YAML configs to Project/config/report/<pack>/data_validation/.
+
+    Usage:
+      python validate_cli.py excel-batch --file mapping.xlsx
+      python validate_cli.py excel-batch --file mapping.xlsx --env dev
+      python validate_cli.py excel-batch --file mapping.xlsx --env prod --sheet Sheet2
+      python validate_cli.py excel-batch --file mapping.xlsx --dry-run
+    """
+    from excel_batch_loader import ExcelBatchLoader
+
+    file_path = getattr(args, "file", None)
+    if not file_path:
+        _err("--file is required for excel-batch mode.")
+        sys.exit(1)
+
+    _banner()
+    _head("📊  EXCEL BATCH — Report Pack Validation Generator")
+
+    env     = getattr(args, "env", None) or None
+    sheet   = getattr(args, "sheet", None) or None
+    model   = getattr(args, "model", None) or None
+    dry_run = getattr(args, "dry_run", False)
+
+    if env:
+        _ok(f"Environment: {env}  ({{env}} tokens will be replaced)")
+    else:
+        _warn("No --env specified — {env} tokens kept as template placeholders in YAML")
+
+    loader = ExcelBatchLoader(env=env, model=model, dry_run=dry_run)
+    try:
+        written = loader.run(file_path, sheet=sheet)
+        if not dry_run:
+            _ok(f"Done. {len(written)} YAML file(s) written.")
+        else:
+            _warn(f"Dry run complete. {len(written)} file(s) would be written.")
+    except Exception as exc:
+        _err(f"Excel batch failed: {exc}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 
@@ -3707,6 +3766,22 @@ Utilities:
         help="Only show tables whose name contains PATTERN (case-insensitive)",
     )
 
+    # ── excel-batch ───────────────────────────────────────────────────────────
+    eb = sub.add_parser(
+        "excel-batch",
+        help="Generate YAML validation configs from an Excel report-pack mapping sheet",
+    )
+    eb.add_argument("--file", "-f", dest="file", required=True,
+                    help="Path to the Excel (.xlsx) mapping file")
+    eb.add_argument("--env", dest="env", default=None,
+                    help="Environment name (dev/prod/…) — replaces {env} tokens in SQL")
+    eb.add_argument("--sheet", dest="sheet", default=None,
+                    help="Sheet name or index (default: first sheet)")
+    eb.add_argument("--model", dest="model", default=None,
+                    help="AI model for query generation when cells are empty")
+    eb.add_argument("--dry-run", dest="dry_run", action="store_true", default=False,
+                    help="Print what would be written without creating files")
+
     return parser
 
 
@@ -3724,8 +3799,9 @@ def main():
         "rules":       cmd_rules,
         "add-rule":    cmd_add_rule,
         "list-models": lambda _: _list_models_cmd(),
-        "list-tables": cmd_list_tables,
-        "profiles":    cmd_profiles,
+        "list-tables":  cmd_list_tables,
+        "profiles":     cmd_profiles,
+        "excel-batch":  cmd_excel_batch,
     }
 
     if args.command in commands:

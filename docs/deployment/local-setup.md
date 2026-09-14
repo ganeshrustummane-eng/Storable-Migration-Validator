@@ -118,43 +118,32 @@ Opens at `http://localhost:8501`
 ## Step 6: Run the CLI (Optional)
 
 ```bash
-python -m src.validate_cli
+python -m src.validate_cli --help
 ```
 
-Interactive menu:
+Useful commands:
 ```
-c  — Check connections
-1  — Generate validation plan (single table)
-2  — Batch generate
-3  — View rules
-4  — Manage connections
-5  — Configure API key
-6  — Add exclusion
-e  — Configure environment
-q  — Quit
+python -m src.validate_cli setup
+python -m src.validate_cli generate --source-table events --sf-table EVENTS
+python -m src.validate_cli multi --tables events,users,orders
+python -m src.validate_cli batch --config tables.yaml
+python -m src.validate_cli rules
+python -m src.validate_cli list-models
+python -m src.validate_cli add-rule
 ```
 
 ---
 
-## Step 7: Run Security Demo (Optional)
+## Step 7: Run Available Checks
 
 ```bash
-python demo_security.py
+python -m py_compile webapp/app.py
+python verify_jira_config.py
 ```
 
-Demonstrates all four security scenarios without requiring live database connections.
-
----
-
-## Step 8: Run Tests
-
-```bash
-# Unit and security tests (no live connections required)
-pytest tests/ -v
-
-# Skip live database tests
-python tests/e2e/run_all_tests.py --skip-live
-```
+The Streamlit UI provides live connection selection, YAML generation, custom SQL
+validation, history, rules, exclusions, review, Jira, and AI usage views.
+Batch workflow supports multi-schema JOIN prompts and Excel report input.
 
 ---
 

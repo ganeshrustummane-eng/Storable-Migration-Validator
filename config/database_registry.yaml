@@ -51,6 +51,15 @@ databases:
     database: migration_validator_test
     schema: migration_validator_test
 
+  # ── SRC_4 — AWS Redshift ───────────────────────────────────────────────
+  # Redshift speaks the PostgreSQL wire protocol — connects via psycopg2
+  # exactly like SRC_1, just on port 5439 by default instead of 5432.
+  SRC_4:
+    label: "Redshift"
+    db_type: redshift
+    database: dev
+    schema: public
+
   # ── SNOWFLAKE — migration target ───────────────────────────────────────
   SNOWFLAKE:
     label: "Snowflake — Bronze layer"

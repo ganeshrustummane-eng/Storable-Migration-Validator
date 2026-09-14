@@ -1,0 +1,150 @@
+{
+  "schema_version": 1,
+  "source": {
+    "database": "migration_test",
+    "db_type": "mssql",
+    "schema": "dbo",
+    "table": "salaries"
+  },
+  "target": {
+    "database": "MIGRATION_TEST",
+    "db_type": "snowflake",
+    "schema": "PUBLIC",
+    "table": "SALARIES"
+  },
+  "source_table": "migration_test.dbo.salaries",
+  "target_table": "MIGRATION_TEST.PUBLIC.SALARIES",
+  "status": "complete",
+  "generated_at": "2026-09-01T18:41:09.120457",
+  "generated_by": "ai",
+  "model_used": "gpt-4o",
+  "ai_calls_made": 0,
+  "has_fivetran_active": false,
+  "primary_keys": {
+    "source": [
+      "employee_id",
+      "effective_date"
+    ],
+    "target": [
+      "EMPLOYEE_ID",
+      "EFFECTIVE_DATE"
+    ],
+    "mismatch": false,
+    "mismatch_reason": ""
+  },
+  "stats": {
+    "total_source_columns": 7,
+    "active_mappings": 7,
+    "skipped_mappings": 0,
+    "exact_matches": 7,
+    "fuzzy_matches": 0,
+    "ai_resolved": 0,
+    "unmatched_source": 0
+  },
+  "exclusions": {
+    "total_source_columns": 7,
+    "validated": 7,
+    "excluded": [],
+    "excluded_count": 0,
+    "coverage_pct": 100.0
+  },
+  "warnings": [],
+  "ambiguities": [],
+  "unmatched_source_columns": [],
+  "unmatched_target_columns": [],
+  "mappings": [
+    {
+      "source_column": "employee_id",
+      "source_type": "integer",
+      "source_normalized": "employeeid",
+      "target_column": "EMPLOYEE_ID",
+      "target_type": "NUMBER",
+      "target_normalized": "employeeid",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)",
+      "is_primary_key": true
+    },
+    {
+      "source_column": "effective_date",
+      "source_type": "date",
+      "source_normalized": "effectivedate",
+      "target_column": "EFFECTIVE_DATE",
+      "target_type": "DATE",
+      "target_normalized": "effectivedate",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)",
+      "is_primary_key": true
+    },
+    {
+      "source_column": "base_salary",
+      "source_type": "numeric",
+      "source_normalized": "basesalary",
+      "target_column": "BASE_SALARY",
+      "target_type": "NUMBER",
+      "target_normalized": "basesalary",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "bonus",
+      "source_type": "numeric",
+      "source_normalized": "bonus",
+      "target_column": "BONUS",
+      "target_type": "NUMBER",
+      "target_normalized": "bonus",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "currency",
+      "source_type": "character",
+      "source_normalized": "currency",
+      "target_column": "CURRENCY",
+      "target_type": "TEXT",
+      "target_normalized": "currency",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "pay_grade",
+      "source_type": "character varying",
+      "source_normalized": "paygrade",
+      "target_column": "PAY_GRADE",
+      "target_type": "TEXT",
+      "target_normalized": "paygrade",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "notes",
+      "source_type": "character varying",
+      "source_normalized": "notes",
+      "target_column": "NOTES",
+      "target_type": "TEXT",
+      "target_normalized": "notes",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    }
+  ]
+}

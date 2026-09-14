@@ -1,0 +1,360 @@
+{
+  "meta": {
+    "generatedAt": "2026-09-02T04:24:37.284Z",
+    "rangeLabel": "all",
+    "agents": [
+      "claude"
+    ],
+    "projectFilter": "all",
+    "totals": {
+      "sessions": 1,
+      "durationMs": 7992802,
+      "turns": 39,
+      "files": 17,
+      "netLines": 420,
+      "toolCallsTotal": 48,
+      "toolSuccessRate": 100,
+      "totalCostUSD": 6.2057781,
+      "cacheReadCostUSD": 1.1365310999999998,
+      "pricedSessions": 1
+    },
+    "unpricedModels": [],
+    "coverage": [
+      {
+        "agentName": "claude",
+        "total": 1,
+        "priced": 1,
+        "withLog": 1
+      }
+    ],
+    "periodStart": "2026-09-01T15:19:04.307Z"
+  },
+  "sessions": [
+    {
+      "sessionId": "9cc54927-cc4f-411a-bccd-2197f79bc4e7",
+      "agentName": "claude",
+      "provider": "ai-run-sso",
+      "title": "/ponytail:ponytail Act as the Data Quality Engineer now on our UI i want to Implement the Jira Setup not on the Gemini Connector. UI is only source now we are using implement that i have already provided the required API and all things needed for it in .env. That should be efficient working and problem solving. take your time and implement let me know how you did",
+      "project": "C:\\Gemini-Hackathon\\Migration-validator",
+      "branch": "version1.1",
+      "startTime": 1788275944307,
+      "durationMs": 7992802,
+      "turns": 39,
+      "fileOps": 17,
+      "linesAdded": 436,
+      "linesRemoved": 16,
+      "linesModified": 0,
+      "netLines": 420,
+      "filesChanged": 10,
+      "filesWritten": 4,
+      "filesEdited": 6,
+      "toolCallsTotal": 48,
+      "toolCallsSuccess": 48,
+      "toolCallsFailure": 0,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "languages": [
+        "python",
+        "yaml"
+      ],
+      "tools": [
+        {
+          "toolName": "Read",
+          "totalCalls": 25,
+          "successCount": 25,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Edit",
+          "totalCalls": 12,
+          "successCount": 12,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Write",
+          "totalCalls": 4,
+          "successCount": 4,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Glob",
+          "totalCalls": 3,
+          "successCount": 3,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Grep",
+          "totalCalls": 3,
+          "successCount": 3,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Bash",
+          "totalCalls": 1,
+          "successCount": 1,
+          "failureCount": 0,
+          "successRate": 100
+        }
+      ],
+      "tokens": {
+        "input": 14984,
+        "output": 54789,
+        "cacheRead": 3788437,
+        "cacheCreation": 700410,
+        "cacheCreation1h": 700410,
+        "total": 4558620
+      },
+      "costUSD": 6.2057781,
+      "cacheReadCostUSD": 1.1365310999999998,
+      "perModelCost": [
+        {
+          "model": "claude-sonnet-4-6",
+          "tokens": {
+            "input": 14984,
+            "output": 54789,
+            "cacheRead": 3788437,
+            "cacheCreation": 700410,
+            "cacheCreation1h": 700410,
+            "total": 4558620
+          },
+          "costUSD": 6.2057781,
+          "unpriced": false
+        }
+      ],
+      "costSeries": [
+        {
+          "t": 1788276410364,
+          "cost": 0.293565,
+          "tokens": 48575
+        },
+        {
+          "t": 1788276432881,
+          "cost": 0.3263988,
+          "tokens": 100445
+        },
+        {
+          "t": 1788276457426,
+          "cost": 0.6452568,
+          "tokens": 153386
+        },
+        {
+          "t": 1788276531854,
+          "cost": 0.8118483,
+          "tokens": 230499
+        },
+        {
+          "t": 1788276578841,
+          "cost": 0.8669124,
+          "tokens": 315393
+        },
+        {
+          "t": 1788276653571,
+          "cost": 1.4336514,
+          "tokens": 406739
+        },
+        {
+          "t": 1788276741652,
+          "cost": 1.5187047,
+          "tokens": 501026
+        },
+        {
+          "t": 1788276807894,
+          "cost": 1.5584862,
+          "tokens": 593384
+        },
+        {
+          "t": 1788276826744,
+          "cost": 1.8785871,
+          "tokens": 686011
+        },
+        {
+          "t": 1788277329893,
+          "cost": 1.9121673,
+          "tokens": 779095
+        },
+        {
+          "t": 1788277855834,
+          "cost": 2.2557312,
+          "tokens": 874765
+        },
+        {
+          "t": 1788277911236,
+          "cost": 2.8316442,
+          "tokens": 970774
+        },
+        {
+          "t": 1788277940016,
+          "cost": 2.9116248,
+          "tokens": 1073742
+        },
+        {
+          "t": 1788278058412,
+          "cost": 3.0722619,
+          "tokens": 1186032
+        },
+        {
+          "t": 1788278229537,
+          "cost": 3.1962423,
+          "tokens": 1297082
+        },
+        {
+          "t": 1788278259344,
+          "cost": 3.2531622,
+          "tokens": 1410177
+        },
+        {
+          "t": 1788278286608,
+          "cost": 3.7007751,
+          "tokens": 1523747
+        },
+        {
+          "t": 1788279864006,
+          "cost": 3.7506432,
+          "tokens": 1639374
+        },
+        {
+          "t": 1788279939222,
+          "cost": 4.2567801,
+          "tokens": 1762269
+        },
+        {
+          "t": 1788280016030,
+          "cost": 4.4396244,
+          "tokens": 1893952
+        },
+        {
+          "t": 1788280061272,
+          "cost": 4.5780915,
+          "tokens": 2023591
+        },
+        {
+          "t": 1788280136239,
+          "cost": 4.6952727,
+          "tokens": 2153464
+        },
+        {
+          "t": 1788280155387,
+          "cost": 4.746339,
+          "tokens": 2283590
+        },
+        {
+          "t": 1788280175882,
+          "cost": 4.7915406,
+          "tokens": 2414039
+        },
+        {
+          "t": 1788280206998,
+          "cost": 4.8449034,
+          "tokens": 2544985
+        },
+        {
+          "t": 1788280849872,
+          "cost": 4.9690473,
+          "tokens": 2682644
+        },
+        {
+          "t": 1788280956154,
+          "cost": 5.0893452,
+          "tokens": 2822233
+        },
+        {
+          "t": 1788281195315,
+          "cost": 5.3261484,
+          "tokens": 2971476
+        },
+        {
+          "t": 1788281263227,
+          "cost": 5.4161853,
+          "tokens": 3110718
+        },
+        {
+          "t": 1788281387487,
+          "cost": 5.5681362,
+          "tokens": 3254900
+        },
+        {
+          "t": 1788281470779,
+          "cost": 5.6616072,
+          "tokens": 3398135
+        },
+        {
+          "t": 1788281542096,
+          "cost": 5.7206496,
+          "tokens": 3540994
+        },
+        {
+          "t": 1788281605793,
+          "cost": 5.7891858,
+          "tokens": 3684182
+        },
+        {
+          "t": 1788281683707,
+          "cost": 5.8428921,
+          "tokens": 3827881
+        },
+        {
+          "t": 1788281769560,
+          "cost": 5.9240502,
+          "tokens": 3972038
+        },
+        {
+          "t": 1788281832514,
+          "cost": 5.9835951,
+          "tokens": 4116488
+        },
+        {
+          "t": 1788282123298,
+          "cost": 6.0501624,
+          "tokens": 4262118
+        },
+        {
+          "t": 1788283723286,
+          "cost": 6.109626,
+          "tokens": 4407510
+        },
+        {
+          "t": 1788283941236,
+          "cost": 6.2057781,
+          "tokens": 4558620
+        }
+      ],
+      "dispatches": [
+        {
+          "kind": "command",
+          "name": "ponytail:ponytail",
+          "start": 1788276374853,
+          "durationMs": 0
+        },
+        {
+          "kind": "command",
+          "name": "ponytail:ponytail",
+          "start": 1788277818485,
+          "durationMs": 0
+        },
+        {
+          "kind": "command",
+          "name": "ponytail:ponytail",
+          "start": 1788280722156,
+          "durationMs": 0
+        }
+      ],
+      "skillInvocations": [],
+      "agentInvocations": [],
+      "commandInvocations": [
+        {
+          "name": "ponytail:ponytail",
+          "totalCalls": 15,
+          "successCount": 15,
+          "failureCount": 0
+        }
+      ],
+      "sessionSource": "Pure chat"
+    }
+  ]
+}

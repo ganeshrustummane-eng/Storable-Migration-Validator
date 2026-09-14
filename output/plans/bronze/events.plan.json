@@ -15,7 +15,7 @@
   "source_table": "fms.public.events",
   "target_table": "dev_edge_bronze.storedge_fms_public.EVENTS",
   "status": "complete",
-  "generated_at": "2026-08-28T11:10:54.140653",
+  "generated_at": "2026-09-04T16:45:15.439716",
   "generated_by": "ai",
   "model_used": "gpt-4o",
   "ai_calls_made": 0,
@@ -32,17 +32,17 @@
     "mismatch_reason": "Source PK ['id'] does not match target PK ['ID', '_FIVETRAN_START'] (normalized: ['id'] vs ['id', 'fivetranstart']). Using fuzzy/AI matching — verify manually."
   },
   "stats": {
-    "total_source_columns": 38,
-    "active_mappings": 38,
+    "total_source_columns": 37,
+    "active_mappings": 37,
     "skipped_mappings": 0,
-    "exact_matches": 38,
+    "exact_matches": 37,
     "fuzzy_matches": 0,
     "ai_resolved": 0,
     "unmatched_source": 0
   },
   "exclusions": {
-    "total_source_columns": 38,
-    "validated": 38,
+    "total_source_columns": 37,
+    "validated": 37,
     "excluded": [],
     "excluded_count": 0,
     "coverage_pct": 100.0
@@ -192,19 +192,6 @@
       "target_column": "TENANT_ID",
       "target_type": "NUMBER",
       "target_normalized": "tenantid",
-      "match_method": "exact",
-      "confidence": 1.0,
-      "transformation_rule": "text",
-      "validation_rules": [],
-      "reason": "Matched by exact (confidence=1.00)"
-    },
-    {
-      "source_column": "source_id",
-      "source_type": "integer",
-      "source_normalized": "sourceid",
-      "target_column": "SOURCE_ID",
-      "target_type": "NUMBER",
-      "target_normalized": "sourceid",
       "match_method": "exact",
       "confidence": 1.0,
       "transformation_rule": "text",

@@ -1,0 +1,358 @@
+{
+  "meta": {
+    "generatedAt": "2026-09-01T14:28:57.346Z",
+    "rangeLabel": "all",
+    "agents": [
+      "claude"
+    ],
+    "projectFilter": "all",
+    "totals": {
+      "sessions": 1,
+      "durationMs": 1851221,
+      "turns": 27,
+      "files": 17,
+      "netLines": 0,
+      "toolCallsTotal": 53,
+      "toolSuccessRate": 84.9,
+      "totalCostUSD": 3.6453336,
+      "cacheReadCostUSD": 0.35065559999999996,
+      "pricedSessions": 1
+    },
+    "unpricedModels": [],
+    "coverage": [
+      {
+        "agentName": "claude",
+        "total": 1,
+        "priced": 1,
+        "withLog": 1
+      }
+    ],
+    "periodStart": "2026-09-01T13:57:31.522Z"
+  },
+  "sessions": [
+    {
+      "sessionId": "b5641919-64ba-4a85-b1b0-be91bbbc48d4",
+      "agentName": "claude",
+      "provider": "ai-run-sso",
+      "title": "/ponytail:ponytail-review",
+      "project": "C:\\Gemini-Hackathon\\Migration-validator",
+      "branch": "version1",
+      "startTime": 1788271051522,
+      "durationMs": 1851221,
+      "turns": 27,
+      "fileOps": 17,
+      "linesAdded": 0,
+      "linesRemoved": 0,
+      "linesModified": 0,
+      "netLines": 0,
+      "filesChanged": 0,
+      "filesWritten": 0,
+      "filesEdited": 0,
+      "toolCallsTotal": 53,
+      "toolCallsSuccess": 45,
+      "toolCallsFailure": 8,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "languages": [
+        "markdown",
+        "python"
+      ],
+      "tools": [
+        {
+          "toolName": "Read",
+          "totalCalls": 22,
+          "successCount": 22,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Bash",
+          "totalCalls": 14,
+          "successCount": 11,
+          "failureCount": 3,
+          "successRate": 78.57142857142857
+        },
+        {
+          "toolName": "PowerShell",
+          "totalCalls": 12,
+          "successCount": 9,
+          "failureCount": 3,
+          "successRate": 75
+        },
+        {
+          "toolName": "Grep",
+          "totalCalls": 3,
+          "successCount": 2,
+          "failureCount": 1,
+          "successRate": 66.66666666666666
+        },
+        {
+          "toolName": "Agent",
+          "totalCalls": 2,
+          "successCount": 1,
+          "failureCount": 1,
+          "successRate": 50
+        }
+      ],
+      "tokens": {
+        "input": 5860,
+        "output": 23750,
+        "cacheRead": 1168852,
+        "cacheCreation": 486808,
+        "cacheCreation1h": 486808,
+        "total": 1685270
+      },
+      "costUSD": 3.6453336,
+      "cacheReadCostUSD": 0.35065559999999996,
+      "perModelCost": [
+        {
+          "model": "claude-sonnet-4-6",
+          "tokens": {
+            "input": 5860,
+            "output": 23750,
+            "cacheRead": 1168852,
+            "cacheCreation": 486808,
+            "cacheCreation1h": 486808,
+            "total": 1685270
+          },
+          "costUSD": 3.6453336,
+          "unpriced": false
+        }
+      ],
+      "costSeries": [
+        {
+          "t": 1788271073646,
+          "cost": 0.285126,
+          "tokens": 47261
+        },
+        {
+          "t": 1788271101205,
+          "cost": 0.575064,
+          "tokens": 95379
+        },
+        {
+          "t": 1788271112684,
+          "cost": 0.6290475,
+          "tokens": 148797
+        },
+        {
+          "t": 1788271127527,
+          "cost": 0.6528285,
+          "tokens": 203075
+        },
+        {
+          "t": 1788271149857,
+          "cost": 0.7286325,
+          "tokens": 266888
+        },
+        {
+          "t": 1788271169391,
+          "cost": 0.800337,
+          "tokens": 338986
+        },
+        {
+          "t": 1788271188955,
+          "cost": 0.973428,
+          "tokens": 413179
+        },
+        {
+          "t": 1788271203666,
+          "cost": 1.0007022,
+          "tokens": 487732
+        },
+        {
+          "t": 1788271229832,
+          "cost": 1.0403922,
+          "tokens": 562425
+        },
+        {
+          "t": 1788271277492,
+          "cost": 1.5401712,
+          "tokens": 644108
+        },
+        {
+          "t": 1788271545544,
+          "cost": 1.597401,
+          "tokens": 729803
+        },
+        {
+          "t": 1788271583212,
+          "cost": 1.7203395,
+          "tokens": 821816
+        },
+        {
+          "t": 1788271604630,
+          "cost": 1.7772,
+          "tokens": 915451
+        },
+        {
+          "t": 1788271659460,
+          "cost": 1.9384359,
+          "tokens": 1023176
+        },
+        {
+          "t": 1788271673129,
+          "cost": 2.0917719,
+          "tokens": 1048531
+        },
+        {
+          "t": 1788271690640,
+          "cost": 2.129598,
+          "tokens": 1077877
+        },
+        {
+          "t": 1788271713758,
+          "cost": 2.478561,
+          "tokens": 1135678
+        },
+        {
+          "t": 1788271848761,
+          "cost": 2.727984,
+          "tokens": 1222586
+        },
+        {
+          "t": 1788272243248,
+          "cost": 2.7602031,
+          "tokens": 1304082
+        },
+        {
+          "t": 1788272421248,
+          "cost": 3.2610234,
+          "tokens": 1395058
+        },
+        {
+          "t": 1788272471034,
+          "cost": 3.4048023,
+          "tokens": 1506473
+        },
+        {
+          "t": 1788272487368,
+          "cost": 3.4326816,
+          "tokens": 1531636
+        },
+        {
+          "t": 1788272498412,
+          "cost": 3.4905003,
+          "tokens": 1560567
+        },
+        {
+          "t": 1788272785011,
+          "cost": 3.5456166,
+          "tokens": 1590033
+        },
+        {
+          "t": 1788272818485,
+          "cost": 3.5666688,
+          "tokens": 1620671
+        },
+        {
+          "t": 1788272872888,
+          "cost": 3.6196584,
+          "tokens": 1652732
+        },
+        {
+          "t": 1788272904936,
+          "cost": 3.6453336,
+          "tokens": 1685270
+        }
+      ],
+      "dispatches": [
+        {
+          "kind": "command",
+          "name": "ponytail:ponytail-review",
+          "start": 1788271063273,
+          "durationMs": 0
+        },
+        {
+          "kind": "command",
+          "name": "improve",
+          "start": 1788271516110,
+          "durationMs": 0
+        },
+        {
+          "kind": "agent",
+          "name": "Explore",
+          "start": 1788271659460,
+          "durationMs": 762982,
+          "costUSD": 1.3225875,
+          "tokens": {
+            "input": 8,
+            "output": 16351,
+            "cacheRead": 185235,
+            "cacheCreation": 170288,
+            "cacheCreation1h": 170288,
+            "total": 371882
+          },
+          "tools": [
+            {
+              "name": "Read",
+              "calls": 12
+            },
+            {
+              "name": "Bash",
+              "calls": 4
+            },
+            {
+              "name": "Grep",
+              "calls": 3
+            }
+          ]
+        },
+        {
+          "kind": "agent",
+          "name": "Explore",
+          "start": 1788272471034,
+          "durationMs": 445936,
+          "costUSD": 0.2405313,
+          "tokens": {
+            "input": 65,
+            "output": 1866,
+            "cacheRead": 148921,
+            "cacheCreation": 27945,
+            "cacheCreation1h": 27945,
+            "total": 178797
+          },
+          "tools": [
+            {
+              "name": "PowerShell",
+              "calls": 12
+            },
+            {
+              "name": "Bash",
+              "calls": 3
+            },
+            {
+              "name": "Read",
+              "calls": 1
+            }
+          ]
+        }
+      ],
+      "skillInvocations": [],
+      "agentInvocations": [
+        {
+          "name": "Explore",
+          "totalCalls": 3,
+          "successCount": 3,
+          "failureCount": 0
+        }
+      ],
+      "commandInvocations": [
+        {
+          "name": "ponytail:ponytail-review",
+          "totalCalls": 3,
+          "successCount": 3,
+          "failureCount": 0
+        },
+        {
+          "name": "improve",
+          "totalCalls": 2,
+          "successCount": 2,
+          "failureCount": 0
+        }
+      ],
+      "sessionSource": "Pure chat"
+    }
+  ]
+}

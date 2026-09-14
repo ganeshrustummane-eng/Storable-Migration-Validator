@@ -19,7 +19,10 @@ Run with:
 
 import difflib
 import os
+import re
 import sys
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="snowflake.connector")
 from pathlib import Path
 
 _WEBAPP_DIR = Path(__file__).parent
@@ -62,50 +65,358 @@ import results_store
 sys.path.insert(0, str(_ROOT_DIR / "token_usage_analysis"))
 from report_token_usage import _load_records as _load_token_records, _load_pricing, _cost_for
 
-st.set_page_config(page_title="Migration Validator", layout="wide")
+st.set_page_config(
+    page_title="Migration Validator · Enterprise",
+    page_icon="🔷",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
+# ─────────────────────────────────────────────────────────────────────────────
+# GLOBAL ENTERPRISE THEME
+# A single, coherent CSS block that covers: tab bar, metrics, buttons, forms,
+# expanders, code blocks, badges, and the chat widget.
+# Palette: indigo-600 (#4F46E5) primary, slate-900 (#0F172A) heading text,
+#          emerald-600 (#059669) success, rose-600 (#E11D48) danger,
+#          amber-500 (#F59E0B) warning — all WCAG AA against white.
+# ─────────────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
+/* ── Google Fonts ─────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+/* ── Root variables ───────────────────────────────────────────── */
+:root {
+    --primary:        #4F46E5;
+    --primary-light:  #818CF8;
+    --primary-xlight: #EEF2FF;
+    --success:        #059669;
+    --success-bg:     #ECFDF5;
+    --danger:         #E11D48;
+    --danger-bg:      #FFF1F2;
+    --warning:        #D97706;
+    --warning-bg:     #FFFBEB;
+    --neutral-50:     #F8FAFC;
+    --neutral-100:    #F1F5F9;
+    --neutral-200:    #E2E8F0;
+    --neutral-700:    #334155;
+    --neutral-900:    #0F172A;
+    --radius-sm:      6px;
+    --radius-md:      10px;
+    --radius-lg:      16px;
+    --shadow-sm:      0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.06);
+    --shadow-md:      0 4px 12px rgba(0,0,0,.12);
+}
+
+/* ── Base font ────────────────────────────────────────────────── */
+html, body, [class*="css"] {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
+}
+
+/* ── App background ───────────────────────────────────────────── */
+[data-testid="stAppViewContainer"] > .main {
+    background: #F8FAFC;
+}
+[data-testid="stSidebar"] {
+    background: #1E1B4B !important;
+    border-right: 1px solid #312E81;
+}
+[data-testid="stSidebar"] * { color: #E0E7FF !important; }
+
+/* Sidebar code blocks — keep dark background but use readable light text */
+[data-testid="stSidebar"] .stCode,
+[data-testid="stSidebar"] pre,
+[data-testid="stSidebar"] [data-testid="stCode"],
+[data-testid="stSidebar"] [data-testid="stCode"] pre,
+[data-testid="stSidebar"] [data-testid="stCode"] code {
+    background: #0F172A !important;
+    color: #BAC8FF !important;
+    border: 1px solid #312E81 !important;
+}
+
+/* Main area code blocks — light background, dark text (fixes the original issue) */
+.main .stCode,
+.main pre,
+.main [data-testid="stCode"],
+.main [data-testid="stCode"] pre,
+.main [data-testid="stCode"] code,
+[data-testid="stAppViewContainer"] > .main .stCode,
+[data-testid="stAppViewContainer"] > .main pre {
+    background: #F1F5F9 !important;
+    color: #1E293B !important;
+    border: 1px solid #E2E8F0 !important;
+}
+[data-testid="stSidebar"] .stMarkdown h1,
+[data-testid="stSidebar"] .stMarkdown h2,
+[data-testid="stSidebar"] .stMarkdown h3 { color: #C7D2FE !important; }
+[data-testid="stSidebar"] [data-testid="stExpander"] {
+    background: rgba(255,255,255,0.06) !important;
+    border: 1px solid rgba(255,255,255,0.12) !important;
+    border-radius: var(--radius-md) !important;
+}
+
+/* ── Tab bar ──────────────────────────────────────────────────── */
+[data-testid="stTabs"] > div:first-child {
+    border-bottom: 2px solid var(--neutral-200) !important;
+    gap: 0 !important;
+}
 [data-testid="stTab"] {
-    padding: 0.9rem 1.4rem !important;
+    padding: 0.75rem 1.25rem !important;
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0 !important;
+    border: none !important;
+    background: transparent !important;
+    transition: background 0.18s ease, color 0.18s ease !important;
 }
 [data-testid="stTab"] p {
-    font-size: 1.08rem !important;
-    font-weight: 700 !important;
-    letter-spacing: 0.01rem;
+    font-size: 0.875rem !important;
+    font-weight: 600 !important;
+    color: var(--neutral-700) !important;
+    letter-spacing: 0.01em;
 }
-[data-testid="stTab"][aria-selected="true"] p {
-    color: #6C5CE7 !important;
+[data-testid="stTab"]:hover {
+    background: var(--primary-xlight) !important;
 }
+[data-testid="stTab"]:hover p { color: var(--primary) !important; }
 [data-testid="stTab"][aria-selected="true"] {
-    border-bottom: 3px solid #6C5CE7 !important;
+    background: white !important;
+    border-bottom: 2px solid var(--primary) !important;
+    margin-bottom: -2px !important;
 }
-</style>
-""", unsafe_allow_html=True)
+[data-testid="stTab"][aria-selected="true"] p { color: var(--primary) !important; }
 
-st.markdown("""
-<style>
-[data-testid="stTab"] {
-    font-weight: 600;
-}
-[data-testid="stTab"][aria-selected="true"] {
-    background: linear-gradient(90deg, #6C5CE7 0%, #A29BFE 100%);
-    color: white !important;
-    border-radius: 8px 8px 0 0;
-}
+/* ── Metric cards ─────────────────────────────────────────────── */
 div[data-testid="stMetric"] {
-    background: linear-gradient(135deg, #F0F1FA 0%, #E4E7FB 100%);
-    border: 1px solid #D6D8F5;
-    border-radius: 10px;
-    padding: 12px 16px;
+    background: white !important;
+    border: 1px solid var(--neutral-200) !important;
+    border-radius: var(--radius-md) !important;
+    padding: 16px 20px !important;
+    box-shadow: var(--shadow-sm) !important;
 }
 div[data-testid="stMetricValue"] {
-    color: #6C5CE7;
+    color: var(--primary) !important;
+    font-size: 1.75rem !important;
+    font-weight: 700 !important;
 }
+div[data-testid="stMetricLabel"] {
+    color: var(--neutral-700) !important;
+    font-size: 0.8rem !important;
+    font-weight: 500 !important;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+div[data-testid="stMetricDelta"] { font-size: 0.78rem !important; }
+
+/* ── Buttons ──────────────────────────────────────────────────── */
+button[data-testid="baseButton-primary"] {
+    background: linear-gradient(135deg, var(--primary) 0%, #6366F1 100%) !important;
+    color: white !important; border: none !important;
+    border-radius: var(--radius-sm) !important;
+    font-weight: 600 !important; font-size: 0.875rem !important;
+    padding: 0.5rem 1.25rem !important;
+    box-shadow: 0 1px 4px rgba(79,70,229,.35) !important;
+    transition: opacity 0.15s, transform 0.1s !important;
+}
+button[data-testid="baseButton-primary"]:hover {
+    opacity: 0.92 !important; transform: translateY(-1px) !important;
+    box-shadow: 0 4px 12px rgba(79,70,229,.45) !important;
+}
+button[data-testid="baseButton-secondary"] {
+    border: 1.5px solid var(--neutral-200) !important;
+    border-radius: var(--radius-sm) !important;
+    font-weight: 500 !important; font-size: 0.875rem !important;
+    background: white !important; color: var(--neutral-700) !important;
+    transition: border-color 0.15s, color 0.15s !important;
+}
+button[data-testid="baseButton-secondary"]:hover {
+    border-color: var(--primary) !important; color: var(--primary) !important;
+}
+
+/* ── Containers / cards ───────────────────────────────────────── */
+[data-testid="stVerticalBlockBorderWrapper"] > div {
+    border-radius: var(--radius-md) !important;
+    border-color: var(--neutral-200) !important;
+    box-shadow: var(--shadow-sm) !important;
+    background: white !important;
+}
+
+/* ── Expanders ────────────────────────────────────────────────── */
+[data-testid="stExpander"] {
+    border: 1px solid var(--neutral-200) !important;
+    border-radius: var(--radius-md) !important;
+    background: white !important;
+    box-shadow: var(--shadow-sm) !important;
+}
+[data-testid="stExpander"] summary {
+    font-weight: 600 !important;
+    color: var(--neutral-900) !important;
+}
+
+/* ── Data tables ──────────────────────────────────────────────── */
+[data-testid="stDataFrame"] {
+    border: 1px solid var(--neutral-200) !important;
+    border-radius: var(--radius-md) !important;
+    overflow: hidden !important;
+}
+
+/* ── Code / pre ───────────────────────────────────────────────── */
+.stCode, pre {
+    background: var(--neutral-100) !important;
+    color: var(--neutral-900) !important;
+    border: 1px solid var(--neutral-200) !important;
+    border-radius: var(--radius-sm) !important;
+    font-size: 0.82rem !important;
+}
+/* Override any Streamlit syntax-highlight container that forces dark BG */
+[data-testid="stCode"] {
+    background: var(--neutral-100) !important;
+}
+[data-testid="stCode"] pre,
+[data-testid="stCode"] code {
+    background: var(--neutral-100) !important;
+    color: #1E293B !important;
+}
+
+/* ── Alerts ───────────────────────────────────────────────────── */
+[data-testid="stAlert"] {
+    border-radius: var(--radius-md) !important;
+    border-left-width: 4px !important;
+}
+
+/* ── Form inputs ──────────────────────────────────────────────── */
+[data-testid="stTextInput"] input,
+[data-testid="stTextArea"] textarea,
+[data-testid="stSelectbox"] > div > div {
+    border-radius: var(--radius-sm) !important;
+    border-color: var(--neutral-200) !important;
+    font-size: 0.875rem !important;
+}
+[data-testid="stTextInput"] input:focus,
+[data-testid="stTextArea"] textarea:focus {
+    border-color: var(--primary) !important;
+    box-shadow: 0 0 0 3px rgba(79,70,229,.15) !important;
+}
+
+/* ── Section headers inside tabs ──────────────────────────────── */
+.ent-section-header {
+    display: flex; align-items: center; gap: 10px;
+    margin: 1.5rem 0 0.5rem; border-bottom: 2px solid var(--primary-xlight);
+    padding-bottom: 8px;
+}
+.ent-section-header h3 {
+    font-size: 1.05rem; font-weight: 700; color: var(--neutral-900); margin: 0;
+}
+
+/* ── Status badges ────────────────────────────────────────────── */
+.badge {
+    display: inline-block; padding: 2px 9px;
+    border-radius: 999px; font-size: 0.72rem; font-weight: 700;
+    letter-spacing: 0.04em; text-transform: uppercase;
+}
+.badge-active  { background:#D1FAE5; color:#065F46; }
+.badge-draft   { background:#EEF2FF; color:#3730A3; }
+.badge-warning { background:#FEF3C7; color:#92400E; }
+.badge-danger  { background:#FFE4E6; color:#9F1239; }
+.badge-neutral { background:#F1F5F9; color:#475569; }
+
+/* ── Rule card ────────────────────────────────────────────────── */
+.rule-card {
+    background: white; border: 1px solid var(--neutral-200);
+    border-radius: var(--radius-md); padding: 14px 18px;
+    margin-bottom: 10px; box-shadow: var(--shadow-sm);
+    display: flex; align-items: flex-start; gap: 14px;
+}
+.rule-card .rule-icon {
+    width: 36px; height: 36px; border-radius: var(--radius-sm);
+    background: var(--primary-xlight); display: flex; align-items: center;
+    justify-content: center; font-size: 1.1rem; flex-shrink: 0;
+}
+.rule-card .rule-body { flex: 1; min-width: 0; }
+.rule-card .rule-id { font-size: 0.75rem; font-weight: 600; color: var(--primary); font-family: monospace; }
+.rule-card .rule-name { font-size: 0.95rem; font-weight: 700; color: var(--neutral-900); margin: 2px 0 4px; }
+.rule-card .rule-desc { font-size: 0.82rem; color: #64748B; line-height: 1.5; }
+
+/* ── Step card (guide) ────────────────────────────────────────── */
+.step-card {
+    background: white; border: 1px solid var(--neutral-200);
+    border-radius: var(--radius-md); padding: 20px 22px 18px;
+    box-shadow: var(--shadow-sm); position: relative;
+}
+.step-card .step-num {
+    position: absolute; top: -14px; left: 20px;
+    background: var(--primary); color: white; border-radius: 999px;
+    width: 28px; height: 28px; display: flex; align-items: center;
+    justify-content: center; font-size: 0.8rem; font-weight: 700;
+}
+.step-card .step-title { font-size: 1rem; font-weight: 700; color: var(--neutral-900); margin: 4px 0 8px; }
+.step-card .step-body  { font-size: 0.875rem; color: #475569; line-height: 1.65; }
+
+/* ── Workflow pill ────────────────────────────────────────────── */
+.workflow-row {
+    display: flex; align-items: center; gap: 0; flex-wrap: wrap;
+    margin: 1.5rem 0;
+}
+.workflow-pill {
+    background: var(--primary-xlight); color: var(--primary);
+    border: 1.5px solid var(--primary-light);
+    border-radius: 999px; padding: 6px 18px;
+    font-size: 0.82rem; font-weight: 700; white-space: nowrap;
+}
+.workflow-arrow { color: var(--primary-light); font-size: 1.2rem; padding: 0 6px; }
+
+/* ── Chat bubbles ─────────────────────────────────────────────── */
+.chat-bubble-user {
+    background: var(--primary); color: white;
+    border-radius: 18px 18px 4px 18px;
+    padding: 10px 14px; font-size: 0.875rem; max-width: 80%;
+    margin-left: auto; margin-bottom: 8px; box-shadow: var(--shadow-sm);
+}
+.chat-bubble-assistant {
+    background: white; color: var(--neutral-900);
+    border: 1px solid var(--neutral-200);
+    border-radius: 4px 18px 18px 18px;
+    padding: 10px 14px; font-size: 0.875rem; max-width: 88%;
+    margin-right: auto; margin-bottom: 8px; box-shadow: var(--shadow-sm);
+}
+.chat-avatar {
+    width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.75rem; font-weight: 700;
+}
+.chat-avatar-ai { background: var(--primary); color: white; }
+.chat-avatar-user { background: #E2E8F0; color: var(--neutral-700); }
+.chat-ts { font-size: 0.68rem; color: #94A3B8; margin-top: 3px; }
+
+/* ── Quick-action chips ───────────────────────────────────────── */
+.qa-chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 12px; }
+.qa-chip {
+    background: var(--primary-xlight); color: var(--primary);
+    border: 1.5px solid var(--primary-light); border-radius: 999px;
+    padding: 5px 14px; font-size: 0.78rem; font-weight: 600;
+    cursor: pointer; transition: background 0.15s;
+    white-space: nowrap;
+}
+.qa-chip:hover { background: var(--primary); color: white; }
+
+/* ── Divider upgrade ──────────────────────────────────────────── */
+hr { border-color: var(--neutral-200) !important; margin: 1.5rem 0 !important; }
+
+/* ── Scrollbar ────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--neutral-100); }
+::-webkit-scrollbar-thumb { background: var(--neutral-200); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #CBD5E1; }
+
+/* ── Sidebar — white background, black text ───────────────────── */
+[data-testid="stSidebar"] { background: #ffffff !important; }
+[data-testid="stSidebar"] * { color: #111111 !important; }
+[data-testid="stSidebar"] input,
+[data-testid="stSidebar"] select,
+[data-testid="stSidebar"] textarea { background: #f8f9fa !important; border-color: #dee2e6 !important; }
+[data-testid="stSidebar"] button { color: #ffffff !important; }
 </style>
 """, unsafe_allow_html=True)
 
-SOURCE_TYPES = ("postgresql", "mssql", "athena")
+SOURCE_TYPES = ("postgresql", "mssql", "athena", "redshift")
 _TYPE_MANUAL = "✏️  Type manually…"
 
 
@@ -149,6 +460,97 @@ def _style_status(df):
             return "color: #c0392b; font-weight: 600"
         return ""
     return df.style.map(_color, subset=["status"])
+
+
+def _render_diff_file(f, key_prefix: str):
+    """Render one row-level result CSV as a wide table.
+
+    Every row is shown (PASS and FAIL).  The table has:
+      col_varchar_normalized (index) | status | col_text (source) | col_text (target) | ...
+
+    PASS rows are green, FAIL/SOURCE_ONLY/TARGET_ONLY rows are red/amber.
+    Differing cells are highlighted yellow so they stand out in the wide view.
+    """
+    import pandas as pd
+    import numpy as np
+
+    try:
+        df = pd.read_csv(f)
+    except Exception as exc:
+        st.warning(f"Could not read `{f.name}`: {exc}")
+        return
+
+    n_total = len(df)
+    n_fail  = int((df["status"] != "PASS").sum()) if n_total else 0
+    n_pass  = n_total - n_fail
+    label   = f.stem.split("_result_")[0] if "_result_" in f.stem else f.stem
+
+    # Identify data columns from __source/__target pairs
+    src_col_keys = [c for c in df.columns if c.endswith("__source")]
+    data_cols    = [c[: -len("__source")] for c in src_col_keys]
+
+    # ── Build wide display DataFrame ─────────────────────────────────────────
+    # Columns: row_key | status | col1 (source) | col1 (target) | col2 ...
+    display_cols = {"row_key": df["row_key"], "status": df["status"]}
+    final_col_names = ["row_key", "status"]
+
+    for col in data_cols:
+        short = col.removesuffix("_normalized") if col.endswith("_normalized") else col
+        src_key = f"{col}__source"
+        tgt_key = f"{col}__target"
+        display_cols[f"{short} (source)"] = df[src_key].fillna("") if src_key in df.columns else ""
+        display_cols[f"{short} (target)"] = df[tgt_key].fillna("") if tgt_key in df.columns else ""
+        final_col_names += [f"{short} (source)", f"{short} (target)"]
+
+    wide = pd.DataFrame(display_cols)[final_col_names]
+
+    STATUS_BG = {"PASS": "#d4edda", "FAIL": "#f8d7da",
+                 "SOURCE_ONLY": "#fff3cd", "TARGET_ONLY": "#fff3cd"}
+    STATUS_FG = {"PASS": "#1a7f37", "FAIL": "#c0392b",
+                 "SOURCE_ONLY": "#856404", "TARGET_ONLY": "#856404"}
+
+    def _style_wide(df_in):
+        styles = pd.DataFrame("", index=df_in.index, columns=df_in.columns)
+        for i, row in df_in.iterrows():
+            row_status = row["status"]
+            bg = STATUS_BG.get(row_status, "")
+            # Colour the whole row with the row-level status background
+            styles.loc[i, :] = f"background-color: {bg}"
+            # Override status cell text colour
+            styles.loc[i, "status"] = (
+                f"background-color: {bg}; color: {STATUS_FG.get(row_status, '')}; font-weight: 700"
+            )
+            # Highlight individual cells that differ (yellow) only for FAIL rows
+            if row_status not in ("PASS",):
+                for col in data_cols:
+                    short = col.removesuffix("_normalized") if col.endswith("_normalized") else col
+                    sc, tc = f"{short} (source)", f"{short} (target)"
+                    if sc in df_in.columns and tc in df_in.columns:
+                        sv = str(row.get(sc, ""))
+                        tv = str(row.get(tc, ""))
+                        if sv != tv:
+                            styles.loc[i, sc] = f"background-color: #fff3cd; color: #856404"
+                            styles.loc[i, tc] = f"background-color: #fff3cd; color: #856404"
+        return styles
+
+    with st.expander(
+        f"**{label}** — {n_fail} row(s) FAIL / {n_pass} PASS out of {n_total}",
+        expanded=True,
+    ):
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Rows compared", n_total)
+        m2.metric("Passed", n_pass)
+        m3.metric("Failed", n_fail, delta=-n_fail if n_fail else None, delta_color="inverse")
+
+        st.caption(
+            "Each row shows source (PostgreSQL) and target (Snowflake) values side-by-side. "
+            "Green = full row matched · Red = mismatch · Yellow cell = the specific value that differed."
+        )
+        st.dataframe(
+            wide.style.apply(_style_wide, axis=None),
+            use_container_width=True,
+            hide_index=True,
+        )
 
 
 def render_paginated_df(df, key_prefix: str, page_size_options=(10, 25, 50, 100), style_status: bool = True):
@@ -246,6 +648,53 @@ def cached_sf_column_types(database, schema, table):
     target type when persisting a human-corrected column mapping as a learned
     example (see render_mapping_review save button)."""
     return {c.column_name: c.data_type for c in SnowflakeExtractor(database=database).extract_columns(schema, table)}
+
+
+# ---------------------------------------------------------------------------
+# Filter history — read from existing plan JSONs, no extra storage needed
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=60, show_spinner=False)
+def load_filter_history() -> dict:
+    """
+    Scan all persisted plan JSON files and return previously-used migration
+    filters keyed by source table name.
+
+    Returns: {table_name: [(source_filter, target_filter), ...]}
+    Only includes entries where at least source_filter is non-empty.
+    Deduplicates within a table. Most-recently-used first.
+    """
+    plans_root = _ROOT_DIR / "output" / "plans"
+    seen: dict = {}   # table -> list of (src_filter, tgt_filter), insertion order = newest first
+    if not plans_root.exists():
+        return {}
+    for plan_file in sorted(plans_root.rglob("*.plan.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            import json as _json
+            data = _json.loads(plan_file.read_text(encoding="utf-8"))
+            src_filter = data.get("source_filter", "").strip()
+            tgt_filter = data.get("target_filter", "").strip()
+            if not src_filter:
+                continue
+            table = data.get("source", {}).get("table") or data.get("source_table", "")
+            if not table:
+                continue
+            pair = (src_filter, tgt_filter)
+            if table not in seen:
+                seen[table] = []
+            if pair not in seen[table]:
+                seen[table].append(pair)
+        except Exception:
+            continue
+    return seen
+
+
+def filter_options_for(table: str) -> list:
+    """
+    Return previously-used (source_filter, target_filter) pairs for a table.
+    Empty list means no history exists yet.
+    """
+    return load_filter_history().get(table, [])
 
 
 # ---------------------------------------------------------------------------
@@ -507,12 +956,89 @@ def render_mapping_review(
         key=f"{key_prefix}_mapping_editor",
     )
 
-    unmatched = [r["source_column"] for r in rows if not r["skip_validation"] and not r["target_column"]]
-    low_conf = [r["source_column"] for r in rows if not r["skip_validation"] and r["target_column"] and r["confidence"] < 0.75]
+    # corrected_targets: columns the user has manually fixed in the grid this session
+    corrected_targets = {
+        row["Source Column"]
+        for _, row in edited.iterrows()
+        if row["Corrected Target"] and row["Corrected Target"] != row["AI/Fuzzy Target"]
+    }
+
+    # skipped = skip_validation=True AND no user correction yet
+    skipped_low = [
+        r for r in rows
+        if r.get("skip_validation")
+        and not r.get("target_column")
+        and r["source_column"] not in corrected_targets
+        and r.get("confidence", 0.0) < 0.75
+    ]
+    # matched but low confidence (not corrected, not a learned rule)
+    low_conf_rows = [
+        r for r in rows
+        if not r.get("skip_validation")
+        and r.get("target_column")
+        and r["source_column"] not in corrected_targets
+        and r.get("confidence", 1.0) < 0.75
+    ]
+
+    if skipped_low:
+        _sk_cols = ", ".join(
+            f"`{r['source_column']}` ({int(r.get('confidence',0)*100)}%)" for r in skipped_low
+        )
+        _sk_c1, _sk_c2 = st.columns([3, 1])
+        with _sk_c1:
+            st.warning(
+                f"⚠️ **{len(skipped_low)} column(s) skipped — no target match found** "
+                f"(confidence below 75%): {_sk_cols}\n\n"
+                "Set a **Corrected Target** above to include them, or raise a Jira ticket for manual review."
+            )
+        with _sk_c2:
+            if st.button("🎫 Raise Jira ticket", key=f"{key_prefix}_skip_jira_btn"):
+                try:
+                    from gemini_connector.jira_client import create_ticket, is_configured
+                    if not is_configured():
+                        st.info("Jira not configured — set `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_PROJECT_KEY` in `.env`.")
+                    else:
+                        _t = create_ticket(
+                            summary=f"[Migration Validator] Skipped columns need mapping: {pg_table}",
+                            description=(
+                                f"Table: {pg_table}\n\nColumns skipped (no target match, confidence <75%):\n"
+                                + "\n".join(
+                                    f"  - {r['source_column']} (conf {int(r.get('confidence',0)*100)}%,"
+                                    f" reason: {r.get('skip_reason','unknown')})"
+                                    for r in skipped_low
+                                )
+                            ),
+                            labels=["migration-validator", "skipped-columns", "needs-review"],
+                        )
+                        st.success(f"Jira ticket created: [{_t['key']}]({_t['url']})")
+                except Exception as _ske:
+                    st.error(f"Jira error: {_ske}")
+
+    unmatched = [r["source_column"] for r in rows if not r.get("skip_validation") and not r.get("target_column")]
     if unmatched:
         st.warning(f"No target match for: {', '.join(unmatched)} — pick one above or it will be skipped from validation.")
-    if low_conf:
-        st.info(f"Matched below high confidence: {', '.join(low_conf)} — review these; a flagged mismatch can still be correct.")
+    if low_conf_rows:
+        _lc_col1, _lc_col2 = st.columns([3, 1])
+        with _lc_col1:
+            st.info(f"Matched below high confidence: {', '.join(r['source_column'] for r in low_conf_rows)} — review these; a flagged mismatch can still be correct.")
+        with _lc_col2:
+            if st.button("🎫 Raise Jira ticket", key=f"{key_prefix}_inline_jira_btn"):
+                try:
+                    from gemini_connector.jira_client import create_ticket, is_configured
+                    if not is_configured():
+                        st.info("Jira not configured — set `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_PROJECT_KEY` in `.env`.")
+                    else:
+                        _t = create_ticket(
+                            summary=f"[Migration Validator] Low-confidence mappings: {pg_table}",
+                            description=(
+                                f"Table: {pg_table}\n\nLow-confidence column mappings:\n"
+                                + "\n".join(f"  - {r['source_column']} → {r['target_column']} ({int(r['confidence']*100)}%)" for r in low_conf_rows)
+                            ),
+                            labels=["migration-validator", "needs-review"],
+                        )
+                        st.success(f"Jira ticket created: [{_t['key']}]({_t['url']})")
+                except Exception as _lce:
+                    st.error(f"Jira error: {_lce}")
 
     overrides = {
         row["Source Column"]: row["Corrected Target"]
@@ -786,20 +1312,48 @@ with st.sidebar:
                     st.error(f"✗ {label} — {err}")
 
     st.divider()
-    st.caption("Token usage & cost for this session:")
-    st.code("python token_usage_analysis/report_token_usage.py", language="bash")
+    _sb_recs = _load_token_records()
+    _sb_pricing = _load_pricing()
+    if _sb_recs:
+        _sb_tokens = sum(r.get("total_tokens", 0) for r in _sb_recs)
+        _sb_cost = sum(
+            _cost_for(r.get("model", ""), r.get("prompt_tokens", 0), r.get("completion_tokens", 0), _sb_pricing)
+            for r in _sb_recs
+        )
+        st.markdown(
+            f"**AI usage (all-time):** {len(_sb_recs):,} calls · "
+            f"{_sb_tokens:,} tokens · **${_sb_cost:.4f}**"
+        )
+    else:
+        st.caption("No AI calls logged yet.")
 
 
 # ---------------------------------------------------------------------------
 # Page
 # ---------------------------------------------------------------------------
 
-st.title("Migration Validator")
-st.caption("PostgreSQL / MSSQL / Athena → Snowflake — pick everything from live dropdowns, powered by the credentials already in .env.")
+st.markdown("""
+<div style="display:flex;align-items:center;gap:16px;padding:20px 0 8px;">
+    <div style="width:48px;height:48px;border-radius:12px;
+                background:linear-gradient(135deg,#4F46E5 0%,#818CF8 100%);
+                display:flex;align-items:center;justify-content:center;
+                font-size:1.5rem;box-shadow:0 4px 12px rgba(79,70,229,.35);flex-shrink:0;">🔷</div>
+    <div>
+        <div style="font-size:1.55rem;font-weight:800;color:#0F172A;letter-spacing:-0.02em;line-height:1.1;">
+            Migration Validator</div>
+        <div style="font-size:0.82rem;color:#64748B;margin-top:3px;font-weight:500;">
+            PostgreSQL · MSSQL · Athena &nbsp;→&nbsp; Snowflake &nbsp;|&nbsp;
+            AI-powered column mapping &nbsp;|&nbsp; Governed approval workflow
+        </div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
-tab_single, tab_batch, tab_execute, tab_history, tab_rules, tab_excl, tab_review, tab_guide = st.tabs(
-    ["▶️ Generate Single YAML", "📋 Generate Batch YAML", "🚀 Run Validation", "📈 History & Trends",
-     "📖 Rule Book", "🚫 Exclusions", "✅ Review & Approve", "📘 Guide"]
+tab_single, tab_batch, tab_custom, tab_execute, tab_history, tab_rules, tab_excl, tab_review, tab_jira, tab_usage, tab_guide = st.tabs(
+    ["▶️ Generate Single YAML", "📋 Generate Batch YAML",
+     "✍️ Custom SQL Validation",
+     "🚀 Run Validation", "📈 History & Trends",
+     "📖 Rule Book", "🚫 Exclusions", "✅ Review & Approve", "🎫 My Jira Tickets", "💰 Usage & Cost", "📘 Guide"]
 )
 # 📊 Usage & Cost lives in the sidebar (see below); 🤖 Gemini Chat is a
 # floating widget (see end of file) — Review & Approve is back as a tab.
@@ -808,7 +1362,9 @@ tab_single, tab_batch, tab_execute, tab_history, tab_rules, tab_excl, tab_review
 # TAB: Generate — Single YAML
 # =============================================================================
 with tab_single:
-    st.subheader("Single YAML — pick source and target from live dropdowns")
+    st.subheader("Generate one validation YAML")
+    st.caption("Compare one source table with one Snowflake table. Review mappings, choose scope, then generate reproducible SQL and YAML.")
+    st.info("Workflow: **1. Connect**  →  **2. Choose tables**  →  **3. Review mappings**  →  **4. Set scope**  →  **5. Generate**", icon="🧭")
     registry = load_registry()
     rec = select_connection(registry, key="single_conn")
 
@@ -817,12 +1373,14 @@ with tab_single:
         src_db_type = rec["db_type"]
 
         with st.container(border=True):
-            st.markdown("**① Source**")
+            st.markdown("### 1. Choose source table")
+            st.caption("Select database, schema, and table from your source connection.")
             database, schema, table_options = pick_source_location(rec, "single")
             source_table = select_or_type("Source table", table_options, "", "single_table")
 
         with st.container(border=True):
-            st.markdown("**② Target (Snowflake)**")
+            st.markdown("### 2. Choose Snowflake target")
+            st.caption("Select target database, schema, and table. Suggested names are not final until reviewed.")
             suggested_sf_table = source_table.upper() if source_table else ""
             sf_database, sf_schema, sf_table = pick_snowflake_target(suggested_sf_table, "single")
 
@@ -842,13 +1400,141 @@ with tab_single:
             except Exception as exc:
                 st.warning(f"Could not load columns for exclusion picker: {exc}")
 
+        # ── Source data profiling ────────────────────────────────────────────
+        if source_table and col_names:
+            with st.expander("🔬 Source data profile (null %, distinct, min/max)", expanded=False):
+                if st.button("Run profile", key="single_profile_btn"):
+                    _prof_cols = col_names[:30]
+
+                    def _profile_query_pg(cols, sch, tbl):
+                        selects = ['COUNT(*) AS _total'] + [
+                            f'COUNT("{c}") AS "nn_{c}", COUNT(DISTINCT "{c}") AS "dc_{c}", '
+                            f'MIN("{c}"::text) AS "mn_{c}", MAX("{c}"::text) AS "mx_{c}", '
+                            f'SUM(CASE WHEN "{c}"::text = \'\' THEN 1 ELSE 0 END) AS "es_{c}"'
+                            for c in cols
+                        ]
+                        return f'SELECT {", ".join(selects)} FROM {sch}."{tbl}"'
+
+                    def _profile_query_mssql(cols, sch, tbl):
+                        selects = ['COUNT(*) AS _total'] + [
+                            f'COUNT([{c}]) AS [nn_{c}], COUNT(DISTINCT [{c}]) AS [dc_{c}], '
+                            f'MIN(CAST([{c}] AS NVARCHAR(256))) AS [mn_{c}], MAX(CAST([{c}] AS NVARCHAR(256))) AS [mx_{c}], '
+                            f'SUM(CASE WHEN CAST([{c}] AS NVARCHAR(256)) = \'\' THEN 1 ELSE 0 END) AS [es_{c}]'
+                            for c in cols
+                        ]
+                        return f'SELECT {", ".join(selects)} FROM {sch}.[{tbl}]'
+
+                    def _profile_query_athena(cols, sch, tbl):
+                        selects = ['COUNT(*) AS _total'] + [
+                            f'COUNT("{c}") AS "nn_{c}", COUNT(DISTINCT "{c}") AS "dc_{c}", '
+                            f'CAST(MIN("{c}") AS VARCHAR) AS "mn_{c}", CAST(MAX("{c}") AS VARCHAR) AS "mx_{c}", '
+                            f'SUM(CASE WHEN CAST("{c}" AS VARCHAR) = \'\' THEN 1 ELSE 0 END) AS "es_{c}"'
+                            for c in cols
+                        ]
+                        return f'SELECT {", ".join(selects)} FROM {sch}."{tbl}"'
+
+                    try:
+                        import pandas as _pd_prof
+                        import pyodbc as _pyodbc
+                        _pw = source_password(rec)
+                        _host = rec["host"]
+                        _port = int(rec.get("port") or 0)
+                        _user = rec["username"]
+
+                        if src_db_type in ("postgresql", "postgres"):
+                            import psycopg2 as _pg
+                            _conn = _pg.connect(
+                                host=_host, port=_port or 5432,
+                                dbname=database, user=_user, password=_pw,
+                            )
+                            _q = _profile_query_pg(_prof_cols, schema, source_table)
+                        elif src_db_type == "mssql":
+                            _auth = rec.get("auth", "")
+                            _driver = rec.get("driver", "ODBC Driver 18 for SQL Server")
+                            _cs = (
+                                f"DRIVER={{{_driver}}};SERVER={_host},{_port or 1433};"
+                                f"DATABASE={database};"
+                                + (f"UID={_user};PWD={_pw};" if not _auth else f"Trusted_Connection=yes;")
+                                + "TrustServerCertificate=yes;"
+                            )
+                            _conn = _pyodbc.connect(_cs)
+                            _q = _profile_query_mssql(_prof_cols, schema, source_table)
+                        elif src_db_type == "athena":
+                            import pyathena as _pya
+                            _conn = _pya.connect(
+                                aws_access_key_id=_user,
+                                aws_secret_access_key=_pw,
+                                s3_staging_dir=rec.get("s3_output", ""),
+                                region_name=_host,
+                                schema_name=schema,
+                            )
+                            _q = _profile_query_athena(_prof_cols, schema, source_table)
+                        else:
+                            st.warning(f"Profiling not supported for {src_db_type}.")
+                            _conn = None
+
+                        if _conn:
+                            _raw = _pd_prof.read_sql(_q, _conn)
+                            _conn.close()
+                            _row = _raw.iloc[0]
+                            _total = int(_row.get("_total", 0) or 0)
+                            _prof_rows = []
+                            for _c in _prof_cols:
+                                _nn = int(_row.get(f"nn_{_c}", _total) or _total)
+                                _null_pct = round((_total - _nn) / _total * 100, 1) if _total else 0
+                                _prof_rows.append({
+                                    "Column": _c,
+                                    "Null %": _null_pct,
+                                    "Empty %": round(int(_row.get(f"es_{_c}", 0) or 0) / _total * 100, 1) if _total else 0,
+                                    "Distinct": int(_row.get(f"dc_{_c}", 0) or 0),
+                                    "Min": str(_row.get(f"mn_{_c}", "") or ""),
+                                    "Max": str(_row.get(f"mx_{_c}", "") or ""),
+                                })
+                            st.dataframe(_pd_prof.DataFrame(_prof_rows), use_container_width=True, hide_index=True)
+                            if len(col_names) > 30:
+                                st.caption("Showing first 30 columns.")
+                    except Exception as _pe:
+                        st.error(f"Profiling failed: {_pe}")
+
+        # ── Schema drift check ───────────────────────────────────────────────
+        if source_table:
+            _yaml_path = next(
+                ((_PROJECT_DIR / "config" / _ly / "data_validation" / f"{source_table}.yaml")
+                 for _ly in _LAYERS
+                 if (_PROJECT_DIR / "config" / _ly / "data_validation" / f"{source_table}.yaml").exists()),
+                None,
+            )
+            if _yaml_path:
+                try:
+                    import yaml as _yd
+                    _ycfg = _yd.safe_load(_yaml_path.read_text(encoding="utf-8")) or {}
+                    _tbl_block = (_ycfg.get("tables") or {}).get(source_table, {})
+                    _dv = (_tbl_block.get("validations") or {}).get("data_validation", {})
+                    _yaml_sql = _dv.get("sourcequery", "")
+                    if _yaml_sql and col_names:
+                        import re as _re
+                        _yaml_cols = set(_re.findall(r'"?(\w+)_normalized"?', _yaml_sql))
+                        _live_cols = {c.lower() for c in col_names}
+                        _dropped = _yaml_cols - _live_cols
+                        _added = _live_cols - _yaml_cols - {c.lower() for c in STATIC_EXCLUDE_COLUMNS}
+                        if _dropped or _added:
+                            with st.container(border=True):
+                                st.warning("⚠️ **Schema drift detected** — source schema changed since the YAML was generated.")
+                                if _dropped:
+                                    st.markdown(f"**Removed from source** (in YAML, gone from DB): `{', '.join(sorted(_dropped))}`")
+                                if _added:
+                                    st.markdown(f"**New in source** (not in YAML): `{', '.join(sorted(_added))}`")
+                                st.caption("Regenerate the YAML to pick up these changes.")
+                except Exception:
+                    pass
+
         static_set = {c.lower() for c in STATIC_EXCLUDE_COLUMNS}
         static_present = sorted(c for c in col_names if c.lower() in static_set)
         user_global_present = sorted(c for c in col_names if c.lower() in auto_excluded and c.lower() not in static_set)
         auto_excluded_present = static_present + user_global_present
         pickable_cols = [c for c in col_names if c.lower() not in auto_excluded]
 
-        st.markdown("**③ Columns to exclude**")
+        st.markdown("### 3. Choose columns to exclude")
         st.caption(
             f"🔒 Built-in auto-excluded (system default for {_DB_TYPE_LABELS.get(src_db_type, src_db_type)}, "
             f"always applied): {', '.join(static_present) or '(none present in this table)'}"
@@ -874,7 +1560,8 @@ with tab_single:
 
         column_overrides = {}
         if source_table and sf_table:
-            st.markdown("**④ Column mapping — review before generating**")
+            st.markdown("### 4. Review column mapping")
+            st.caption("Confirm source-to-target matches. Low-confidence or missing matches block generation until reviewed.")
             extractor = ExtractorFactory.create(
                 src_db_type, host=rec["host"], port=int(rec.get("port") or 0),
                 database=database, username=rec["username"], password=source_password(rec),
@@ -897,9 +1584,287 @@ with tab_single:
                     key_prefix="single",
                 )
 
-        if st.button("▶️ Generate SQL + YAML", type="primary", key="single_generate"):
+        # ── Pre-generate approval check ─────────────────────────────────────────
+        # Show confidence warnings inline so the user sees them BEFORE clicking
+        # Generate — no need to visit a separate Review tab.
+        _single_rows = st.session_state.get("single_mapping_rows") or []
+        _single_corrected = set(column_overrides.keys()) if column_overrides else set()
+        # skipped columns (no target match) that are still low-conf and not user-corrected
+        _single_skipped_low = [
+            r for r in _single_rows
+            if r.get("skip_validation") and not r.get("target_column")
+            and r["source_column"] not in _single_corrected
+            and r.get("confidence", 0.0) < 0.75
+        ]
+        _single_low  = [
+            r for r in _single_rows
+            if not r.get("skip_validation") and r.get("target_column")
+            and r["source_column"] not in _single_corrected
+            and r.get("confidence", 1.0) < 0.75
+        ]
+        _single_none = [r for r in _single_rows if not r.get("skip_validation") and not r.get("target_column")]
+        _single_needs_review = _single_skipped_low or _single_low or _single_none
+
+        _single_generate_blocked = False
+        if _single_needs_review and source_table and sf_table:
+            with st.container(border=True):
+                st.markdown("##### ⚠️ Review required before generating")
+                if _single_skipped_low:
+                    _ssk_c1, _ssk_c2 = st.columns([3, 1])
+                    with _ssk_c1:
+                        st.warning(
+                            f"**{len(_single_skipped_low)} column(s) skipped — no target match found** "
+                            f"(confidence <75%):\n\n"
+                            + "\n".join(
+                                f"- `{r['source_column']}` ({int(r.get('confidence',0)*100)}%,"
+                                f" {r.get('skip_reason','no match')})"
+                                for r in _single_skipped_low
+                            )
+                            + "\n\nSet a **Corrected Target** in the mapping grid above to include them, "
+                            "or raise a Jira ticket and check the box below to proceed."
+                        )
+                    with _ssk_c2:
+                        if st.button("🎫 Raise Jira ticket", key="single_skipped_jira_btn"):
+                            try:
+                                from gemini_connector.jira_client import create_ticket, is_configured
+                                if not is_configured():
+                                    st.info("Jira not configured — set `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_PROJECT_KEY` in `.env`.")
+                                else:
+                                    _t = create_ticket(
+                                        summary=f"[Migration Validator] Skipped columns need mapping: {source_table}",
+                                        description=(
+                                            f"Table: {source_table} → {sf_table}\n\nColumns skipped (no target match, confidence <75%):\n"
+                                            + "\n".join(
+                                                f"  - {r['source_column']} (conf {int(r.get('confidence',0)*100)}%,"
+                                                f" reason: {r.get('skip_reason','unknown')})"
+                                                for r in _single_skipped_low
+                                            )
+                                        ),
+                                        labels=["migration-validator", "skipped-columns", "needs-review"],
+                                    )
+                                    st.success(f"Jira ticket created: [{_t['key']}]({_t['url']})")
+                            except Exception as _ssje:
+                                st.error(f"Jira error: {_ssje}")
+                if _single_none:
+                    st.error(
+                        f"**{len(_single_none)} column(s) have no target match** — they will be skipped "
+                        f"from validation unless you fix the mapping above: "
+                        f"`{'`, `'.join(r['source_column'] for r in _single_none)}`"
+                    )
+                if _single_low:
+                    st.warning(
+                        f"**{len(_single_low)} column mapping(s) below 75% confidence** — "
+                        f"review the mapping grid above and correct any wrong suggestions before generating:\n\n"
+                        + "\n".join(
+                            f"- `{r['source_column']}` → `{r['target_column']}` "
+                            f"({int(r['confidence']*100)}% via {r.get('match_method','?')})"
+                            for r in _single_low
+                        )
+                    )
+                    _jira_col1, _jira_col2 = st.columns([3, 1])
+                    with _jira_col2:
+                        if st.button("🎫 Raise Jira ticket", key="single_jira_btn"):
+                            try:
+                                from gemini_connector.jira_client import create_ticket, is_configured
+                                if not is_configured():
+                                    st.info("Jira not configured — set `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_PROJECT_KEY` in your `.env` to enable.")
+                                else:
+                                    _desc = (
+                                        f"Table: {source_table} → {sf_table}\n\n"
+                                        f"Low-confidence column mappings that need human review:\n"
+                                        + "\n".join(
+                                            f"  - {r['source_column']} → {r['target_column']} ({int(r['confidence']*100)}%)"
+                                            for r in _single_low
+                                        )
+                                    )
+                                    _ticket = create_ticket(
+                                        summary=f"[Migration Validator] Low-confidence mappings: {source_table} → {sf_table}",
+                                        description=_desc,
+                                        labels=["migration-validator", "needs-review"],
+                                    )
+                                    st.success(f"Jira ticket created: [{_ticket['key']}]({_ticket['url']})")
+                            except Exception as _je:
+                                st.error(f"Jira error: {_je}")
+                _single_confirmed = st.checkbox(
+                    "I have reviewed the issues above and want to generate anyway (or have raised a Jira ticket)",
+                    key="single_review_confirmed",
+                )
+                if not _single_confirmed:
+                    _single_generate_blocked = True
+
+        with st.expander("5. Define validation scope (optional)", expanded=False):
+            st.caption(
+                "Use this when the migration team only moved a subset of rows "
+                "(e.g. by date range, status, or tenant). "
+                "Write the WHERE predicate **without** the WHERE keyword. "
+                "Source filter is applied to the source query; target filter defaults to the same value."
+            )
+            _sf_col, _tf_col = st.columns(2)
+            with _sf_col:
+                single_source_filter = st.text_input(
+                    "Source filter",
+                    placeholder="e.g.  created_at >= '2024-01-01'",
+                    key="single_source_filter",
+                )
+            with _tf_col:
+                single_target_filter = st.text_input(
+                    "Target filter",
+                    value=single_source_filter,
+                    placeholder="Leave blank to mirror source filter",
+                    key="single_target_filter",
+                )
+            if single_source_filter:
+                st.info(
+                    f"Source queries will include: `WHERE {single_source_filter}`  \n"
+                    f"Target queries will include: `WHERE {single_target_filter or single_source_filter}`"
+                )
+
+        # ── Optional JOIN rules (routes through AI instead of pipeline) ────────
+        _single_join_rules: list = []
+        _single_join_prompt: str = ""
+        _single_join_sf_schema: str = sf_schema
+        with st.expander("6. Add JOIN rules (optional — uses AI SQL generation)", expanded=False):
+            st.caption(
+                "Define LEFT JOINs for this table. When joins are configured the standard "
+                "column-mapping pipeline is bypassed and AI generates the SQL directly. "
+                "Use `schema.table` notation for the right-hand table."
+            )
+            _sj_use = st.checkbox("Enable JOIN rules for this table", key="single_use_joins")
+            if _sj_use:
+                _sj_all_opts = [f"{schema}.{t}" for t in (table_options or [])] or [f"{schema}.{source_table}"]
+                _sj_count = st.number_input(
+                    "Number of LEFT JOINs", min_value=1, max_value=10, value=1, step=1,
+                    key="single_join_count",
+                )
+                for _sji in range(int(_sj_count)):
+                    _sjc1, _sjc2 = st.columns(2)
+                    with _sjc1:
+                        _sj_right = st.selectbox(
+                            f"LEFT JOIN {_sji + 1} — right table",
+                            options=_sj_all_opts,
+                            key=f"single_join_right_{_sji}",
+                        )
+                    with _sjc2:
+                        _sj_on = st.text_input(
+                            f"LEFT JOIN {_sji + 1} — ON condition",
+                            placeholder=f"{source_table}.id = {_sj_right.split('.')[-1] if _sj_all_opts else 'other'}.{source_table}_id",
+                            key=f"single_join_on_{_sji}",
+                        )
+                    if _sj_on.strip():
+                        _single_join_rules.append({"right": _sj_right, "on": _sj_on.strip()})
+                _single_join_prompt = st.text_area(
+                    "Prompt for AI SQL generation",
+                    key="single_join_prompt",
+                    height=80,
+                    placeholder="e.g. Join inventory with products on product_id and return all columns normalised for comparison",
+                ).strip()
+                _single_join_sf_schema = st.text_input(
+                    "Snowflake target schema (leave blank to use main selection above)",
+                    key="single_join_sf_schema",
+                ).strip() or sf_schema
+
+        st.divider()
+        st.caption("Ready when source, target, mappings, and review checks are complete.")
+        if st.button("Generate SQL + YAML", type="primary", key="single_generate", disabled=_single_generate_blocked):
             if not source_table or not sf_table:
                 st.error("Source table and Snowflake table are required.")
+            elif _single_join_rules and _single_join_prompt:
+                # ── JOIN path: AI schema-aware generation ────────────────────
+                with st.spinner(f"Generating JOIN SQL for {source_table} → {sf_table} ..."):
+                    try:
+                        from excel_batch_loader import _build_schema_context as _sj_bsc
+                        _sj_gen = AISQLQueryGenerator(model=model)
+                        _sj_extractor = ExtractorFactory.create(
+                            src_db_type, host=rec["host"], port=int(rec.get("port") or 0),
+                            database=database, username=rec["username"], password=source_password(rec),
+                            auth=rec.get("auth", ""), s3_output=rec.get("s3_output", ""),
+                        )
+                        _sj_rule_lines = [f"Driving table: {schema}.{source_table}"]
+                        _sj_rule_lines.extend(
+                            f"LEFT JOIN {r['right']} ON {r['on']}" for r in _single_join_rules
+                        )
+                        _sj_join_spec = (
+                            "\n\nSTRUCTURED VALIDATION RULES (mandatory):\n"
+                            + "\n".join(_sj_rule_lines)
+                            + f"\nSource WHERE predicate: {single_source_filter or '(none)'}"
+                            + f"\nSnowflake WHERE predicate: {single_target_filter or single_source_filter or '(none)'}"
+                            + "\nUse LEFT JOIN only. Do not use INNER JOIN, RIGHT JOIN, FULL JOIN, CROSS JOIN, or comma joins."
+                            + " Apply source predicate only in source SQL and Snowflake predicate only in Snowflake SQL."
+                        )
+                        _sj_src_ctx = _sj_bsc(
+                            _sj_extractor, src_db_type, database, schema,
+                            [source_table] + [r["right"].split(".")[-1] for r in _single_join_rules],
+                            grain_cols=[],
+                        )
+                        _sj_sf_creds = snowflake_creds()
+                        _sj_tgt_ctx: dict = {}
+                        if _sj_sf_creds.get("account") and sf_database:
+                            _sj_sf_ext = SnowflakeExtractor(
+                                account=_sj_sf_creds["account"],
+                                database=sf_database, schema=_single_join_sf_schema,
+                                username=_sj_sf_creds["username"],
+                                password=_sj_sf_creds["password"],
+                            )
+                            _sj_tgt_ctx = _sj_bsc(
+                                _sj_sf_ext, "snowflake", sf_database, _single_join_sf_schema,
+                                [sf_table.upper()] + [r["right"].split(".")[-1].upper() for r in _single_join_rules],
+                                grain_cols=[],
+                            )
+                        _sj_src_sql = _sj_gen.generate_schema_aware_query(
+                            user_instruction=_single_join_prompt + _sj_join_spec,
+                            schema_context=_sj_src_ctx,
+                            db_type=src_db_type,
+                            default_schema=schema,
+                            normalize=True,
+                        ).query
+                        _sj_tgt_sql = _sj_gen.generate_schema_aware_query(
+                            user_instruction=_single_join_prompt + _sj_join_spec,
+                            schema_context=_sj_tgt_ctx,
+                            db_type="snowflake",
+                            default_schema=_single_join_sf_schema,
+                            normalize=True,
+                        ).query
+                        import yaml as _sj_yaml
+                        _sj_oneline = lambda s: " ".join(s.split())
+                        _sj_out_dir = Path(output_dir) / "data_validation"
+                        _sj_out_dir.mkdir(parents=True, exist_ok=True)
+                        _sj_path = _sj_out_dir / f"{source_table}.yaml"
+                        _sj_doc = {
+                            "tables": {
+                                source_table: {
+                                    "validations": {
+                                        "data_validation": {
+                                            "source_table_name": source_table,
+                                            "source": src_db_type,
+                                            "source_database": database,
+                                            "source_schema": schema,
+                                            "pksourcecolumn": "row_hash",
+                                            "sourcequery": _sj_oneline(_sj_src_sql),
+                                            "target_table_name": sf_table,
+                                            "target": "snowflake",
+                                            "target_database": sf_database,
+                                            "target_schema": _single_join_sf_schema,
+                                            "pktargetcolumn": "row_hash",
+                                            "targetquery": _sj_oneline(_sj_tgt_sql),
+                                            "source_filter": single_source_filter,
+                                            "target_filter": single_target_filter or single_source_filter,
+                                            "joins": _single_join_rules,
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        with open(_sj_path, "w", encoding="utf-8") as _sj_f:
+                            _sj_yaml.dump(_sj_doc, _sj_f, allow_unicode=True,
+                                          sort_keys=False, default_flow_style=False)
+                        st.success(f"Generated JOIN YAML for {source_table} → {sf_table}")
+                        st.code(str(_sj_path))
+                        with st.expander("Source SQL"):
+                            st.code(_sj_src_sql, language="sql")
+                        with st.expander("Target SQL"):
+                            st.code(_sj_tgt_sql, language="sql")
+                    except Exception as exc:
+                        st.error(f"JOIN generation failed: {exc}")
             else:
                 with st.spinner(f"Running pipeline for {source_table} → {sf_table} ..."):
                     try:
@@ -920,6 +1885,8 @@ with tab_single:
                             exclude_columns=excluded_cols or None,
                             source_db_type=src_db_type,
                             output_dir=output_dir,
+                            source_filter=single_source_filter,
+                            target_filter=single_target_filter,
                         )
                         st.success(f"Generated for {result.table_name}")
                         m1, m2, m3 = st.columns(3)
@@ -939,19 +1906,30 @@ with tab_single:
 # TAB: Generate — Batch YAML
 # =============================================================================
 with tab_batch:
-    st.subheader("Batch YAML — pick source/target once, map every table explicitly")
+    st.subheader("Generate validation YAML for multiple tables")
+    st.caption("Map each source table to one Snowflake target. Review every mapping, set table scope, then generate all configs together.")
+    st.info("Workflow: **1. Select tables**  →  **2. Map targets**  →  **3. Review columns**  →  **4. Set scope**  →  **5. Generate all**", icon="🧭")
+    _batch_mode = st.radio(
+        "Choose batch workflow",
+        ["📋 Standard (table mapping)", "📊 Report Pack (Excel)"],
+        horizontal=True,
+        key="batch_mode_radio",
+        help="Standard creates one validation YAML per source table. Report Pack creates configs from an Excel report.",
+    )
+
     registry = load_registry()
     rec = select_connection(registry, key="batch_conn")
 
-    if rec:
+    if rec and _batch_mode == "📋 Standard (table mapping)":
         _override_source_env(rec)
         src_db_type = rec["db_type"]
 
         with st.container(border=True):
-            st.markdown("**① Source**")
+            st.markdown("### 1. Select source tables")
+            st.caption("Choose multiple source tables from one connection. Each selected table becomes one validation job.")
             database, schema, table_options = pick_source_location(rec, "batch")
             source_tables = st.multiselect(
-                "Tables to validate — select N source tables",
+                "Source tables to validate",
                 options=table_options,
                 key="batch_tables_select",
             )
@@ -961,7 +1939,8 @@ with tab_batch:
                 source_tables = [t.strip() for t in manual_raw.split(",") if t.strip()]
 
         with st.container(border=True):
-            st.markdown("**② Target (Snowflake)**")
+            st.markdown("### 2. Choose Snowflake target area")
+            st.caption("Select target database and schema. You will map each source table below.")
             sf_database, sf_schema, _ = pick_snowflake_target("", "batch", include_table=False)
 
             sf_tables_live = []
@@ -974,7 +1953,8 @@ with tab_batch:
         target_map: dict = {}
         ambiguous_tables: set = set()
         if source_tables:
-            st.markdown("**③ Map each source table to its Snowflake target — review before generating**")
+            st.markdown("### 3. Map source tables to Snowflake targets")
+            st.caption("Green or confirmed matches are suggestions. Resolve every warning manually before generation.")
 
             creds = snowflake_creds()
             confirmed_mappings = {}
@@ -1083,7 +2063,8 @@ with tab_batch:
             if mapping_valid:
                 st.success(f"{len(source_tables)} source table(s) mapped to {len(source_tables)} distinct target(s) — ready to generate.")
 
-        st.markdown("**④ Columns to exclude (per table)**")
+        st.markdown("### 4. Set column exclusions")
+        st.caption("System exclusions apply automatically. Add table-specific exclusions only when needed.")
         auto_excluded = _get_all_exclusions(src_db_type)
         static_set = {c.lower() for c in STATIC_EXCLUDE_COLUMNS}
         user_global_excluded = [c for c in auto_excluded if c not in static_set]
@@ -1132,7 +2113,8 @@ with tab_batch:
 
         per_table_col_overrides: dict = {}
         if source_tables and mapping_valid:
-            st.markdown("**⑤ Column mapping — review per table before generating**")
+            st.markdown("### 5. Review columns for each table")
+            st.caption("Expand each table. Confirm matches before continuing.")
             batch_extractor = ExtractorFactory.create(
                 src_db_type, host=rec["host"], port=int(rec.get("port") or 0),
                 database=database, username=rec["username"], password=source_password(rec),
@@ -1167,7 +2149,270 @@ with tab_batch:
         generate_disabled = not source_tables or not target_map or any(not t for t in target_map.values()) or (
             len(set(target_map.values())) != len(target_map)
         )
-        if st.button("▶️ Generate All", type="primary", key="batch_generate", disabled=generate_disabled):
+
+        # ── Pre-generate approval check (batch) ─────────────────────────────────
+        # Aggregate low-confidence and unmatched columns across ALL tables that
+        # have been previewed, and surface them before the Generate All button.
+        _batch_issues: list = []
+        for _bt in (source_tables or []):
+            _bt_rows = st.session_state.get(f"batch_{_bt}_mapping_rows") or []
+            _bt_corrected = set((per_table_col_overrides.get(_bt) or {}).keys())
+            _bt_skipped_low = [
+                r for r in _bt_rows
+                if r.get("skip_validation") and not r.get("target_column")
+                and r["source_column"] not in _bt_corrected
+                and r.get("confidence", 0.0) < 0.75
+            ]
+            _bt_low = [
+                r for r in _bt_rows
+                if not r.get("skip_validation") and r.get("target_column")
+                and r["source_column"] not in _bt_corrected
+                and r.get("confidence", 1.0) < 0.75
+            ]
+            _bt_none = [r for r in _bt_rows if not r.get("skip_validation") and not r.get("target_column")]
+            if _bt_skipped_low or _bt_low or _bt_none:
+                _batch_issues.append({"table": _bt, "skipped_low": _bt_skipped_low, "low": _bt_low, "none": _bt_none})
+
+        _batch_generate_blocked = False
+        if _batch_issues and not generate_disabled:
+            with st.container(border=True):
+                st.markdown("##### ⚠️ Review required before generating")
+                for _bi in _batch_issues:
+                    st.markdown(f"**{_bi['table']}**")
+                    if _bi.get("skipped_low"):
+                        _bsk_c1, _bsk_c2 = st.columns([3, 1])
+                        with _bsk_c1:
+                            st.warning(
+                                f"{len(_bi['skipped_low'])} column(s) skipped — no target match (confidence <75%): "
+                                + ", ".join(
+                                    f"`{r['source_column']}` ({int(r.get('confidence',0)*100)}%)"
+                                    for r in _bi["skipped_low"]
+                                )
+                            )
+                        with _bsk_c2:
+                            if st.button("🎫 Raise Jira ticket", key=f"batch_skip_jira_{_bi['table']}"):
+                                try:
+                                    from gemini_connector.jira_client import create_ticket, is_configured
+                                    if not is_configured():
+                                        st.info("Jira not configured — set env vars in `.env`.")
+                                    else:
+                                        _t = create_ticket(
+                                            summary=f"[Migration Validator] Skipped columns: {_bi['table']}",
+                                            description=(
+                                                f"Table: {_bi['table']}\n\nSkipped columns (no target, conf <75%):\n"
+                                                + "\n".join(
+                                                    f"  - {r['source_column']} ({int(r.get('confidence',0)*100)}%,"
+                                                    f" {r.get('skip_reason','no match')})"
+                                                    for r in _bi["skipped_low"]
+                                                )
+                                            ),
+                                            labels=["migration-validator", "skipped-columns", "needs-review"],
+                                        )
+                                        st.success(f"[{_t['key']}]({_t['url']})")
+                                except Exception as _bsje:
+                                    st.error(f"Jira error: {_bsje}")
+                    if _bi["none"]:
+                        st.error(
+                            f"No target match for: "
+                            f"`{'`, `'.join(r['source_column'] for r in _bi['none'])}` — will be skipped."
+                        )
+                    if _bi["low"]:
+                        st.warning(
+                            "Low-confidence mappings (<75%): "
+                            + ", ".join(
+                                f"`{r['source_column']}` → `{r['target_column']}` ({int(r['confidence']*100)}%)"
+                                for r in _bi["low"]
+                            )
+                        )
+                _bj_col1, _bj_col2 = st.columns([3, 1])
+                with _bj_col2:
+                    if st.button("🎫 Raise Jira tickets", key="batch_jira_btn"):
+                        try:
+                            from gemini_connector.jira_client import create_ticket, is_configured
+                            if not is_configured():
+                                st.info("Jira not configured — set `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_PROJECT_KEY` in your `.env`.")
+                            else:
+                                _created = []
+                                for _bi in _batch_issues:
+                                    if not _bi["low"] and not _bi["none"]:
+                                        continue
+                                    _bdesc = (
+                                        f"Table: {_bi['table']}\n\n"
+                                        + (f"Unmatched: {', '.join(r['source_column'] for r in _bi['none'])}\n" if _bi["none"] else "")
+                                        + (f"Low-confidence:\n" + "\n".join(f"  - {r['source_column']} → {r['target_column']} ({int(r['confidence']*100)}%)" for r in _bi["low"]) if _bi["low"] else "")
+                                    )
+                                    _t = create_ticket(
+                                        summary=f"[Migration Validator] Low-confidence mappings: {_bi['table']}",
+                                        description=_bdesc,
+                                        labels=["migration-validator", "needs-review"],
+                                    )
+                                    _created.append(f"[{_t['key']}]({_t['url']})")
+                                st.success(f"Created {len(_created)} ticket(s): {', '.join(_created)}")
+                        except Exception as _bje:
+                            st.error(f"Jira error: {_bje}")
+                _batch_confirmed = st.checkbox(
+                    "I have reviewed the issues above and want to generate anyway (or have raised Jira tickets)",
+                    key="batch_review_confirmed",
+                )
+                if not _batch_confirmed:
+                    _batch_generate_blocked = True
+
+        # ── Per-table migration filters + optional JOIN rules ──────────────
+        # Each table gets its own filter expander so different tables can have
+        # different predicates (e.g. orders: created_at >= '2024-01-01',
+        # customers: is_active = true).
+        # Previously-used filters for each table are surfaced from plan history
+        # as a dropdown — no need to retype the same predicate every run.
+        # Each expander also lets you add LEFT JOINs for that table; the join
+        # spec and a natural-language prompt are forwarded to AISQLQueryGenerator
+        # instead of the default column-mapping pipeline.
+        st.markdown("### 6. Define validation scope per table")
+        st.caption(
+            "**What is this?**  When the migration team moved only a *subset* of rows from a table "
+            "(e.g. only the last 2 years of orders, or only active customers), the validator must "
+            "apply the same filter on the source side — otherwise it will always report a mismatch "
+            "because it is comparing the full source against the partial target.\n\n"
+            "**Source filter** is applied to the source database query. "
+            "**Target filter** is applied to the Snowflake query (defaults to the source filter when left blank). "
+            "Write the predicate *without* the WHERE keyword — e.g. `created_at >= '2024-01-01'` or "
+            "`status = 'active' AND tenant_id = 42`.\n\n"
+            "**Join rules (optional)** — if this table needs to be validated via a JOIN query (e.g. "
+            "orders → customers), configure the LEFT JOINs and provide a short prompt. "
+            "AI generates the SQL using the live schema. "
+            "Previously-used filters for each table are shown in a dropdown so you can reuse them without retyping."
+        )
+
+        per_table_filters: dict = {}   # {src_table: (source_filter, target_filter)}
+        per_table_joins:   dict = {}   # {src_table: {"joins": [...], "prompt": str, "join_sf_schema": str}}
+        _pt_all_table_options = [f"{schema}.{t}" for t in source_tables]
+        for src_table in source_tables:
+            _history = filter_options_for(src_table)
+            _label = f"🔍 Migration filter — {src_table}"
+            _has_history = bool(_history)
+            with st.expander(_label + (" *(history available)*" if _has_history else ""), expanded=False):
+                if _has_history:
+                    _dropdown_labels = [f"{sf}  →  {tf or '(same as source)'}" for sf, tf in _history]
+                    _dropdown_labels = ["— Enter a new filter —"] + _dropdown_labels
+                    _selected_idx = st.selectbox(
+                        "Previously used filters for this table",
+                        options=range(len(_dropdown_labels)),
+                        format_func=lambda i: _dropdown_labels[i],
+                        key=f"batch_filter_history_{src_table}",
+                        help="Filters are saved automatically from each successful generation run. "
+                             "Select one to pre-fill the fields below, or choose 'Enter a new filter' to type manually.",
+                    )
+                    _pre_src = _history[_selected_idx - 1][0] if _selected_idx > 0 else ""
+                    _pre_tgt = _history[_selected_idx - 1][1] if _selected_idx > 0 else ""
+                else:
+                    _pre_src, _pre_tgt = "", ""
+
+                _fc1, _fc2 = st.columns(2)
+                with _fc1:
+                    _src_f = st.text_input(
+                        "Source filter",
+                        value=_pre_src,
+                        placeholder="e.g.  created_at >= '2024-01-01'",
+                        key=f"batch_src_filter_{src_table}",
+                        help="WHERE predicate applied to the source database query for this table. "
+                             "No WHERE keyword — just the condition, e.g. `status = 'active'`.",
+                    )
+                with _fc2:
+                    _tgt_f = st.text_input(
+                        "Target filter",
+                        value=_pre_tgt,
+                        placeholder="Leave blank to mirror source filter",
+                        key=f"batch_tgt_filter_{src_table}",
+                        help="WHERE predicate applied to the Snowflake query. "
+                             "Column names are usually UPPER_CASE on Snowflake. "
+                             "If blank, the source filter is reused as-is.",
+                    )
+
+                if _src_f:
+                    st.info(
+                        f"**{src_table}** source: `WHERE {_src_f}`  \n"
+                        f"**{src_table}** target: `WHERE {_tgt_f or _src_f}`"
+                    )
+                else:
+                    st.caption("No filter — full table scan (both sides).")
+
+                per_table_filters[src_table] = (_src_f, _tgt_f)
+
+                # ── Optional per-table JOIN rules ──────────────────────────────
+                st.divider()
+                _pt_use_joins = st.checkbox(
+                    "Add JOIN rules for this table (optional)",
+                    key=f"pt_use_joins_{src_table}",
+                    help="When this table must be validated via a JOIN query, enable this to define "
+                         "LEFT JOIN conditions. AI generates the SQL using live schema context.",
+                )
+                if _pt_use_joins:
+                    st.caption(
+                        "Define LEFT JOINs below. This table is the driving (left) side. "
+                        "Select the joined table and write the ON condition without the ON keyword."
+                    )
+                    _pt_join_count = st.number_input(
+                        "Number of LEFT JOINs",
+                        min_value=1, max_value=max(1, len(_pt_all_table_options) - 1),
+                        value=1, step=1,
+                        key=f"pt_join_count_{src_table}",
+                    )
+                    _pt_join_rules: list = []
+                    for _pt_ji in range(int(_pt_join_count)):
+                        _ptj1, _ptj2 = st.columns(2)
+                        with _ptj1:
+                            _pt_right = st.selectbox(
+                                f"LEFT JOIN {_pt_ji + 1} — table",
+                                options=_pt_all_table_options,
+                                key=f"pt_join_right_{src_table}_{_pt_ji}",
+                            )
+                        with _ptj2:
+                            _pt_on = st.text_input(
+                                f"LEFT JOIN {_pt_ji + 1} — ON condition",
+                                placeholder=f"{src_table}.id = {_pt_right.split('.')[-1] if _pt_all_table_options else 'other'}.{src_table}_id",
+                                key=f"pt_join_on_{src_table}_{_pt_ji}",
+                                help="Condition without ON keyword. Use table.column notation.",
+                            )
+                        if _pt_on.strip():
+                            _pt_join_rules.append({"right": _pt_right, "on": _pt_on.strip()})
+
+                    _pt_join_prompt = st.text_area(
+                        "Prompt for AI SQL generation",
+                        placeholder=f"Validate {src_table} joined to products. "
+                                    "Compare row counts and key aggregates after applying the filter above.",
+                        key=f"pt_join_prompt_{src_table}",
+                        height=80,
+                        help="Describe what the joined query should validate. "
+                             "AI uses live PK/FK schema for fully-qualified SQL.",
+                    ).strip()
+
+                    _pt_join_sf_schema_input = st.text_input(
+                        "Snowflake target schema for joined tables (leave blank to use selected target schema)",
+                        key=f"pt_join_sf_schema_{src_table}",
+                        placeholder=f"e.g. {sf_schema}",
+                    ).strip() or sf_schema
+
+                    if int(_pt_join_count) > len(_pt_join_rules):
+                        st.warning("Fill in every ON condition before generating.")
+
+                    if _pt_join_rules and _pt_join_prompt:
+                        per_table_joins[src_table] = {
+                            "joins": _pt_join_rules,
+                            "prompt": _pt_join_prompt,
+                            "join_sf_schema": _pt_join_sf_schema_input,
+                        }
+                        st.info(
+                            f"**{src_table}** will be validated with {len(_pt_join_rules)} LEFT JOIN(s). "
+                            f"AI prompt: _{_pt_join_prompt[:80]}{'…' if len(_pt_join_prompt) > 80 else ''}_"
+                        )
+
+        st.divider()
+        if per_table_joins:
+            st.info(
+                f"**{len(per_table_joins)} table(s)** have JOIN rules configured and will use "
+                "AI SQL generation instead of the standard column-mapping pipeline."
+            )
+        st.caption("Final check: every source table has one unique target, mappings are reviewed, and scope is set.")
+        if st.button("Generate all table YAMLs", type="primary", key="batch_generate", disabled=generate_disabled or _batch_generate_blocked):
             extractor = ExtractorFactory.create(
                 src_db_type, host=rec["host"], port=int(rec.get("port") or 0),
                 database=database, username=rec["username"], password=source_password(rec),
@@ -1176,33 +2421,134 @@ with tab_batch:
             progress = st.progress(0.0, text="Starting...")
             results = []
             pairs = list(target_map.items())
+            # Build AI generator once — reused by all tables that have JOIN rules
+            _pt_gen = AISQLQueryGenerator(model=model) if per_table_joins else None
+            _pt_sf_creds = snowflake_creds()
+
             for i, (src_table, tgt_table) in enumerate(pairs, 1):
                 progress.progress(i / len(pairs), text=f"{src_table} → {tgt_table}  ({i}/{len(pairs)})")
                 try:
-                    pipeline = ValidationPipeline(model=model, source_extractor=extractor)
-                    result, _plan = pipeline.run_with_plan(
-                        pg_schema=schema,
-                        pg_table=src_table,
-                        sf_schema=sf_schema,
-                        sf_table=tgt_table,
-                        sf_database=sf_database,
-                        pg_database=database,
-                        explicit_mappings=per_table_col_overrides.get(src_table) or None,
-                        exclude_columns=(list(auto_excluded) + per_table_excl.get(src_table, [])) or None,
-                        source_db_type=src_db_type,
-                        output_dir=output_dir,
-                    )
-                    results.append({
-                        "Source": src_table, "Target": tgt_table, "Status": "✅ Success",
-                        "Detail": f"{result.active_columns} cols, {result.generated_by}",
-                    })
-                    creds = snowflake_creds()
-                    if creds["account"]:
-                        mapping_store.save_mapping(
-                            creds["account"], creds["username"], creds["password"],
-                            sf_database, sf_schema, src_table, tgt_table,
-                            confirmed_by=creds["username"], source_connection=connection_label(rec),
+                    _pt_jinfo = per_table_joins.get(src_table)
+                    if _pt_jinfo:
+                        # ── JOIN path: use AISQLQueryGenerator ──────────────
+                        from excel_batch_loader import _build_schema_context as _pt_bsc
+                        _pt_join_rules = _pt_jinfo["joins"]
+                        _pt_join_prompt = _pt_jinfo["prompt"]
+                        _pt_sf_sch_override = _pt_jinfo.get("join_sf_schema") or sf_schema
+                        _pt_src_filter, _pt_tgt_filter = per_table_filters.get(src_table, ("", ""))
+
+                        _pt_rule_lines = [f"Driving table: {schema}.{src_table}"]
+                        _pt_rule_lines.extend(
+                            f"LEFT JOIN {r['right']} ON {r['on']}" for r in _pt_join_rules
                         )
+                        _pt_join_spec = (
+                            "\n\nSTRUCTURED VALIDATION RULES (mandatory):\n"
+                            + "\n".join(_pt_rule_lines)
+                            + f"\nSource WHERE predicate: {_pt_src_filter or '(none)'}"
+                            + f"\nSnowflake WHERE predicate: {_pt_tgt_filter or _pt_src_filter or '(none)'}"
+                            + "\nUse LEFT JOIN only. Do not use INNER JOIN, RIGHT JOIN, FULL JOIN, CROSS JOIN, or comma joins."
+                            + " Apply source predicate only in source SQL and Snowflake predicate only in Snowflake SQL."
+                        )
+
+                        _pt_src_ctx = _pt_bsc(
+                            extractor, src_db_type, database, schema,
+                            [src_table] + [r["right"].split(".")[-1] for r in _pt_join_rules],
+                            grain_cols=[],
+                        )
+                        _pt_tgt_ctx: dict = {}
+                        if _pt_sf_creds.get("account") and sf_database:
+                            _pt_sf_ext = SnowflakeExtractor(
+                                account=_pt_sf_creds["account"],
+                                database=sf_database, schema=_pt_sf_sch_override,
+                                username=_pt_sf_creds["username"],
+                                password=_pt_sf_creds["password"],
+                            )
+                            _pt_tgt_ctx = _pt_bsc(
+                                _pt_sf_ext, "snowflake", sf_database, _pt_sf_sch_override,
+                                [tgt_table.upper()] + [r["right"].split(".")[-1].upper() for r in _pt_join_rules],
+                                grain_cols=[],
+                            )
+
+                        _pt_src_sql = _pt_gen.generate_schema_aware_query(
+                            user_instruction=_pt_join_prompt + _pt_join_spec,
+                            schema_context=_pt_src_ctx,
+                            db_type=src_db_type,
+                            default_schema=schema,
+                            normalize=True,
+                        ).query
+                        _pt_tgt_sql = _pt_gen.generate_schema_aware_query(
+                            user_instruction=_pt_join_prompt + _pt_join_spec,
+                            schema_context=_pt_tgt_ctx,
+                            db_type="snowflake",
+                            default_schema=_pt_sf_sch_override,
+                            normalize=True,
+                        ).query
+
+                        import yaml as _pt_yaml
+                        _pt_out_dir = Path(output_dir) / "data_validation"
+                        _pt_out_dir.mkdir(parents=True, exist_ok=True)
+                        _pt_path = _pt_out_dir / f"{src_table}.yaml"
+                        _pt_sql_oneline = lambda s: " ".join(s.split())
+                        _pt_doc = {
+                            "tables": {
+                                src_table: {
+                                    "validations": {
+                                        "data_validation": {
+                                            "source_table_name": src_table,
+                                            "source": src_db_type,
+                                            "source_database": database,
+                                            "source_schema": schema,
+                                            "pksourcecolumn": "row_hash",
+                                            "sourcequery": _pt_sql_oneline(_pt_src_sql),
+                                            "target_table_name": tgt_table,
+                                            "target": "snowflake",
+                                            "target_database": sf_database,
+                                            "target_schema": _pt_sf_sch_override,
+                                            "pktargetcolumn": "row_hash",
+                                            "targetquery": _pt_sql_oneline(_pt_tgt_sql),
+                                            "source_filter": _pt_src_filter,
+                                            "target_filter": _pt_tgt_filter or _pt_src_filter,
+                                            "joins": _pt_join_rules,
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        with open(_pt_path, "w", encoding="utf-8") as _pt_f:
+                            _pt_yaml.dump(_pt_doc, _pt_f, allow_unicode=True,
+                                          sort_keys=False, default_flow_style=False)
+                        results.append({
+                            "Source": src_table, "Target": tgt_table, "Status": "✅ Success (JOIN)",
+                            "Detail": f"AI JOIN SQL, {len(_pt_join_rules)} join(s)",
+                        })
+                    else:
+                        # ── Standard column-mapping pipeline ─────────────────
+                        pipeline = ValidationPipeline(model=model, source_extractor=extractor)
+                        result, _plan = pipeline.run_with_plan(
+                            pg_schema=schema,
+                            pg_table=src_table,
+                            sf_schema=sf_schema,
+                            sf_table=tgt_table,
+                            sf_database=sf_database,
+                            pg_database=database,
+                            explicit_mappings=per_table_col_overrides.get(src_table) or None,
+                            exclude_columns=(list(auto_excluded) + per_table_excl.get(src_table, [])) or None,
+                            source_db_type=src_db_type,
+                            output_dir=output_dir,
+                            source_filter=per_table_filters.get(src_table, ("", ""))[0],
+                            target_filter=per_table_filters.get(src_table, ("", ""))[1],
+                        )
+                        results.append({
+                            "Source": src_table, "Target": tgt_table, "Status": "✅ Success",
+                            "Detail": f"{result.active_columns} cols, {result.generated_by}",
+                        })
+                        creds = snowflake_creds()
+                        if creds["account"]:
+                            mapping_store.save_mapping(
+                                creds["account"], creds["username"], creds["password"],
+                                sf_database, sf_schema, src_table, tgt_table,
+                                confirmed_by=creds["username"], source_connection=connection_label(rec),
+                            )
                 except Exception as exc:
                     results.append({"Source": src_table, "Target": tgt_table, "Status": "❌ Failed", "Detail": str(exc)})
             progress.empty()
@@ -1213,6 +2559,1145 @@ with tab_batch:
                 st.success(f"Batch complete: {n_ok}/{len(results)} table(s) generated successfully.")
             else:
                 st.warning(f"Batch complete: {n_ok}/{len(results)} table(s) generated successfully — see failures above.")
+
+    elif rec and _batch_mode == "📊 Report Pack (Excel)":
+        # =====================================================================
+        # REPORT PACK MODE — uses same source/target connection as Standard,
+        # but takes table list + filters from an uploaded Excel mapping sheet.
+        # AI generates SQL via generate_schema_aware_query with real PK/FK info.
+        # =====================================================================
+        import pandas as _pd_excel
+        import tempfile
+        from excel_batch_loader import load_excel, _generate_queries, write_yaml
+
+        _override_source_env(rec)
+        src_db_type = rec["db_type"]
+
+        with st.container(border=True):
+            st.markdown("**① Source location** (same connection selected above)")
+            _rp_database, _rp_schema, _ = pick_source_location(rec, "rp")
+
+        with st.container(border=True):
+            st.markdown("**② Target (Snowflake)**")
+            _rp_sf_database, _rp_sf_schema, _ = pick_snowflake_target("", "rp", include_table=False)
+
+        st.markdown("**③ Upload mapping sheet**")
+        st.caption("Expected columns: **Report Pack · Yaml-File-name · Report Name · Summary · Grain · Legacy Query (Redshift/Postgres/…) · Snowflake Query**")
+
+        _rp_c1, _rp_c2, _rp_c3 = st.columns([2, 2, 3])
+        with _rp_c1:
+            _rp_env = st.text_input("Environment", placeholder="dev / prod / uat …", key="rp_env",
+                                    help="Replaces {env} tokens in SQL. Leave blank to keep as placeholder.")
+        with _rp_c2:
+            _rp_sheet = st.text_input("Sheet name (optional)", placeholder="First sheet if blank", key="rp_sheet")
+        with _rp_c3:
+            _rp_model = st.selectbox("AI model for empty cells",
+                                     options=["(use default from .env)"] + list(AVAILABLE_MODELS),
+                                     key="rp_model")
+        _rp_dry = st.checkbox("Dry run — preview only, no files written", key="rp_dry")
+
+        _rp_file = st.file_uploader("Upload Excel mapping sheet (.xlsx)", type=["xlsx", "xls"], key="rp_excel_upload")
+
+        if _rp_file and _rp_database and _rp_schema:
+            _rp_bytes = _rp_file.read()
+            with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as _rp_tmp:
+                _rp_tmp.write(_rp_bytes)
+                _rp_tmp_path = _rp_tmp.name
+
+            try:
+                _rp_specs = load_excel(_rp_tmp_path, sheet=_rp_sheet.strip() or None)
+            except Exception as _rp_exc:
+                st.error(f"Could not parse sheet: {_rp_exc}")
+                _rp_specs = []
+
+            if _rp_specs:
+                st.success(f"Parsed **{len(_rp_specs)}** row(s). Review below, then confirm.")
+
+                _rp_preview = [
+                    {
+                        "Row": s.row_num,
+                        "Report Pack": s.report_pack,
+                        "YAML File": s.yaml_file_name,
+                        "Report Name": s.report_name[:60] + ("…" if len(s.report_name) > 60 else ""),
+                        "Grain": s.grain,
+                        "Source SQL": "✅ provided" if s.legacy_query else "🤖 AI will generate",
+                        "Target SQL": "✅ provided" if s.snowflake_query else "🤖 AI will generate",
+                    }
+                    for s in _rp_specs
+                ]
+                st.dataframe(_pd_excel.DataFrame(_rp_preview), use_container_width=True, hide_index=True)
+
+                _rp_needs_ai = sum(1 for s in _rp_specs if not s.legacy_query or not s.snowflake_query)
+                if _rp_needs_ai:
+                    st.info(
+                        f"**{_rp_needs_ai}** row(s) have empty SQL — AI will generate queries "
+                        f"from the live DB schema (PK/FK relationships detected), with fully-qualified "
+                        f"db.schema.table.column references. Row-hash used when no PK is found."
+                    )
+
+                _rp_confirmed = st.checkbox(
+                    "✅ I have reviewed the preview above and confirm generating YAMLs",
+                    key="rp_confirmed",
+                )
+
+                if st.button("▶️ Generate Report YAMLs", type="primary", key="rp_generate",
+                             disabled=not _rp_confirmed):
+                    _rp_model_val = None if _rp_model == "(use default from .env)" else _rp_model
+                    _rp_env_val   = _rp_env.strip() or None
+                    _rp_out_dir   = _ROOT_DIR / "Project" / "config" / "report"
+
+                    # Build extractors once — reused across all rows
+                    _rp_src_extractor = ExtractorFactory.create(
+                        src_db_type, host=rec["host"], port=int(rec.get("port") or 0),
+                        database=_rp_database, username=rec["username"],
+                        password=source_password(rec),
+                        auth=rec.get("auth", ""), s3_output=rec.get("s3_output", ""),
+                    )
+                    _rp_sf_creds = snowflake_creds()
+                    _rp_sf_extractor = SnowflakeExtractor(
+                        account=_rp_sf_creds["account"],
+                        database=_rp_sf_database,
+                        schema=_rp_sf_schema,
+                        username=_rp_sf_creds["username"],
+                        password=_rp_sf_creds["password"],
+                    ) if _rp_sf_creds["account"] and _rp_sf_database else None
+
+                    _rp_progress = st.progress(0.0, text="Starting…")
+                    _rp_results  = []
+                    _rp_errors   = []
+
+                    for _rp_i, _rp_spec in enumerate(_rp_specs, 1):
+                        _rp_progress.progress(
+                            _rp_i / len(_rp_specs),
+                            text=f"Processing {_rp_spec.yaml_file_name}  ({_rp_i}/{len(_rp_specs)})",
+                        )
+                        try:
+                            # Derive table names from grain columns + yaml_file_name
+                            _rp_grain_cols = [g.strip() for g in __import__("re").split(r"[+,]", _rp_spec.grain) if g.strip()]
+                            _rp_spec.source_database = _rp_database
+                            _rp_spec.source_schema   = _rp_schema
+                            _rp_spec.source_tables   = [_rp_spec.yaml_file_name]
+                            _rp_spec.sf_database     = _rp_sf_database or ""
+                            _rp_spec.sf_schema       = _rp_sf_schema or ""
+
+                            _rp_src_q, _rp_tgt_q = _generate_queries(
+                                _rp_spec, _rp_model_val,
+                                source_extractor=_rp_src_extractor,
+                                sf_extractor=_rp_sf_extractor,
+                            ) if (not _rp_spec.legacy_query or not _rp_spec.snowflake_query) \
+                              else (_rp_spec.legacy_query, _rp_spec.snowflake_query)
+
+                            _rp_out = write_yaml(
+                                _rp_spec, _rp_src_q, _rp_tgt_q, _rp_env_val, _rp_out_dir,
+                                dry_run=_rp_dry,
+                            )
+                            _rp_results.append(str(_rp_out))
+                        except Exception as _rp_exc2:
+                            _rp_errors.append(f"Row {_rp_spec.row_num} ({_rp_spec.yaml_file_name}): {_rp_exc2}")
+
+                    _rp_progress.progress(1.0, text="Done.")
+
+                    if _rp_results:
+                        st.success(f"✅ {'Would write' if _rp_dry else 'Written'} **{len(_rp_results)}** YAML file(s).")
+                        with st.expander("Output files"):
+                            for _rp_p in _rp_results:
+                                st.code(_rp_p, language=None)
+                    for _rp_e in _rp_errors:
+                        st.error(_rp_e)
+        elif _rp_file and not (_rp_database and _rp_schema):
+            st.warning("Select a source database and schema above before uploading.")
+
+        # ── Multi-schema JOIN batch (Report Pack) ─────────────────────────────
+        # Moved here from Standard batch mode. Uses the same connection as Report
+        # Pack but sources tables from N schemas. One prompt → one YAML.
+        st.divider()
+        st.markdown("### Multi-schema JOIN batch")
+        st.caption(
+            "Select tables from **multiple schemas** on the same connection, then supply "
+            "one or more JOIN prompts. Each prompt → one YAML. "
+            "AI uses live PK/FK schema for fully-qualified `db.schema.table.column` SQL."
+        )
+        with st.expander("➕ Configure multi-schema JOIN batch", expanded=False):
+            # A. Table pool
+            st.markdown("**A. Table pool**")
+            _rpj_all_schemas = cached_source_schemas(
+                src_db_type, rec["host"], int(rec.get("port") or 0),
+                _rp_database or "", rec["username"], source_password(rec), rec.get("auth", ""),
+            ) or []
+            _rpj_sel_schemas = st.multiselect(
+                "Schemas to draw tables from",
+                options=_rpj_all_schemas,
+                default=[_rp_schema] if _rp_schema in _rpj_all_schemas else [],
+                key="rpj_schemas",
+            )
+            _rpj_pool: dict = {}
+            for _rpj_sch in _rpj_sel_schemas:
+                try:
+                    _rpj_sch_tables = cached_source_tables(
+                        src_db_type, rec["host"], int(rec.get("port") or 0),
+                        _rp_database or "", rec["username"], source_password(rec),
+                        rec.get("auth", ""), rec.get("s3_output", ""), _rpj_sch,
+                    )
+                except Exception:
+                    _rpj_sch_tables = []
+                _rpj_pool[_rpj_sch] = st.multiselect(
+                    f"Tables from `{_rpj_sch}`",
+                    options=_rpj_sch_tables,
+                    key=f"rpj_tables_{_rpj_sch}",
+                )
+            _rpj_all_tables_flat = [t for ts in _rpj_pool.values() for t in ts]
+            _rpj_table_options   = [f"{sch}.{tbl}" for sch, tbls in _rpj_pool.items() for tbl in tbls]
+
+            if _rpj_table_options:
+                st.markdown("**B. Join rules**")
+                _rpj_base = st.selectbox(
+                    "Driving table (left side)",
+                    options=_rpj_table_options,
+                    key="rpj_base_table",
+                )
+                _rpj_join_count = st.number_input(
+                    "Number of LEFT JOINs", min_value=0,
+                    max_value=max(0, len(_rpj_table_options) - 1),
+                    value=0, step=1, key="rpj_join_count",
+                )
+                _rpj_join_rules: list = []
+                for _rpj_ji in range(int(_rpj_join_count)):
+                    _rpjc1, _rpjc2 = st.columns(2)
+                    with _rpjc1:
+                        _rpj_right = st.selectbox(
+                            f"LEFT JOIN {_rpj_ji + 1} table",
+                            options=_rpj_table_options,
+                            key=f"rpj_join_right_{_rpj_ji}",
+                        )
+                    with _rpjc2:
+                        _rpj_on = st.text_input(
+                            f"LEFT JOIN {_rpj_ji + 1} ON condition",
+                            placeholder="orders.customer_id = customers.customer_id",
+                            key=f"rpj_join_on_{_rpj_ji}",
+                        )
+                    if _rpj_on.strip():
+                        _rpj_join_rules.append({"right": _rpj_right, "on": _rpj_on.strip()})
+
+                _rpjf1, _rpjf2 = st.columns(2)
+                with _rpjf1:
+                    _rpj_src_filter = st.text_input(
+                        "Source WHERE predicate", key="rpj_src_filter",
+                        placeholder="orders.created_at >= '2024-01-01'",
+                    ).strip()
+                with _rpjf2:
+                    _rpj_tgt_filter = st.text_input(
+                        "Snowflake WHERE predicate", key="rpj_tgt_filter",
+                        placeholder="ORDERS.CREATED_AT >= '2024-01-01'",
+                    ).strip() or _rpj_src_filter
+
+                if int(_rpj_join_count) > len(_rpj_join_rules):
+                    st.warning("Fill in every ON condition before generating.")
+
+                st.markdown("**C. Prompts** — one per line, one YAML per prompt")
+                _rpj_prompts_raw = st.text_area(
+                    "Prompts (one per line)",
+                    placeholder=(
+                        "Validate orders joined to customers, compare row counts and revenue totals\n"
+                        "Validate products joined to inventory, compare SKU coverage"
+                    ),
+                    key="rpj_prompts",
+                    height=120,
+                )
+                _rpj_prompt_list = [p.strip() for p in _rpj_prompts_raw.splitlines() if p.strip()]
+
+                _rpj_model = select_or_type(
+                    "AI model", available_models_for_ui(),
+                    os.getenv("DIAL_MODEL", "gpt-4o"),
+                    "rpj_model", format_func=_model_label,
+                )
+
+                _rpj_sf_creds = snowflake_creds()
+                _rpj_sf_schemas_list = cached_sf_schemas(
+                    _rpj_sf_creds["account"], _rp_sf_database or "", _rpj_sf_creds["username"],
+                    _rpj_sf_creds["password"], _rpj_sf_creds["warehouse"], _rpj_sf_creds["role"],
+                )
+                _rpj_sf_schemas = st.multiselect(
+                    "Snowflake target schemas",
+                    options=_rpj_sf_schemas_list,
+                    default=[_rp_sf_schema] if _rp_sf_schema in _rpj_sf_schemas_list else [],
+                    key="rpj_sf_schemas",
+                )
+                _rpj_sf_sch = _rpj_sf_schemas[0] if _rpj_sf_schemas else _rp_sf_schema
+
+                _rpj_ready = bool(_rpj_all_tables_flat) and bool(_rpj_prompt_list)
+                _rpj_confirmed = st.checkbox(
+                    f"✅ Ready — {len(_rpj_all_tables_flat)} table(s), {len(_rpj_prompt_list)} prompt(s)",
+                    key="rpj_confirmed", disabled=not _rpj_ready,
+                )
+
+                if st.button(
+                    f"✨ Generate {len(_rpj_prompt_list)} JOIN YAML(s)",
+                    key="rpj_generate", type="primary",
+                    disabled=not (_rpj_ready and _rpj_confirmed),
+                ):
+                    from excel_batch_loader import _build_schema_context as _rpj_bsc
+                    _rpj_rule_lines = [f"Driving table: {_rpj_base}"]
+                    _rpj_rule_lines.extend(
+                        f"LEFT JOIN {r['right']} ON {r['on']}" for r in _rpj_join_rules
+                    )
+                    _rpj_join_spec = (
+                        "\n\nSTRUCTURED VALIDATION RULES (mandatory):\n"
+                        + "\n".join(_rpj_rule_lines)
+                        + f"\nSource WHERE predicate: {_rpj_src_filter or '(none)'}"
+                        + f"\nSnowflake WHERE predicate: {_rpj_tgt_filter or '(none)'}"
+                        + "\nUse LEFT JOIN only. Do not use INNER JOIN, RIGHT JOIN, FULL JOIN, CROSS JOIN, or comma joins."
+                        + " Apply source predicate only in source SQL and Snowflake predicate only in Snowflake SQL."
+                    )
+                    with st.spinner("Fetching live schema…"):
+                        try:
+                            _rpj_extractor = ExtractorFactory.create(
+                                src_db_type, host=rec["host"], port=int(rec.get("port") or 0),
+                                database=_rp_database or "", username=rec["username"],
+                                password=source_password(rec),
+                                auth=rec.get("auth", ""), s3_output=rec.get("s3_output", ""),
+                            )
+                            _rpj_src_ctx: dict = {}
+                            for _rpj_sch, _rpj_tbls in _rpj_pool.items():
+                                if _rpj_tbls:
+                                    _rpj_src_ctx.update(
+                                        _rpj_bsc(_rpj_extractor, src_db_type, _rp_database or "",
+                                                 _rpj_sch, _rpj_tbls, grain_cols=[])
+                                    )
+                            _rpj_tgt_ctx: dict = {}
+                            if _rpj_sf_creds.get("account") and _rp_sf_database:
+                                for _rpj_tgt_schema in _rpj_sf_schemas:
+                                    _rpj_sf_ext = SnowflakeExtractor(
+                                        account=_rpj_sf_creds["account"],
+                                        database=_rp_sf_database, schema=_rpj_tgt_schema,
+                                        username=_rpj_sf_creds["username"],
+                                        password=_rpj_sf_creds["password"],
+                                    )
+                                    for _rpj_sch, _rpj_tbls in _rpj_pool.items():
+                                        if _rpj_tbls:
+                                            _rpj_tgt_ctx.update(
+                                                _rpj_bsc(_rpj_sf_ext, "snowflake", _rp_sf_database,
+                                                         _rpj_tgt_schema, [t.upper() for t in _rpj_tbls],
+                                                         grain_cols=[])
+                                            )
+                            _rpj_schema_err = None
+                        except Exception as _rpj_schema_exc:
+                            _rpj_schema_err = _rpj_schema_exc
+
+                    if _rpj_schema_err:
+                        st.error(f"Schema fetch failed: {_rpj_schema_err}")
+                    else:
+                        _rpj_gen    = AISQLQueryGenerator(model=_rpj_model)
+                        _rpj_bar    = st.progress(0, text="Starting…")
+                        _rpj_res    = []
+                        _rpj_out_dir = _ROOT_DIR / "Project" / "config" / "report" / "data_validation"
+                        _rpj_out_dir.mkdir(parents=True, exist_ok=True)
+
+                        for _rpj_pi, _rpj_prompt in enumerate(_rpj_prompt_list):
+                            _rpj_bar.progress(_rpj_pi / len(_rpj_prompt_list),
+                                              text=f"Prompt {_rpj_pi + 1}/{len(_rpj_prompt_list)}")
+                            _rpj_fname = next(
+                                (t for t in _rpj_all_tables_flat if t.lower() in _rpj_prompt.lower()),
+                                f"join_{_rpj_pi + 1}",
+                            )
+                            try:
+                                _rpj_src_sql = _rpj_gen.generate_schema_aware_query(
+                                    user_instruction=_rpj_prompt + _rpj_join_spec,
+                                    schema_context=_rpj_src_ctx,
+                                    db_type=src_db_type,
+                                    default_schema=list(_rpj_pool.keys())[0] if _rpj_pool else _rp_schema,
+                                    normalize=True,
+                                ).query
+                                _rpj_tgt_sql = _rpj_gen.generate_schema_aware_query(
+                                    user_instruction=_rpj_prompt + _rpj_join_spec,
+                                    schema_context=_rpj_tgt_ctx,
+                                    db_type="snowflake",
+                                    default_schema=_rpj_sf_sch,
+                                    normalize=True,
+                                ).query
+                                import yaml as _rpj_yaml
+                                _rpj_sql_oneline = lambda s: " ".join(s.split())
+                                _rpj_path = _rpj_out_dir / f"{_rpj_fname}.yaml"
+                                _rpj_doc = {
+                                    "tables": {
+                                        _rpj_fname: {
+                                            "validations": {
+                                                "data_validation": {
+                                                    "source_table_name": _rpj_fname,
+                                                    "source": src_db_type,
+                                                    "source_database": _rp_database,
+                                                    "source_schema": ", ".join(_rpj_pool.keys()),
+                                                    "pksourcecolumn": "row_hash",
+                                                    "sourcequery": _rpj_sql_oneline(_rpj_src_sql),
+                                                    "target_table_name": _rpj_fname,
+                                                    "target": "snowflake",
+                                                    "target_database": _rp_sf_database,
+                                                    "target_schema": _rpj_sf_sch,
+                                                    "pktargetcolumn": "row_hash",
+                                                    "targetquery": _rpj_sql_oneline(_rpj_tgt_sql),
+                                                    "source_filter": _rpj_src_filter,
+                                                    "target_filter": _rpj_tgt_filter,
+                                                    "joins": _rpj_join_rules,
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                with open(_rpj_path, "w", encoding="utf-8") as _rpj_f:
+                                    _rpj_yaml.dump(_rpj_doc, _rpj_f, allow_unicode=True,
+                                                   sort_keys=False, default_flow_style=False)
+                                _rpj_res.append({"Prompt": _rpj_prompt[:60], "File": str(_rpj_path), "Status": "✅"})
+                            except Exception as _rpj_exc:
+                                _rpj_res.append({"Prompt": _rpj_prompt[:60], "File": "", "Status": f"❌ {_rpj_exc}"})
+
+                        _rpj_bar.progress(1.0, text="Done.")
+                        import pandas as _rpj_pd
+                        st.dataframe(_rpj_pd.DataFrame(_rpj_res), use_container_width=True, hide_index=True)
+
+# =============================================================================
+# Row-hash SQL builder — used by Custom SQL tab when a table has no PK.
+# Concatenates every normalized column with '|' separator and MD5-hashes the
+# result.  Column order follows ordinal_position so both sides hash identically.
+# ponytail: Phase 1 — pure hash, no dup_count.  Add GROUP BY + COUNT(*) when
+#           duplicate-row tables are encountered and set-compare fails.
+
+def _build_row_hash_sql(columns: list, table_fqn: str, db_type: str) -> str:
+    """Return a SELECT MD5(<concat of all normalized cols>) AS row_hash FROM table_fqn."""
+    sep = " || '|' || "
+    parts = []
+    for c in columns:
+        col = c["column_name"]
+        dt  = (c.get("data_type") or "text").lower()
+        if db_type in ("postgresql", "postgres"):
+            if "timestamp" in dt:
+                expr = f"COALESCE(CAST(TO_CHAR({col}, 'YYYY-MM-DD HH24:MI:SS') AS TEXT), '<<NULL>>')"
+            elif "date" == dt:
+                expr = f"COALESCE(CAST(TO_CHAR({col}, 'YYYY-MM-DD') AS TEXT), '<<NULL>>')"
+            elif "bool" in dt:
+                expr = f"COALESCE(CAST(CASE WHEN {col} = true THEN '1' WHEN {col} = false THEN '0' ELSE NULL END AS TEXT), '<<NULL>>')"
+            else:
+                expr = f"COALESCE(CAST(TRIM({col}) AS TEXT), '<<NULL>>')"
+        elif db_type in ("mssql", "sqlserver"):
+            if "datetime" in dt or "date" == dt:
+                expr = f"COALESCE(CAST(FORMAT({col}, 'yyyy-MM-dd HH:mm:ss') AS VARCHAR(MAX)), '<<NULL>>')"
+            elif "bit" in dt:
+                expr = f"COALESCE(CAST(CASE WHEN {col} = 1 THEN '1' ELSE '0' END AS VARCHAR(MAX)), '<<NULL>>')"
+            else:
+                expr = f"COALESCE(CAST(LTRIM(RTRIM({col})) AS VARCHAR(MAX)), '<<NULL>>')"
+        elif db_type == "snowflake":
+            if "timestamp" in dt or "date" == dt:
+                expr = f"COALESCE(CAST(TO_VARCHAR({col}, 'YYYY-MM-DD HH24:MI:SS') AS STRING), '<<NULL>>')"
+            elif "boolean" in dt:
+                expr = f"COALESCE(CAST(CASE WHEN {col} = TRUE THEN '1' WHEN {col} = FALSE THEN '0' ELSE NULL END AS STRING), '<<NULL>>')"
+            else:
+                expr = f"COALESCE(CAST(TRIM({col}) AS STRING), '<<NULL>>')"
+        else:  # athena / trino
+            if "timestamp" in dt or "date" == dt:
+                expr = f"COALESCE(CAST(date_format({col}, '%Y-%m-%d %H:%i:%s') AS VARCHAR), '<<NULL>>')"
+            elif "boolean" in dt:
+                expr = f"COALESCE(CAST(CASE WHEN {col} THEN '1' ELSE '0' END AS VARCHAR), '<<NULL>>')"
+            else:
+                expr = f"COALESCE(CAST(TRIM({col}) AS VARCHAR), '<<NULL>>')"
+        parts.append(expr)
+
+    concat_expr = sep.join(parts)
+    if db_type in ("postgresql", "postgres"):
+        hash_expr = f"MD5({concat_expr})"
+    elif db_type in ("mssql", "sqlserver"):
+        hash_expr = f"LOWER(CONVERT(VARCHAR(32), HASHBYTES('MD5', {concat_expr}), 2))"
+    elif db_type == "snowflake":
+        hash_expr = f"MD5({concat_expr})"
+    else:
+        hash_expr = f"MD5({concat_expr})"
+
+    return f"SELECT {hash_expr} AS row_hash\nFROM {table_fqn}"
+
+
+# =============================================================================
+# TAB: Custom SQL Validation
+# DQE writes their own source + target SQL (any join, grain, aggregation, etc.)
+# for N validations, picks PK columns, and we write the YAML directly.
+# No AI column-mapping involved — DQE owns the query.
+# =============================================================================
+with tab_custom:
+    import yaml as _yaml
+    import pandas as pd
+
+    st.markdown("""
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
+        <div style="width:40px;height:40px;border-radius:10px;
+                    background:linear-gradient(135deg,#4F46E5,#818CF8);
+                    display:flex;align-items:center;justify-content:center;font-size:1.2rem;">✍️</div>
+        <div>
+            <div style="font-size:1.25rem;font-weight:800;color:#0F172A;">Custom SQL Validation</div>
+            <div style="font-size:0.8rem;color:#64748B;">
+                Write your own source + Snowflake SQL for any grain, join, or business logic.
+                Add as many validations as you need — each becomes one entry in the generated YAML.
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.info(
+        "Use this tab when the standard column-mapping flow isn't enough — e.g. monthly grain aggregations, "
+        "multi-table joins, dedup checks, GL line item rollups, or any DQ rule expressed as SQL. "
+        "You write both the source and Snowflake queries; we build the YAML.",
+        icon="💡",
+    )
+
+    # ── Step 1 — Connection ───────────────────────────────────────────────────
+    with st.container(border=True):
+        st.markdown("**① Source connection & database/schema**")
+        cst_registry = load_registry()
+        cst_rec = select_connection(cst_registry, key="cst_conn")
+
+        if cst_rec:
+            _override_source_env(cst_rec)
+            cst_db_type = cst_rec["db_type"]
+            cst_password = source_password(cst_rec)
+
+            if cst_db_type == "athena":
+                cst_database = cst_rec["database"]
+                cst_schema = cst_rec["schema"]
+                st.caption(f"Athena: using Glue database **{cst_database}** (fixed from .env)")
+            else:
+                cst_dbs = cached_source_databases(
+                    cst_db_type, cst_rec["host"], int(cst_rec.get("port") or 0),
+                    cst_rec["username"], cst_password, cst_rec.get("auth", ""),
+                )
+                _cc1, _cc2 = st.columns(2)
+                with _cc1:
+                    cst_database = select_or_type("Source database", cst_dbs, cst_rec["database"], "cst_db")
+                cst_schemas = cached_source_schemas(
+                    cst_db_type, cst_rec["host"], int(cst_rec.get("port") or 0),
+                    cst_database, cst_rec["username"], cst_password, cst_rec.get("auth", ""),
+                )
+                with _cc2:
+                    cst_schema = select_or_type("Source schema", cst_schemas, cst_rec["schema"], "cst_schema")
+        else:
+            cst_rec = None
+            cst_database = cst_schema = cst_db_type = ""
+
+    # ── Step 2 — Snowflake target connection ──────────────────────────────────
+    with st.container(border=True):
+        st.markdown("**② Snowflake target database/schema**")
+        cst_sf_database, cst_sf_schema, _ = pick_snowflake_target("", "cst_sf", include_table=False)
+
+    # ── Step 3 — Layer ────────────────────────────────────────────────────────
+    with st.container(border=True):
+        st.markdown("**③ Medallion layer**")
+        cst_layer, cst_output_dir = pick_layer("cst_layer")
+
+    # Session-state list of validation entries — defined here so both the
+    # AI generator (Step 4) and the manual entry grid (Step 5) can access it.
+    _CST_KEY = "cst_entries"
+    if _CST_KEY not in st.session_state:
+        st.session_state[_CST_KEY] = []
+
+    def _cst_blank_entry(idx: int) -> dict:
+        return {
+            "id": idx,
+            "name": f"validation_{idx + 1}",
+            "description": "",
+            "source_sql": "",
+            "target_sql": "",
+            "pk_source": "",
+            "pk_target": "",
+            "validation_type": "data",
+        }
+
+    # ── Step 4 — AI SQL Generator (schema-aware) ─────────────────────────────
+    st.markdown("**④ AI SQL Generator — describe what you need, AI writes the SQL**")
+    st.caption(
+        "Select tables from the source schema, describe your query in plain English "
+        "(joins across tables, aggregations, grain, DQ checks — anything). "
+        "The AI sees the full column schema of every selected table and writes "
+        "dialect-correct SQL for your source DB. Generated SQL is added to the "
+        "manual entries below for you to review and optionally pair with a Snowflake query."
+    )
+
+    with st.container(border=True):
+        # Only active once a connection + schema are picked
+        _ai_ready = bool(cst_rec and cst_schema)
+
+        if not _ai_ready:
+            st.info("Select a source connection and schema above (Steps ① and ②) to enable AI SQL generation.", icon="👆")
+        else:
+            # ── Table selector ───────────────────────────────────────────────
+            try:
+                _ai_tables = cached_source_tables(
+                    cst_db_type, cst_rec["host"], int(cst_rec.get("port") or 0),
+                    cst_database, cst_rec["username"], source_password(cst_rec),
+                    cst_rec.get("auth", ""), cst_rec.get("s3_output", ""), cst_schema,
+                )
+            except Exception as _exc:
+                _ai_tables = []
+                st.warning(f"Could not list tables: {_exc}")
+
+            # shared model picker above both sections
+            ai_model = select_or_type(
+                "AI model", available_models_for_ui(),
+                os.getenv("DIAL_MODEL", "gpt-4o"),
+                "cst_ai_model", format_func=_model_label,
+            )
+
+            # shared prompt + validation name
+            ai_prompt = st.text_area(
+                "Describe the SQL you need (plain English — same description drives both source and target generation)",
+                key="cst_ai_prompt",
+                height=100,
+                placeholder=(
+                    "Examples:\n"
+                    "• Employees with department name, location, budget and salary (base + total) ordered by salary desc.\n"
+                    "• Monthly total sales by region — only active customers, grain = month + region.\n"
+                    "• Find duplicate email addresses across the contacts table."
+                ),
+            )
+
+            _ai_validation_name = st.text_input(
+                "Validation name",
+                value="ai_generated_check",
+                key="cst_ai_val_name",
+                placeholder="e.g. employee_salary_check",
+            )
+
+            st.markdown("---")
+
+            _ai_normalize = st.radio(
+                "Query style",
+                options=["Validation query (COALESCE / <<NULL>> normalized)", "Simple query (plain readable SQL)"],
+                index=0,
+                horizontal=True,
+                key="cst_ai_normalize",
+                help=(
+                    "**Validation query** — adds COALESCE(CAST(...), '<<NULL>>') to every column so "
+                    "the comparison engine can detect NULLs vs empty strings. Use this when you will "
+                    "paste the result into the YAML and run validation.\n\n"
+                    "**Simple query** — clean readable SQL, no normalization wrappers. Use this to "
+                    "explore data or hand-write your own normalization."
+                ),
+            )
+            _ai_do_normalize = "Simple" not in _ai_normalize
+
+            # ── Two side-by-side generation sections ─────────────────────────
+            _AI_SQL_KEY = "cst_ai_result_sql"
+            _SF_SQL_KEY = "cst_ai_sf_result_sql"
+
+            _sec_src, _sec_sf = st.columns(2)
+
+            # ── LEFT: Source SQL generation ───────────────────────────────────
+            with _sec_src:
+                st.markdown(f"**🗄️ Source SQL — {cst_db_type.upper()}**")
+                ai_selected_tables = st.multiselect(
+                    "Tables to include",
+                    options=_ai_tables,
+                    key="cst_ai_tables",
+                    placeholder="Pick source tables…",
+                )
+                # Column preview + filter — only show when exactly one table picked
+                _src_col_filter = {}
+                if ai_selected_tables:
+                    for _pt in ai_selected_tables:
+                        try:
+                            _all_cols = cached_source_columns(
+                                cst_db_type, cst_rec["host"], int(cst_rec.get("port") or 0),
+                                cst_database, cst_rec["username"], source_password(cst_rec),
+                                cst_rec.get("auth", ""), cst_rec.get("s3_output", ""), cst_schema, _pt,
+                            )
+                            _picked_cols = st.multiselect(
+                                f"Columns from {_pt} (leave blank = all)",
+                                options=_all_cols,
+                                key=f"cst_src_cols_{_pt}",
+                                placeholder="All columns included by default",
+                            )
+                            _src_col_filter[_pt] = _picked_cols or _all_cols
+                        except Exception:
+                            pass
+
+                _do_gen_src = st.button(
+                    f"✨ Generate {cst_db_type.upper()} SQL",
+                    type="primary",
+                    key="cst_ai_generate",
+                    disabled=not (ai_selected_tables and ai_prompt.strip()),
+                )
+                if not ai_selected_tables:
+                    st.caption("Select at least one table to enable.")
+
+                if _do_gen_src:
+                    _schema_ctx = {}
+                    with st.spinner("Loading source schema…"):
+                        for _tbl in ai_selected_tables:
+                            try:
+                                _ext = ExtractorFactory.create(
+                                    cst_db_type,
+                                    host=cst_rec["host"],
+                                    port=int(cst_rec.get("port") or 0),
+                                    database=cst_database,
+                                    username=cst_rec["username"],
+                                    password=source_password(cst_rec),
+                                    auth=cst_rec.get("auth", ""),
+                                    s3_output=cst_rec.get("s3_output", ""),
+                                )
+                                _col_metas = _ext.extract_columns(cst_schema, _tbl)
+                                _allowed = set(_src_col_filter.get(_tbl) or [c.column_name for c in _col_metas])
+                                _schema_ctx[f"{cst_schema}.{_tbl}"] = [
+                                    {
+                                        "column_name": c.column_name,
+                                        "data_type": c.data_type,
+                                        "is_nullable": c.is_nullable,
+                                        "is_primary_key": c.is_primary_key,
+                                    }
+                                    for c in _col_metas if c.column_name in _allowed
+                                ]
+                            except Exception as _exc:
+                                st.warning(f"Could not load schema for {_tbl}: {_exc}")
+
+                    if _schema_ctx:
+                        # Detect PKs for comment + auto-fill
+                        _src_pks = [
+                            col["column_name"]
+                            for tbl_cols in _schema_ctx.values()
+                            for col in tbl_cols
+                            if col.get("is_primary_key")
+                        ]
+                        with st.spinner("Generating source SQL…"):
+                            try:
+                                _gen = AISQLQueryGenerator(model=ai_model)
+                                _result = _gen.generate_schema_aware_query(
+                                    user_instruction=ai_prompt.strip(),
+                                    schema_context=_schema_ctx,
+                                    db_type=cst_db_type,
+                                    default_schema=cst_schema,
+                                    normalize=_ai_do_normalize,
+                                )
+                                _pk_comment = f"-- PK: {', '.join(_src_pks)}\n" if _src_pks else ""
+                                # No PK detected → row-hash SQL only for single-table selections.
+                                # Multi-table = join; the FROM can't be inferred, user must alias a PK in SQL.
+                                _row_hash_sql = ""
+                                if not _src_pks and len(_schema_ctx) == 1:
+                                    _single_tbl_cols = next(iter(_schema_ctx.values()))
+                                    _single_tbl_fqn  = next(iter(_schema_ctx))
+                                    _row_hash_sql = _build_row_hash_sql(_single_tbl_cols, _single_tbl_fqn, cst_db_type)
+                                st.session_state[_AI_SQL_KEY] = {
+                                    "sql": _pk_comment + _result.query,
+                                    "confidence": _result.confidence,
+                                    "prompt": ai_prompt.strip(),
+                                    "schema_ctx": _schema_ctx,
+                                    "pks": _src_pks,
+                                    "row_hash_sql": _row_hash_sql,
+                                }
+                            except AISQLGenerationError as _exc:
+                                st.error(f"Source SQL generation failed: {_exc}")
+                                st.session_state.pop(_AI_SQL_KEY, None)
+                    else:
+                        st.error("Could not load column schema — check connection.")
+
+                _ai_result = st.session_state.get(_AI_SQL_KEY)
+                if _ai_result:
+                    st.markdown(
+                        f"<div style='font-size:0.8rem;font-weight:600;color:#4F46E5;margin-top:8px;'>"
+                        f"Generated {cst_db_type.upper()} SQL "
+                        f"<span style='color:#059669;margin-left:6px;'>confidence {int(_ai_result['confidence']*100)}%</span>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+                    _detected_src_pks = _ai_result.get("pks") or []
+                    _src_pk_default = ", ".join(_detected_src_pks) if _detected_src_pks else "row_hash"
+                    _src_pk_override = st.text_input(
+                        "Detected Source PK — edit if needed (comma-separated for composite; 'row_hash' = no-PK mode)",
+                        value=_src_pk_default,
+                        key="cst_ai_src_pk_override",
+                        help="Auto-detected from information_schema. 'row_hash' means no PK was found; a hash-based query is shown below.",
+                    )
+                    if not _detected_src_pks:
+                        if _ai_result.get("row_hash_sql"):
+                            st.warning("No primary key detected. Use the row-hash query below as your source SQL — it hashes every column so rows can be compared without a PK.")
+                            st.code(_ai_result["row_hash_sql"], language="sql")
+                        else:
+                            st.warning("No primary key detected and multiple tables selected — row-hash requires a single table. Add an alias column in your SQL to use as PK (e.g. `ROW_NUMBER() OVER (...) AS row_id`).")
+                    st.code(_ai_result["sql"], language="sql")
+                    # Push the overridden PK back so "Add entry" can read it
+                    _ai_result["_pk_override"] = _src_pk_override
+                    if st.button("🔄 Regenerate source", key="cst_ai_regen_src"):
+                        st.session_state.pop(_AI_SQL_KEY, None)
+                        st.rerun()
+
+            # ── RIGHT: Snowflake SQL generation ──────────────────────────────
+            with _sec_sf:
+                st.markdown("**❄️ Snowflake SQL (target)**")
+                _sf_tbl_opts = []
+                if cst_sf_database and cst_sf_schema:
+                    try:
+                        _sf_tbl_opts = cached_sf_tables(cst_sf_database, cst_sf_schema)
+                    except Exception:
+                        pass
+                ai_selected_sf_tables = st.multiselect(
+                    "Snowflake tables to include",
+                    options=_sf_tbl_opts,
+                    key="cst_ai_sf_tables",
+                    placeholder="Pick Snowflake tables…" if _sf_tbl_opts else "Select Snowflake schema first (Step ②)",
+                    disabled=not _sf_tbl_opts,
+                )
+                _sf_col_filter = {}
+                if ai_selected_sf_tables:
+                    for _sft in ai_selected_sf_tables:
+                        try:
+                            _sf_all_cols = cached_sf_columns(cst_sf_database, cst_sf_schema, _sft)
+                            _sf_picked = st.multiselect(
+                                f"Columns from {_sft} (leave blank = all)",
+                                options=_sf_all_cols,
+                                key=f"cst_sf_cols_{_sft}",
+                                placeholder="All columns included by default",
+                            )
+                            _sf_col_filter[_sft] = _sf_picked or _sf_all_cols
+                        except Exception:
+                            pass
+
+                _do_gen_sf = st.button(
+                    "✨ Generate Snowflake SQL",
+                    type="primary",
+                    key="cst_ai_sf_generate",
+                    disabled=not (ai_selected_sf_tables and ai_prompt.strip()),
+                )
+                if not _sf_tbl_opts:
+                    st.caption("Complete Step ② (Snowflake schema) to enable.")
+                elif not ai_selected_sf_tables:
+                    st.caption("Select at least one Snowflake table to enable.")
+
+                if _do_gen_sf:
+                    _sf_schema_ctx = {}
+                    with st.spinner("Loading Snowflake schema…"):
+                        for _tbl in ai_selected_sf_tables:
+                            try:
+                                _sf_col_metas = SnowflakeExtractor(database=cst_sf_database).extract_columns(cst_sf_schema, _tbl)
+                                _sf_allowed = set(_sf_col_filter.get(_tbl) or [c.column_name for c in _sf_col_metas])
+                                _sf_schema_ctx[f"{cst_sf_schema}.{_tbl}"] = [
+                                    {
+                                        "column_name": c.column_name,
+                                        "data_type": c.data_type,
+                                        "is_nullable": c.is_nullable,
+                                        "is_primary_key": c.is_primary_key,
+                                    }
+                                    for c in _sf_col_metas if c.column_name in _sf_allowed
+                                ]
+                            except Exception as _exc:
+                                st.warning(f"Could not load Snowflake schema for {_tbl}: {_exc}")
+
+                    if _sf_schema_ctx:
+                        _sf_pks = [
+                            col["column_name"]
+                            for tbl_cols in _sf_schema_ctx.values()
+                            for col in tbl_cols
+                            if col.get("is_primary_key")
+                        ]
+                        with st.spinner("Generating Snowflake SQL…"):
+                            try:
+                                _sf_gen = AISQLQueryGenerator(model=ai_model)
+                                _sf_result = _sf_gen.generate_schema_aware_query(
+                                    user_instruction=ai_prompt.strip(),
+                                    schema_context=_sf_schema_ctx,
+                                    db_type="snowflake",
+                                    default_schema=cst_sf_schema,
+                                    normalize=_ai_do_normalize,
+                                )
+                                _sf_pk_comment = f"-- PK: {', '.join(_sf_pks)}\n" if _sf_pks else ""
+                                _sf_row_hash_sql = ""
+                                if not _sf_pks and len(_sf_schema_ctx) == 1:
+                                    _sf_single_cols = next(iter(_sf_schema_ctx.values()))
+                                    _sf_single_fqn  = next(iter(_sf_schema_ctx))
+                                    _sf_row_hash_sql = _build_row_hash_sql(_sf_single_cols, _sf_single_fqn, "snowflake")
+                                st.session_state[_SF_SQL_KEY] = {
+                                    "sql": _sf_pk_comment + _sf_result.query,
+                                    "confidence": _sf_result.confidence,
+                                    "pks": _sf_pks,
+                                    "row_hash_sql": _sf_row_hash_sql,
+                                }
+                            except AISQLGenerationError as _exc:
+                                st.error(f"Snowflake SQL generation failed: {_exc}")
+                                st.session_state.pop(_SF_SQL_KEY, None)
+                    else:
+                        st.error("Could not load Snowflake column schema — check connection.")
+
+                _sf_ai_result = st.session_state.get(_SF_SQL_KEY)
+                if _sf_ai_result:
+                    st.markdown(
+                        f"<div style='font-size:0.8rem;font-weight:600;color:#059669;margin-top:8px;'>"
+                        f"Generated Snowflake SQL "
+                        f"<span style='color:#64748B;margin-left:6px;'>confidence {int(_sf_ai_result['confidence']*100)}%</span>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+                    _detected_sf_pks = _sf_ai_result.get("pks") or []
+                    _sf_pk_default = ", ".join(_detected_sf_pks) if _detected_sf_pks else "row_hash"
+                    _sf_pk_override = st.text_input(
+                        "Detected Snowflake PK — edit if needed",
+                        value=_sf_pk_default,
+                        key="cst_ai_sf_pk_override",
+                        help="Auto-detected from Snowflake information_schema. 'row_hash' = no-PK hash mode.",
+                    )
+                    if not _detected_sf_pks:
+                        if _sf_ai_result.get("row_hash_sql"):
+                            st.warning("No PK detected on Snowflake side. Use the row-hash query below.")
+                            st.code(_sf_ai_result["row_hash_sql"], language="sql")
+                        else:
+                            st.warning("No PK detected and multiple Snowflake tables selected — row-hash requires a single table.")
+                    st.code(_sf_ai_result["sql"], language="sql")
+                    _sf_ai_result["_pk_override"] = _sf_pk_override
+                    if st.button("🔄 Regenerate Snowflake", key="cst_ai_regen_sf"):
+                        st.session_state.pop(_SF_SQL_KEY, None)
+                        st.rerun()
+
+            st.markdown("---")
+
+            # ── Add as validation entry ───────────────────────────────────────
+            _ai_result = st.session_state.get(_AI_SQL_KEY)
+            _sf_ai_result = st.session_state.get(_SF_SQL_KEY)
+            _can_add = bool(_ai_result or _sf_ai_result)
+            if _can_add:
+                if st.button("➕ Add as validation entry below", key="cst_ai_add_entry", type="primary"):
+                    nxt = len(st.session_state.get(_CST_KEY, []))
+                    new_entry = _cst_blank_entry(nxt)
+                    new_entry["name"] = _ai_validation_name.strip().replace(" ", "_").lower() or f"ai_check_{nxt+1}"
+                    new_entry["description"] = f"AI-generated — {(_ai_result or _sf_ai_result or {}).get('prompt', ai_prompt)[:80]}"
+                    if _ai_result:
+                        # Use row-hash SQL when no PK was found and the user kept 'row_hash'
+                        _src_pk_val = _ai_result.get("_pk_override") or ", ".join(_ai_result.get("pks") or [])
+                        if _src_pk_val.strip().lower() == "row_hash" and _ai_result.get("row_hash_sql"):
+                            new_entry["source_sql"] = _ai_result["row_hash_sql"]
+                        else:
+                            new_entry["source_sql"] = _ai_result["sql"]
+                        new_entry["pk_source"] = _src_pk_val
+                    if _sf_ai_result:
+                        _sf_pk_val = _sf_ai_result.get("_pk_override") or ", ".join(_sf_ai_result.get("pks") or [])
+                        if _sf_pk_val.strip().lower() == "row_hash" and _sf_ai_result.get("row_hash_sql"):
+                            new_entry["target_sql"] = _sf_ai_result["row_hash_sql"]
+                        else:
+                            new_entry["target_sql"] = _sf_ai_result["sql"]
+                        new_entry["pk_target"] = _sf_pk_val
+                    if _CST_KEY not in st.session_state:
+                        st.session_state[_CST_KEY] = []
+                    st.session_state[_CST_KEY].append(new_entry)
+                    st.session_state.pop(_AI_SQL_KEY, None)
+                    st.session_state.pop(_SF_SQL_KEY, None)
+                    _sides = []
+                    if _ai_result:
+                        _sides.append("source")
+                    if _sf_ai_result:
+                        _sides.append("Snowflake")
+                    flash(f"Added '{new_entry['name']}' ({' + '.join(_sides)} SQL) — review the entry below.", icon="✅")
+                    st.rerun()
+
+    # ── Step 5 — Validation entries ───────────────────────────────────────────
+    st.markdown("**⑤ Validation entries**")
+    st.caption(
+        "Add one entry per logical check. Each entry gets its own YAML block. "
+        "Source SQL runs against your source DB; Snowflake SQL runs against your Snowflake target. "
+        "The PK column(s) are used to align rows for comparison — use the same logical key in both queries."
+    )
+
+    # Add / remove buttons
+    _btn_c1, _btn_c2 = st.columns([1, 5])
+    with _btn_c1:
+        if st.button("➕ Add validation", key="cst_add"):
+            nxt = len(st.session_state[_CST_KEY])
+            st.session_state[_CST_KEY].append(_cst_blank_entry(nxt))
+            st.rerun()
+
+    if not st.session_state[_CST_KEY]:
+        st.markdown("""
+        <div style="background:#F8FAFC;border:2px dashed #CBD5E1;border-radius:12px;
+                    padding:32px;text-align:center;color:#94A3B8;margin:16px 0;">
+            <div style="font-size:2rem;margin-bottom:8px;">📝</div>
+            <div style="font-size:0.95rem;font-weight:600;">No validations yet</div>
+            <div style="font-size:0.82rem;margin-top:4px;">
+                Click <strong>➕ Add validation</strong> above to write your first SQL check.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    to_delete = []
+    for idx, entry in enumerate(st.session_state[_CST_KEY]):
+        entry_key = f"cst_entry_{idx}"
+        with st.expander(
+            f"**{entry['name'] or f'Validation {idx+1}'}** — {entry.get('description','') or 'click to expand'}",
+            expanded=True,
+        ):
+            _e1, _e2, _e3 = st.columns([3, 4, 1])
+            with _e1:
+                entry["name"] = st.text_input(
+                    "Validation name (used as YAML key)",
+                    value=entry["name"], key=f"{entry_key}_name",
+                    placeholder="e.g. monthly_sales_grain",
+                )
+            with _e2:
+                entry["description"] = st.text_input(
+                    "Description (optional)",
+                    value=entry["description"], key=f"{entry_key}_desc",
+                    placeholder="e.g. Monthly sales by region, joined with dim_customer",
+                )
+            with _e3:
+                entry["validation_type"] = st.selectbox(
+                    "Type", ["data", "count"], key=f"{entry_key}_vtype",
+                    index=0 if entry["validation_type"] == "data" else 1,
+                    help="data = row-level diff with PK alignment; count = row count only",
+                )
+
+            _s1, _s2 = st.columns(2)
+            with _s1:
+                st.markdown(
+                    f"<div style='font-size:0.8rem;font-weight:600;color:#4F46E5;margin-bottom:4px;'>"
+                    f"Source SQL ({_DB_TYPE_LABELS.get(cst_db_type, cst_db_type) or 'source'})"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+                _src_hints = {
+                    "mssql":      "SELECT\n    FORMAT(order_date,'yyyy-MM') AS month,\n    region,\n    SUM(amount) AS total_sales\nFROM dbo.sales s\nJOIN dbo.dim_customer c ON s.customer_id=c.id\nGROUP BY FORMAT(order_date,'yyyy-MM'), region",
+                    "athena":     "SELECT\n    date_trunc('month', order_date) AS month,\n    region,\n    SUM(amount) AS total_sales\nFROM schema.sales s\nJOIN schema.dim_customer c ON s.customer_id=c.id\nGROUP BY 1, 2",
+                    "postgresql": "SELECT\n    DATE_TRUNC('month', order_date) AS month,\n    region,\n    SUM(amount)                    AS total_sales\nFROM sales s\nJOIN dim_customer c ON s.customer_id=c.id\nGROUP BY 1, 2",
+                }
+                entry["source_sql"] = st.text_area(
+                    "Source SQL",
+                    value=entry["source_sql"], key=f"{entry_key}_src_sql",
+                    height=220,
+                    placeholder=_src_hints.get(cst_db_type, _src_hints["postgresql"]),
+                    label_visibility="collapsed",
+                )
+            with _s2:
+                st.markdown(
+                    "<div style='font-size:0.8rem;font-weight:600;color:#059669;margin-bottom:4px;'>"
+                    "Snowflake SQL (target)"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+                entry["target_sql"] = st.text_area(
+                    "Snowflake SQL",
+                    value=entry["target_sql"], key=f"{entry_key}_tgt_sql",
+                    height=220,
+                    placeholder=(
+                        "SELECT\n"
+                        "    DATE_TRUNC('month', ORDER_DATE) AS MONTH,\n"
+                        "    REGION,\n"
+                        "    SUM(AMOUNT)                     AS TOTAL_SALES\n"
+                        "FROM DWH.SALES S\n"
+                        "JOIN DWH.DIM_CUSTOMER C ON S.CUSTOMER_ID = C.ID\n"
+                        "GROUP BY 1, 2"
+                    ),
+                    label_visibility="collapsed",
+                )
+
+            if entry["validation_type"] == "data":
+                _pk1, _pk2 = st.columns(2)
+                with _pk1:
+                    entry["pk_source"] = st.text_input(
+                        "Source PK column(s) — comma-separated if composite",
+                        value=entry["pk_source"], key=f"{entry_key}_pk_src",
+                        placeholder="e.g. month, region",
+                    )
+                with _pk2:
+                    entry["pk_target"] = st.text_input(
+                        "Snowflake PK column(s) — must align with source PK",
+                        value=entry["pk_target"], key=f"{entry_key}_pk_tgt",
+                        placeholder="e.g. MONTH, REGION",
+                    )
+
+            if st.button("🗑️ Remove this validation", key=f"{entry_key}_del", type="secondary"):
+                to_delete.append(idx)
+
+    if to_delete:
+        for idx in sorted(to_delete, reverse=True):
+            st.session_state[_CST_KEY].pop(idx)
+        st.rerun()
+
+    # ── Step 6 — YAML preview + save ─────────────────────────────────────────
+    st.divider()
+    entries = st.session_state.get(_CST_KEY, [])
+    valid_entries = [e for e in entries if e.get("source_sql", "").strip() and e.get("target_sql", "").strip() and e.get("name", "").strip()]
+
+    if valid_entries and cst_rec:
+        _tables_dict = {}
+        for e in valid_entries:
+            vname = e["name"].strip().replace(" ", "_")
+            block_type = "data_validation" if e["validation_type"] == "data" else "count_validation"
+            inner = {
+                "source_table_name": vname,
+                "source": cst_db_type or "postgresql",
+                "source_database": cst_database,
+                "source_schema": cst_schema,
+                "sourcequery": " ".join(e["source_sql"].split()),
+                "target_table_name": vname,
+                "target": "snowflake",
+                "target_database": cst_sf_database,
+                "target_schema": cst_sf_schema,
+                "targetquery": " ".join(e["target_sql"].split()),
+            }
+            if block_type == "data_validation":
+                pk_src = [c.strip() for c in e["pk_source"].split(",") if c.strip()]
+                pk_tgt = [c.strip() for c in e["pk_target"].split(",") if c.strip()]
+                if pk_src:
+                    inner["pksourcecolumn"] = pk_src if len(pk_src) > 1 else pk_src[0]
+                if pk_tgt:
+                    inner["pktargetcolumn"] = pk_tgt if len(pk_tgt) > 1 else pk_tgt[0]
+            _tables_dict[vname] = {"validations": {block_type: inner}}
+
+        vtype_folder = "data_validation"
+        yaml_stem = valid_entries[0]["name"].strip().replace(" ", "_") if len(valid_entries) == 1 else "custom_validations"
+        yaml_payload = {"tables": _tables_dict}
+
+        yaml_str = _yaml.dump(yaml_payload, default_flow_style=False, sort_keys=False, allow_unicode=True, Dumper=_yaml.SafeDumper)
+
+        # ── Inline schema validation (no tempfile — we already have the dict) ─
+        from validation.config_schema import ValidationConfigDocument
+        from pydantic import ValidationError as _PydanticValidationError
+        _yaml_errors = []
+        try:
+            ValidationConfigDocument.model_validate(yaml_payload)
+        except _PydanticValidationError as _ve:
+            _yaml_errors = [
+                f"{'.'.join(str(p) for p in e['loc'])} — {e['msg']}"
+                for e in _ve.errors()
+            ]
+
+        with st.expander("📄 YAML preview", expanded=True):
+            st.code(yaml_str, language="yaml")
+            if _yaml_errors:
+                st.error("**Schema errors — fix before saving:**")
+                for _msg in _yaml_errors:
+                    st.markdown(f"- `{_msg}`")
+            else:
+                st.success("✓ YAML passes schema validation", icon="✅")
+
+        _save_c1, _save_c2, _save_c3 = st.columns([2, 2, 3])
+        with _save_c1:
+            custom_yaml_filename = st.text_input(
+                "Output filename (without .yaml)",
+                value=yaml_stem, key="cst_yaml_filename",
+            )
+        with _save_c2:
+            report_subfolder = st.text_input(
+                "Report subfolder (optional)",
+                value="", key="cst_report_subfolder",
+                placeholder="e.g. emanagement",
+                help="If set, saves under config/report/<subfolder>/data_validation/ (independent of layer). Leave blank to save under config/<layer>/data_validation/.",
+            )
+        with _save_c3:
+            st.markdown("<div style='height:28px'/>", unsafe_allow_html=True)
+            if st.button("💾 Save YAML to config folder", type="primary", key="cst_save",
+                         disabled=bool(_yaml_errors)):
+                if report_subfolder.strip():
+                    save_dir = _ROOT_DIR / "Project" / "config" / "report" / report_subfolder.strip() / vtype_folder
+                else:
+                    save_dir = cst_output_dir / vtype_folder
+                save_path = save_dir / f"{custom_yaml_filename}.yaml"
+                save_path.parent.mkdir(parents=True, exist_ok=True)
+                save_path.write_text(yaml_str, encoding="utf-8")
+                flash(f"Saved: {save_path}", icon="💾")
+                st.rerun()
+
+    elif entries and not valid_entries:
+        st.warning("Fill in at least a name + source SQL + Snowflake SQL to preview the YAML.")
+    elif not entries:
+        pass  # empty state already shown above
+    elif not cst_rec:
+        st.warning("Select a source connection above before saving.")
 
 # =============================================================================
 # TAB: Run Validation — execute the generated YAMLs (Project/main.py) and
@@ -1225,58 +3710,108 @@ with tab_execute:
         "then reads back the run's summary — counts and pass/fail status only."
     )
 
-    top1, top2 = st.columns(2)
-    with top1:
+    import pandas as pd
+
+    _exec_top1, _exec_top2 = st.columns(2)
+    with _exec_top1:
         layer = st.selectbox("Medallion layer", _LAYERS, index=0, key="exec_layer")
-    with top2:
+    with _exec_top2:
         environment = st.selectbox("Environment", ["local", "dev", "uat", "prod"], key="exec_env")
 
-    tables_by_type = list_configured_tables(layer)
-    count_tables = tables_by_type["count_validation"]
-    data_tables = tables_by_type["data_validation"]
+    # ── Build full YAML inventory (all layers + report/) ─────────────────────
+    # Each row: {stem, vtype, folder, layer, path}
+    # Scans every layer so the folder-filter multiselect below does the narrowing.
+    def _build_exec_inventory():
+        import yaml as _yi
+        rows = []
+        for _ly in _LAYERS:
+            # Count validation — single shared YAML per layer
+            _cv_path = _PROJECT_DIR / "config" / _ly / "count_validation" / f"{_ly}.yaml"
+            if _cv_path.exists():
+                _cfg = _yi.safe_load(_cv_path.read_text(encoding="utf-8")) or {}
+                for tbl in (_cfg.get("tables") or {}):
+                    rows.append({"stem": tbl, "vtype": "count_validation",
+                                 "folder": _ly, "layer": _ly, "path": _cv_path})
+            # Layer data_validation
+            _dv_dir = _PROJECT_DIR / "config" / _ly / "data_validation"
+            if _dv_dir.exists():
+                for p in sorted(_dv_dir.glob("*.yaml")):
+                    rows.append({"stem": p.stem, "vtype": "data_validation",
+                                 "folder": _ly, "layer": _ly, "path": p})
+        # Report/ data_validation — independent of layer
+        _rep_root = _PROJECT_DIR / "config" / "report"
+        if _rep_root.exists():
+            for p in sorted(_rep_root.rglob("*.yaml")):
+                if p.parent.name == "data_validation":
+                    subfolder = p.parent.parent.name
+                    rows.append({"stem": p.stem, "vtype": "data_validation",
+                                 "folder": f"report/{subfolder}", "layer": "bronze", "path": p})
+        return rows
 
-    if not count_tables and not data_tables:
+    _inventory = _build_exec_inventory()
+
+    if not _inventory:
         st.warning(
             f"No YAML configs found for layer '{layer}' yet — generate one first "
             f"in the **Generate Single/Batch YAML** tabs."
         )
     else:
-        import pandas as pd
+        # ── Filters row ──────────────────────────────────────────────────────
+        _fc1, _fc2, _fc3 = st.columns([2, 2, 3])
+        with _fc1:
+            _all_folders = sorted({r["folder"] for r in _inventory})
+            _sel_folders = st.multiselect(
+                "Filter by folder", options=_all_folders,
+                default=_all_folders, key="exec_folder_filter",
+                help="'bronze/silver/gold' = layer configs. 'report/X' = custom report configs.",
+            )
+        with _fc2:
+            _vtype_opts = sorted({r["vtype"] for r in _inventory})
+            _sel_vtypes = st.multiselect(
+                "Validation type", options=_vtype_opts,
+                default=_vtype_opts, key="exec_vtype_filter",
+            )
+        with _fc3:
+            _search = st.text_input(
+                "Search tables", placeholder="Type to filter…", key="exec_search",
+            )
+
+        _filtered = [
+            r for r in _inventory
+            if r["folder"] in (_sel_folders or _all_folders)
+            and r["vtype"] in (_sel_vtypes or _vtype_opts)
+            and (_search.strip().lower() in r["stem"].lower() if _search.strip() else True)
+        ]
+
+        select_all = st.checkbox("Select all", value=True, key="exec_select_all")
+        _sel_set_key = f"exec_sel_{layer}_{select_all}"
 
         file_rows = [
-            {"Run": True, "Validation type": "count_validation",
-             "File": f"config/{layer}/count_validation/{layer}.yaml", "Table": t}
-            for t in count_tables
-        ] + [
-            {"Run": True, "Validation type": "data_validation",
-             "File": f"config/{layer}/data_validation/{t}.yaml", "Table": t}
-            for t in data_tables
+            {"Run": select_all, "Table": r["stem"], "Type": r["vtype"],
+             "Folder": r["folder"], "File": str(r["path"].relative_to(_PROJECT_DIR))}
+            for r in _filtered
         ]
-        select_all = st.checkbox("Select all files", value=True, key="exec_select_all")
-        for row in file_rows:
-            row["Run"] = select_all
-        files_df = pd.DataFrame(file_rows)
+        files_df = pd.DataFrame(file_rows) if file_rows else pd.DataFrame(
+            columns=["Run", "Table", "Type", "Folder", "File"])
 
-        st.caption(f"{len(files_df)} YAML file/table combination(s) for **{layer}** — check the ones to run, one file or many.")
-        # Key includes select_all so toggling it forces a fresh grid instead of
-        # keeping stale per-row edits from before the toggle (data_editor
-        # doesn't allow writing its state via st.session_state directly).
+        st.caption(f"{len(files_df)} of {len(_inventory)} config(s) shown — check the ones to run.")
         edited = st.data_editor(
             files_df,
             column_config={
-                "Run": st.column_config.CheckboxColumn(help="Include this file/table in the run"),
-                "Validation type": st.column_config.TextColumn(disabled=True),
-                "File": st.column_config.TextColumn(disabled=True),
-                "Table": st.column_config.TextColumn(disabled=True),
+                "Run":    st.column_config.CheckboxColumn(help="Include in run"),
+                "Table":  st.column_config.TextColumn(disabled=True),
+                "Type":   st.column_config.TextColumn(disabled=True),
+                "Folder": st.column_config.TextColumn(disabled=True),
+                "File":   st.column_config.TextColumn(disabled=True),
             },
-            hide_index=True, width='stretch', key=f"exec_file_grid_{select_all}",
+            hide_index=True, width="stretch", key=f"exec_file_grid_{_sel_set_key}",
         )
 
         picked_count_tables = edited.loc[
-            (edited["Validation type"] == "count_validation") & edited["Run"], "Table"
+            (edited["Type"] == "count_validation") & edited["Run"], "Table"
         ].tolist()
         picked_data_tables = edited.loc[
-            (edited["Validation type"] == "data_validation") & edited["Run"], "Table"
+            (edited["Type"] == "data_validation") & edited["Run"], "Table"
         ].tolist()
         do_count = bool(picked_count_tables)
         do_data = bool(picked_data_tables)
@@ -1288,10 +3823,71 @@ with tab_execute:
                 "type will be silently skipped for the other (no matching YAML requested for it)."
             )
 
+        _thresh_col, _count_thresh_col = st.columns([2, 2])
+        with _thresh_col:
+            mismatch_threshold = st.number_input(
+                "Acceptable mismatch % (0 = exact match required)",
+                min_value=0.0, max_value=100.0, value=0.0, step=0.1,
+                format="%.2f", key="exec_threshold",
+                help="e.g. 0.10 means ≤0.10% mismatched rows = PASS. Written into the YAML before running.",
+            )
+        with _count_thresh_col:
+            count_mismatch_threshold = st.number_input(
+                "Acceptable count difference % (0 = exact match required)",
+                min_value=0.0, max_value=100.0, value=0.0, step=0.1,
+                format="%.2f", key="exec_count_threshold",
+                help="For tables under active CDC/replication, a strict row-count match will "
+                     "intermittently FAIL for no real reason. e.g. 0.05 means ≤0.05% count "
+                     "difference = PASS. Written into the YAML before running.",
+            )
+
+        # Derive run layer from the actual inventory rows selected (first match wins)
+        _picked_stems = set(selected_tables)
+        _run_layer = next(
+            (r["layer"] for r in _filtered if r["stem"] in _picked_stems),
+            layer,
+        )
+
         if st.button("🚀 Run validation", type="primary", key="exec_run", disabled=not selected_tables):
-            with st.spinner(f"Running {layer} validation against '{environment}' — this executes real queries..."):
+            # Inject mismatch_threshold_pct into data_validation YAMLs before running
+            if mismatch_threshold > 0:
+                import yaml as _yrun
+                # Build stem→path map from inventory directly (covers all layers + report)
+                _all_data_yamls = {r["stem"]: r["path"] for r in _inventory if r["vtype"] == "data_validation"}
+                for _tbl in picked_data_tables:
+                    _yp = _all_data_yamls.get(_tbl)
+                    if _yp.exists():
+                        try:
+                            _ydoc = _yrun.safe_load(_yp.read_text(encoding="utf-8")) or {}
+                            for _tentry in (_ydoc.get("tables") or {}).values():
+                                _dv = (_tentry.get("validations") or {}).get("data_validation")
+                                if _dv:
+                                    _dv["mismatch_threshold_pct"] = mismatch_threshold
+                            _yp.write_text(_yrun.dump(_ydoc, default_flow_style=False, sort_keys=False, allow_unicode=True), encoding="utf-8")
+                        except Exception:
+                            pass
+
+            # Inject count_mismatch_threshold_pct into the layer's single count_validation
+            # YAML before running — count_validation has no tolerance by default (strict ==),
+            # so this is opt-in per run, same pattern as the data_validation threshold above.
+            if count_mismatch_threshold > 0 and picked_count_tables:
+                import yaml as _yrun
+                _cv_yaml = _PROJECT_DIR / "config" / layer / "count_validation" / f"{layer}.yaml"
+                if _cv_yaml.exists():
+                    try:
+                        _cvdoc = _yrun.safe_load(_cv_yaml.read_text(encoding="utf-8")) or {}
+                        for _tbl in picked_count_tables:
+                            _tentry = (_cvdoc.get("tables") or {}).get(_tbl)
+                            _cv = (_tentry.get("validations") or {}).get("count_validation") if _tentry else None
+                            if _cv:
+                                _cv["count_mismatch_threshold_pct"] = count_mismatch_threshold
+                        _cv_yaml.write_text(_yrun.dump(_cvdoc, default_flow_style=False, sort_keys=False, allow_unicode=True), encoding="utf-8")
+                    except Exception:
+                        pass
+
+            with st.spinner(f"Running {_run_layer} validation against '{environment}' — this executes real queries..."):
                 try:
-                    result = run_validation(layer, environment, selected_tables, do_count, do_data)
+                    result = run_validation(_run_layer, environment, selected_tables, do_count, do_data)
                 except Exception as exc:
                     st.error(f"Execution failed to start: {exc}")
                     result = None
@@ -1317,21 +3913,39 @@ with tab_execute:
                         m1.metric("Tables checked", n_total)
                         m2.metric("Passed", n_pass)
                         m3.metric("Failed", n_fail, delta=-n_fail if n_fail else None, delta_color="inverse")
-                        render_paginated_df(df, key_prefix=f"exec_summary_{vtype}")
+                        show_failed_only = st.checkbox(
+                            "Show failed only", value=False, key=f"exec_summary_failed_only_{vtype}"
+                        )
+                        display_df = df[df["status"] == "FAIL"] if show_failed_only else df
+                        render_paginated_df(display_df, key_prefix=f"exec_summary_{vtype}")
+                        st.download_button(
+                            f"⬇ Download {'failed-only ' if show_failed_only else ''}{vtype} summary CSV",
+                            data=display_df.to_csv(index=False).encode("utf-8"),
+                            file_name=f"{vtype}_summary{'_failed' if show_failed_only else ''}.csv",
+                            mime="text/csv",
+                            key=f"dl_summary_{vtype}",
+                        )
 
                 if result["diff_files"]:
                     with st.container(border=True):
-                        st.markdown("#### 🔍 Mismatch detail — row-level diffs")
-                        st.caption("Local files only — never sent to any AI/LLM.")
+                        st.markdown("#### 🔍 Data validation — row-level results")
+                        st.caption("Every row is shown — green = matched, red = differed. Local files only, never sent to any AI/LLM.")
                         for f in result["diff_files"]:
-                            try:
-                                diff_df = pd.read_csv(f)
-                                n_rows = len(diff_df)
-                            except Exception as exc:
-                                st.warning(f"Could not read `{f.name}`: {exc}")
-                                continue
-                            with st.expander(f"`{f.relative_to(_PROJECT_DIR)}` — {n_rows} mismatched row(s)", expanded=False):
-                                render_paginated_df(diff_df, key_prefix=f"exec_diff_{f.stem}", style_status=False)
+                            _render_diff_file(f, key_prefix=f"exec_diff_{f.stem}")
+
+                if result.get("failed_files"):
+                    with st.container(border=True):
+                        st.markdown("#### ❌ Data validation — failed rows only")
+                        st.caption("Same rows as above, pre-filtered to mismatches. Download below to share just the failures.")
+                        for f in result["failed_files"]:
+                            _render_diff_file(f, key_prefix=f"exec_failed_{f.stem}")
+                            st.download_button(
+                                f"⬇ Download {f.name}",
+                                data=f.read_bytes(),
+                                file_name=f.name,
+                                mime="text/csv",
+                                key=f"dl_failed_{f.stem}",
+                            )
 
                 if not result["summaries"]:
                     with st.expander("Raw stdout/stderr (no summary was produced)", expanded=True):
@@ -1421,236 +4035,317 @@ with tab_history:
                 table=None if table_filter == "All" else table_filter,
             )
             render_paginated_df(results_df, key_prefix="hist_results")
+            st.download_button(
+                "⬇ Download filtered results CSV",
+                data=results_df.to_csv(index=False).encode("utf-8"),
+                file_name=f"validation_history_{status_filter.lower()}.csv",
+                mime="text/csv",
+                key="dl_hist_results",
+            )
 
 # =============================================================================
 # TAB: Rule Book
 # =============================================================================
 with tab_rules:
-    st.subheader("Rule book")
+    # ── Header ────────────────────────────────────────────────────────────────
+    st.markdown("""
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
+        <div style="width:40px;height:40px;border-radius:10px;
+                    background:linear-gradient(135deg,#4F46E5,#818CF8);
+                    display:flex;align-items:center;justify-content:center;font-size:1.2rem;">📖</div>
+        <div>
+            <div style="font-size:1.25rem;font-weight:800;color:#0F172A;">Rule Book</div>
+            <div style="font-size:0.8rem;color:#64748B;">Type-mapping normalization rules — base (always on) and learned (activate to enable)</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Stat chips ────────────────────────────────────────────────────────────
     stats = rule_book.stats()
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Base rules", stats["base_rules"])
-    m2.metric("Learned rules", stats["learned_rules"])
-    m3.metric("Total", stats["total_rules"])
+    _rs1, _rs2, _rs3, _rs4 = st.columns(4)
+    _rs1.metric("Base rules", stats["base_rules"], help="Code-defined, always run first")
+    _rs2.metric("Learned — active", sum(1 for r in rule_book.learned_rules() if r.status == "active"),
+                help="Gap fillers — only for type pairs without a base rule")
+    _rs3.metric("Learned — draft", sum(1 for r in rule_book.learned_rules() if r.status != "active"),
+                help="Advisory only — never affect generated SQL until activated")
+    _rs4.metric("Total", stats["total_rules"])
 
-    with st.expander("ℹ️ What is a Base rule, a Draft rule, and an Active rule?", expanded=False):
-        st.markdown(
-            "- **Base rule** — built into the code (`src/rules/postgres_base_rules.py`). Always used first for "
-            "any type pair (e.g. `NUMERIC → NUMBER`). It can never be overridden or hidden by anything below.\n"
-            "- **Draft rule** — a *learned* rule that has been saved but not yet approved. It's advisory only: "
-            "it's shown here and given to the AI as extra context, but it is **never used to generate real SQL**. "
-            "Every new rule (from the AI paste tool or the manual form) starts as a draft.\n"
-            "- **Active rule** — a draft rule that someone reviewed and clicked **Activate** on. Only then can it "
-            "actually be used — and only as a *gap filler*, for a type pair that no base rule already covers. "
-            "It can never replace or shadow a base rule.\n\n"
-            "**In short:** Base rules always run. Draft rules never run — activate a draft to let it run."
+    # ── Concept explainer ─────────────────────────────────────────────────────
+    st.markdown("""
+    <div style="background:#F0F4FF;border:1px solid #C7D2FE;border-radius:10px;padding:14px 18px;margin:12px 0;">
+    <div style="font-weight:700;color:#3730A3;margin-bottom:8px;">📌 How rules work</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;font-size:0.82rem;color:#334155;">
+        <div style="background:white;border-radius:8px;padding:10px 12px;border:1px solid #E0E7FF;">
+            <div style="font-weight:700;color:#059669;margin-bottom:4px;">🔒 Base rule</div>
+            Built into <code>postgres_base_rules.py</code>. Always runs first for a type pair.
+            <b>Nothing can shadow or override it.</b>
+        </div>
+        <div style="background:white;border-radius:8px;padding:10px 12px;border:1px solid #E0E7FF;">
+            <div style="font-weight:700;color:#6366F1;margin-bottom:4px;">📝 Draft rule</div>
+            Saved but not active. Fed to AI as context only.
+            <b>Never affects real SQL generation.</b>
+        </div>
+        <div style="background:white;border-radius:8px;padding:10px 12px;border:1px solid #E0E7FF;">
+            <div style="font-weight:700;color:#D97706;margin-bottom:4px;">⚡ Active rule</div>
+            A reviewed draft you activated. Acts as a <b>gap filler</b> for type pairs
+            with no base rule — cannot replace base rules.
+        </div>
+    </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Sub-tabs ───────────────────────────────────────────────────────────────
+    _rb_base_tab, _rb_learned_tab, _rb_add_tab = st.tabs(
+        ["🔒 Base Rules", "⚡ Learned Rules", "➕ Add Rule"]
+    )
+
+    # ── BASE RULES sub-tab ────────────────────────────────────────────────────
+    with _rb_base_tab:
+        st.caption(
+            "Read-only — always checked first for any type pair. The SQL shown is the **actual expression** "
+            "run against real data. Read it, don't just the description."
         )
 
-    def rule_rows(entries):
-        rows = []
-        for e in entries:
-            sample_col = "amount" if "numeric" in e.id or "integer" in e.id else "col"
-            rows.append({
-                "ID": e.id, "Name": e.display_name,
-                "Source type": e.source_type, "Target type": e.target_type,
-                "Source SQL (example)": e.pg_sql_template.replace("{col}", sample_col) if e.pg_sql_template else "",
-                "Snowflake SQL (example)": e.sf_sql_template.replace("{col}", sample_col) if e.sf_sql_template else "",
-                "Description": e.description,
-            })
-        return rows
+        st.markdown("""
+        <div style="background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;padding:12px 16px;margin-bottom:12px;font-size:0.83rem;color:#78350F;">
+        <b>Key rules to know:</b>
+        &nbsp;·&nbsp; <b>Numeric/Decimal</b> — cast to text at native precision (no rounding — drift surfaces as FAIL).
+        &nbsp;·&nbsp; <b>Timestamp TZ</b> — converted to UTC first, then microsecond-formatted.
+        &nbsp;·&nbsp; <b>UUID</b> — UPPER(TRIM()) normalised — genuine case differences still FAIL.
+        </div>
+        """, unsafe_allow_html=True)
 
-    st.markdown("**Base rules** (code-defined, `src/rules/postgres_base_rules.py`)")
-    st.caption(
-        "Always checked first for any type pair — a learned rule below can never shadow or change one of these. "
-        "The SQL columns below are the ACTUAL expression run against real data — read those, not just the description, "
-        "to confirm a rule does what you expect."
-    )
-    st.info(
-        "**How the key rules work:**\n"
-        "- **Numeric / Decimal** — cast to text at full native precision. No rounding is applied, so any real "
-        "precision drift between source and target shows up as a mismatch instead of being hidden.\n"
-        "- **Timestamp / Timestamp TZ** — formatted to microsecond precision (`.US` / `.FF6` / `.ffffff` depending "
-        "on dialect). Timezone-aware values are converted to UTC first, then formatted; fractional seconds are "
-        "always compared, never stripped.\n"
-        "- **UUID** — cast to text and trimmed only. Case is compared exactly as stored — it is NOT normalized to "
-        "upper/lowercase, so a genuine case difference between source and target will surface as a mismatch.\n\n",
-        icon="📌",
-    )
-    st.dataframe(rule_rows(rule_book.base_rules()), width='stretch', hide_index=True)
+        # Search filter
+        _rb_search = st.text_input("🔍 Filter rules", placeholder="e.g. uuid, timestamp, numeric…", key="rb_search", label_visibility="collapsed")
 
-    st.markdown("**Learned rules** (`src/rule_book_learned.json`)")
-    st.caption(
-        "Draft = advisory only (AI prompt context), never affects generated SQL. "
-        "Active = also used as a gap filler for type pairs no base rule owns — click Activate to promote one."
-    )
-    learned = rule_book.learned_rules()
-    if learned:
-        for r in learned:
-            lc1, lc2, lc3, lc4, lc5 = st.columns([2, 2, 2, 1, 1])
-            lc1.write(f"**{r.id}**")
-            lc2.write(f"{r.source_type} → {r.target_type}")
-            lc3.write(f"reuses: `{r.reuses_rule}`" if r.reuses_rule else "_advisory only_")
-            if r.status == "active":
-                lc4.success("active", icon="✅")
-            else:
-                lc4.info("draft", icon="📝")
-            with lc5:
-                if r.status == "active":
-                    if st.button("Deactivate", key=f"deact_{r.id}"):
-                        rule_book.deactivate_learned_rule(r.id)
-                        st.rerun()
-                elif r.reuses_rule:
-                    if st.button("Activate", key=f"act_{r.id}"):
-                        rule_book.activate_learned_rule(r.id)
-                        flash(f"'{r.id}' is now active — used as a gap filler for {r.source_type} → {r.target_type}.", icon="✅")
-                        st.rerun()
-                else:
-                    st.caption("no base rule to reuse — advisory only")
-    else:
-        st.caption("No learned rules yet.")
+        def rule_rows(entries):
+            rows = []
+            for e in entries:
+                sample_col = "amount" if "numeric" in e.id or "integer" in e.id else "col"
+                rows.append({
+                    "ID": e.id, "Name": e.display_name,
+                    "Source type": e.source_type, "Target type": e.target_type,
+                    "Source SQL": e.pg_sql_template.replace("{col}", sample_col) if e.pg_sql_template else "",
+                    "Snowflake SQL": e.sf_sql_template.replace("{col}", sample_col) if e.sf_sql_template else "",
+                    "Description": e.description,
+                })
+            return rows
 
-    st.divider()
-    st.markdown("**Add rules from a pasted table (AI-assisted)**")
-    st.caption(
-        "Paste any type-mapping table or free text (e.g. `nvarchar -> TEXT`, or a full "
-        "MSSQL/Postgres → Snowflake table). The AI can only ever reuse an EXISTING base "
-        "rule's already-tested behavior — it cannot invent new SQL. Rows it can't confidently "
-        "match are flagged for you to resolve manually."
-    )
-    raw_rules_text = st.text_area(
-        "Paste type mappings here", height=140, key="rule_paste_text",
-        placeholder="bit (0,1)      -> BOOLEAN\nmoney          -> NUMBER\nnvarchar       -> TEXT\ntimestamp      -> BINARY",
-    )
-    rule_parse_model = select_or_type(
-        "AI model for parsing", available_models_for_ui(), os.getenv("DIAL_MODEL", "gpt-4o"),
-        "rule_parse_model", format_func=_model_label,
-    )
+        _base = rule_book.base_rules()
+        if _rb_search:
+            _q = _rb_search.lower()
+            _base = [r for r in _base if _q in r.id.lower() or _q in (r.source_type or "").lower()
+                     or _q in (r.display_name or "").lower()]
 
-    if st.button("✨ Parse with AI", key="parse_rules_btn"):
-        if not raw_rules_text.strip():
-            st.error("Paste some type mappings first.")
-        else:
-            with st.spinner("Parsing pasted rules..."):
-                try:
-                    parser = RuleTypeParser(model=rule_parse_model)
-                    proposals = parser.parse(raw_rules_text, rule_book.base_rule_ids())
-                    st.session_state["rule_proposals"] = proposals
-                except (AIRuleMappingError, RuleParseError) as exc:
-                    st.error(f"Could not parse: {exc}")
-                    st.session_state.pop("rule_proposals", None)
-
-    proposals = st.session_state.get("rule_proposals")
-    if proposals:
-        import pandas as pd
-
-        def _covered(source_type: str, target_type: str) -> bool:
-            from rules import get_rule_for_type_specific
-            return get_rule_for_type_specific(source_type, target_type) is not None
-
-        rows = []
-        for p in proposals:
-            covered = _covered(p.source_type, p.target_type)
-            status = "already covered" if covered else ("needs review" if p.needs_review else "new — will save")
-            rows.append({
-                "Save": (not covered) and not p.needs_review,
-                "Source type": p.source_type,
-                "Target type": p.target_type,
-                "Dialect": p.dialect,
-                "Reuses rule": p.reuses_rule or "",
-                "Confidence": p.confidence,
-                "Status": status,
-                "Note": p.note,
-            })
-        df = pd.DataFrame(rows)
-
-        edited = st.data_editor(
-            df,
+        st.dataframe(
+            rule_rows(_base),
+            use_container_width=True,
+            hide_index=True,
             column_config={
-                "Save": st.column_config.CheckboxColumn(help="Only rows with a matched base rule and no review flag can be saved."),
-                "Source type": st.column_config.TextColumn(disabled=True),
-                "Target type": st.column_config.TextColumn(disabled=True),
-                "Dialect": st.column_config.TextColumn(disabled=True),
-                "Reuses rule": st.column_config.SelectboxColumn(options=[""] + rule_book.base_rule_ids()),
-                "Confidence": st.column_config.NumberColumn(disabled=True, format="%.2f"),
-                "Status": st.column_config.TextColumn(disabled=True),
-                "Note": st.column_config.TextColumn(disabled=True),
+                "Source SQL":    st.column_config.TextColumn(width="large"),
+                "Snowflake SQL": st.column_config.TextColumn(width="large"),
+                "Description":   st.column_config.TextColumn(width="medium"),
             },
-            hide_index=True, width='stretch', key="rule_proposal_editor",
         )
 
-        if st.button("💾 Save checked rows as draft rules", key="save_rule_proposals"):
-            import datetime as _dt
-            import re as _re
-            saved, skipped = 0, 0
-            for _, row in edited.iterrows():
-                if not row["Save"]:
-                    continue
-                if not row["Reuses rule"]:
-                    skipped += 1
-                    continue
-                slug = _re.sub(r"[^a-z0-9]+", "_", f"{row['Dialect']}_{row['Source type']}_{row['Target type']}".lower()).strip("_")
-                entry = RuleEntry(
-                    id=f"prompt_{slug}",
-                    display_name=f"{row['Source type']} -> {row['Target type']} ({row['Dialect']})",
-                    description=row["Note"] or f"Reuses '{row['Reuses rule']}' rule via AI-assisted paste.",
-                    when_to_apply=f"source_type={row['Source type']}, target_type={row['Target type']}, dialect={row['Dialect']}",
-                    pg_sql_template="", sf_sql_template="",
-                    source_type=row["Source type"], target_type=row["Target type"],
-                    reuses_rule=row["Reuses rule"],
-                    learned_at=_dt.date.today().isoformat(),
-                )
-                try:
-                    if rule_book.save_learned_rule(entry):
-                        saved += 1
-                except RuleValidationError as exc:
-                    st.error(f"'{row['Source type']} → {row['Target type']}' rejected: {exc}")
-                    skipped += 1
-            if saved:
-                flash(f"Saved {saved} rule(s) as draft — activate them above to make them live.", icon="📖")
-                st.session_state.pop("rule_proposals", None)
-                st.rerun()
-            elif skipped:
-                st.warning("Nothing saved — check that at least one row has 'Save' checked and a 'Reuses rule' chosen.")
+    # ── LEARNED RULES sub-tab ─────────────────────────────────────────────────
+    with _rb_learned_tab:
+        learned = rule_book.learned_rules()
+        if not learned:
+            st.markdown("""
+            <div style="text-align:center;padding:48px 24px;color:#94A3B8;">
+                <div style="font-size:2rem;margin-bottom:8px;">📭</div>
+                <div style="font-weight:600;font-size:1rem;margin-bottom:4px;">No learned rules yet</div>
+                <div style="font-size:0.82rem;">Use the <b>Add Rule</b> tab to paste a type-mapping table
+                or fill in the form manually.</div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            _active_rules  = [r for r in learned if r.status == "active"]
+            _draft_rules   = [r for r in learned if r.status != "active"]
 
-    st.divider()
-    st.markdown("**Add a custom (learned) rule manually**")
-    st.caption("New rules start as draft (advisory only) — activate them above to make them live gap fillers.")
-    with st.form("add_rule_form"):
-        c1, c2 = st.columns(2)
-        rule_id = c1.text_input("Rule id (snake_case)")
-        display_name = c2.text_input("Display name")
-        description = st.text_area("Description")
-        when_to_apply = st.text_input("When to apply (e.g. 'source=VARCHAR maps to target=STRING')")
-        c3, c4 = st.columns(2)
-        source_type = c3.text_input("Source type (e.g. VARCHAR)")
-        target_type = c4.text_input("Target type (e.g. STRING)")
-        c5, c6 = st.columns(2)
-        pg_sql_template = c5.text_input("Source SQL template (use {col})")
-        sf_sql_template = c6.text_input("Snowflake SQL template (use {col})")
-        submitted = st.form_submit_button("Save learned rule")
+            if _active_rules:
+                st.markdown("##### ⚡ Active — used as gap fillers")
+                for r in _active_rules:
+                    with st.container(border=True):
+                        _la, _lb, _lc, _ld = st.columns([3, 2, 2, 1])
+                        with _la:
+                            st.markdown(f"`{r.id}`")
+                            st.caption(r.description or "")
+                        _lb.markdown(f"**{r.source_type}** → **{r.target_type}**")
+                        _lc.markdown(f"Reuses `{r.reuses_rule}`" if r.reuses_rule else "_No base rule_")
+                        with _ld:
+                            st.markdown('<span class="badge badge-active">ACTIVE</span>', unsafe_allow_html=True)
+                            if st.button("Deactivate", key=f"deact_{r.id}", type="secondary"):
+                                rule_book.deactivate_learned_rule(r.id)
+                                st.rerun()
 
-        if submitted:
-            if not rule_id or not display_name:
-                st.error("Rule id and display name are required.")
-            else:
-                import datetime
-                entry = RuleEntry(
-                    id=rule_id, display_name=display_name, description=description,
-                    when_to_apply=when_to_apply, pg_sql_template=pg_sql_template,
-                    sf_sql_template=sf_sql_template, source_type=source_type,
-                    target_type=target_type, is_learned=True,
-                    learned_at=datetime.date.today().isoformat(),
+            if _draft_rules:
+                st.markdown("##### 📝 Draft — advisory only (activate to use)")
+                for r in _draft_rules:
+                    with st.container(border=True):
+                        _la, _lb, _lc, _ld = st.columns([3, 2, 2, 1])
+                        with _la:
+                            st.markdown(f"`{r.id}`")
+                            st.caption(r.description or "")
+                        _lb.markdown(f"**{r.source_type}** → **{r.target_type}**")
+                        _lc.markdown(f"Reuses `{r.reuses_rule}`" if r.reuses_rule else "_No base rule_")
+                        with _ld:
+                            st.markdown('<span class="badge badge-draft">DRAFT</span>', unsafe_allow_html=True)
+                            if r.reuses_rule:
+                                if st.button("Activate", key=f"act_{r.id}", type="primary"):
+                                    rule_book.activate_learned_rule(r.id)
+                                    flash(f"'{r.id}' is now active — gap filler for {r.source_type} → {r.target_type}.", icon="✅")
+                                    st.rerun()
+                            else:
+                                st.caption("advisory only")
+
+    # ── ADD RULE sub-tab ──────────────────────────────────────────────────────
+    with _rb_add_tab:
+        _add_ai_tab, _add_manual_tab = st.tabs(["✨ AI-assisted paste", "✏️ Manual form"])
+
+        with _add_ai_tab:
+            st.markdown("""
+            <div style="font-size:0.85rem;color:#475569;margin-bottom:10px;">
+            Paste any type-mapping table or free text — e.g. <code>nvarchar → TEXT</code>, or a full
+            MSSQL/Postgres → Snowflake mapping list. The AI <b>can only reuse an existing base rule's
+            SQL</b> — it cannot invent new SQL. Rows it can't match are flagged for manual resolution.
+            </div>
+            """, unsafe_allow_html=True)
+
+            raw_rules_text = st.text_area(
+                "Paste type mappings", height=130, key="rule_paste_text",
+                placeholder="bit (0,1)      -> BOOLEAN\nmoney          -> NUMBER\nnvarchar       -> TEXT\ntimestamp      -> BINARY",
+                label_visibility="collapsed",
+            )
+            _rp_col1, _rp_col2 = st.columns([3, 1])
+            with _rp_col1:
+                rule_parse_model = select_or_type(
+                    "AI model", available_models_for_ui(), os.getenv("DIAL_MODEL", "gpt-4o"),
+                    "rule_parse_model", format_func=_model_label,
                 )
-                try:
-                    ok = rule_book.save_learned_rule(entry)
-                except RuleValidationError as exc:
-                    st.error(f"Rejected: {exc}")
-                    ok = None
-                if ok:
-                    flash(f"Learned rule '{rule_id}' saved to rule_book_learned.json", icon="📖")
-                    st.rerun()
-                elif ok is not None:
-                    st.error("Could not save — a rule with this id may already exist.")
+            with _rp_col2:
+                st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+                if st.button("✨ Parse with AI", key="parse_rules_btn", type="primary", use_container_width=True):
+                    if not raw_rules_text.strip():
+                        st.error("Paste some type mappings first.")
+                    else:
+                        with st.spinner("Parsing pasted rules…"):
+                            try:
+                                parser = RuleTypeParser(model=rule_parse_model)
+                                proposals = parser.parse(raw_rules_text, rule_book.base_rule_ids())
+                                st.session_state["rule_proposals"] = proposals
+                            except (AIRuleMappingError, RuleParseError) as exc:
+                                st.error(f"Could not parse: {exc}")
+                                st.session_state.pop("rule_proposals", None)
+
+            proposals = st.session_state.get("rule_proposals")
+            if proposals:
+                import pandas as pd
+
+                def _covered(source_type: str, target_type: str) -> bool:
+                    from rules import get_rule_for_type_specific
+                    return get_rule_for_type_specific(source_type, target_type) is not None
+
+                rows = []
+                for p in proposals:
+                    covered = _covered(p.source_type, p.target_type)
+                    status = "already covered" if covered else ("needs review" if p.needs_review else "new — will save")
+                    rows.append({
+                        "Save": (not covered) and not p.needs_review,
+                        "Source type": p.source_type, "Target type": p.target_type,
+                        "Dialect": p.dialect, "Reuses rule": p.reuses_rule or "",
+                        "Confidence": p.confidence, "Status": status, "Note": p.note,
+                    })
+                df = pd.DataFrame(rows)
+                st.markdown(f"**{len(proposals)} mapping(s) parsed** — check rows to save as draft rules:")
+                edited = st.data_editor(
+                    df,
+                    column_config={
+                        "Save": st.column_config.CheckboxColumn(help="Only rows with a matched base rule and no review flag can be saved."),
+                        "Source type": st.column_config.TextColumn(disabled=True),
+                        "Target type": st.column_config.TextColumn(disabled=True),
+                        "Dialect": st.column_config.TextColumn(disabled=True),
+                        "Reuses rule": st.column_config.SelectboxColumn(options=[""] + rule_book.base_rule_ids()),
+                        "Confidence": st.column_config.NumberColumn(disabled=True, format="%.2f"),
+                        "Status": st.column_config.TextColumn(disabled=True),
+                        "Note": st.column_config.TextColumn(disabled=True),
+                    },
+                    hide_index=True, use_container_width=True, key="rule_proposal_editor",
+                )
+
+                if st.button("💾 Save checked rows as draft rules", key="save_rule_proposals", type="primary"):
+                    import datetime as _dt
+                    import re as _re
+                    saved, skipped = 0, 0
+                    for _, row in edited.iterrows():
+                        if not row["Save"]:
+                            continue
+                        if not row["Reuses rule"]:
+                            skipped += 1
+                            continue
+                        slug = _re.sub(r"[^a-z0-9]+", "_", f"{row['Dialect']}_{row['Source type']}_{row['Target type']}".lower()).strip("_")
+                        entry = RuleEntry(
+                            id=f"prompt_{slug}",
+                            display_name=f"{row['Source type']} -> {row['Target type']} ({row['Dialect']})",
+                            description=row["Note"] or f"Reuses '{row['Reuses rule']}' rule via AI-assisted paste.",
+                            when_to_apply=f"source_type={row['Source type']}, target_type={row['Target type']}, dialect={row['Dialect']}",
+                            pg_sql_template="", sf_sql_template="",
+                            source_type=row["Source type"], target_type=row["Target type"],
+                            reuses_rule=row["Reuses rule"],
+                            learned_at=_dt.date.today().isoformat(),
+                        )
+                        try:
+                            if rule_book.save_learned_rule(entry):
+                                saved += 1
+                        except RuleValidationError as exc:
+                            st.error(f"'{row['Source type']} → {row['Target type']}' rejected: {exc}")
+                            skipped += 1
+                    if saved:
+                        flash(f"Saved {saved} rule(s) as draft — activate them in the Learned Rules tab.", icon="📖")
+                        st.session_state.pop("rule_proposals", None)
+                        st.rerun()
+                    elif skipped:
+                        st.warning("Nothing saved — check that at least one row has 'Save' checked and a 'Reuses rule' chosen.")
+
+        with _add_manual_tab:
+            st.caption("New rules start as **draft** (advisory only) — go to Learned Rules and click Activate to make them live gap fillers.")
+            with st.form("add_rule_form", border=False):
+                _mf1, _mf2 = st.columns(2)
+                rule_id      = _mf1.text_input("Rule ID (snake_case)", placeholder="mssql_money_to_number")
+                display_name = _mf2.text_input("Display name", placeholder="MONEY → NUMBER")
+                description  = st.text_area("Description", height=80, placeholder="What this rule does and when to apply it")
+                when_to_apply = st.text_input("When to apply", placeholder="source=MONEY, target=NUMBER, dialect=mssql")
+                _mf3, _mf4   = st.columns(2)
+                source_type  = _mf3.text_input("Source type", placeholder="MONEY")
+                target_type  = _mf4.text_input("Target type", placeholder="NUMBER")
+                _mf5, _mf6   = st.columns(2)
+                pg_sql_template = _mf5.text_input("Source SQL template", placeholder="CAST({col} AS NUMERIC)")
+                sf_sql_template = _mf6.text_input("Snowflake SQL template", placeholder="CAST({col} AS NUMBER)")
+                submitted = st.form_submit_button("💾 Save as draft rule", type="primary")
+
+                if submitted:
+                    if not rule_id or not display_name:
+                        st.error("Rule ID and display name are required.")
+                    else:
+                        import datetime
+                        entry = RuleEntry(
+                            id=rule_id, display_name=display_name, description=description,
+                            when_to_apply=when_to_apply, pg_sql_template=pg_sql_template,
+                            sf_sql_template=sf_sql_template, source_type=source_type,
+                            target_type=target_type, is_learned=True,
+                            learned_at=datetime.date.today().isoformat(),
+                        )
+                        try:
+                            ok = rule_book.save_learned_rule(entry)
+                        except RuleValidationError as exc:
+                            st.error(f"Rejected: {exc}")
+                            ok = None
+                        if ok:
+                            flash(f"Learned rule '{rule_id}' saved — activate it in the Learned Rules tab.", icon="📖")
+                            st.rerun()
+                        elif ok is not None:
+                            st.error("Could not save — a rule with this ID may already exist.")
 
 # =============================================================================
 # TAB: Exclusions
@@ -1709,94 +4404,76 @@ with tab_excl:
 # =============================================================================
 # TAB: Usage & Cost
 # =============================================================================
-with st.sidebar.expander("📊 Usage & Cost", expanded=False):
-    import datetime
-    from collections import defaultdict
+_SCHED_KEY = "sched_job_id"
+_is_sched_running = _SCHED_KEY in st.session_state
+_sched_label = "⏰ Scheduled Runs  🟢 Active" if _is_sched_running else "⏰ Scheduled Runs"
 
-    st.subheader("AI token usage & estimated cost")
-    st.caption(
-        "Real token counts from every AI call (column mapping + SQL generation), "
-        "logged to token_usage_analysis/logs/token_usage.jsonl. Cost is estimated "
-        "from public list prices — see token_usage_analysis/pricing.json."
-    )
-
-    records = _load_token_records()
-    pricing = _load_pricing()
-
-    if not records:
-        st.info("No AI calls logged yet. Run a Single YAML or Batch YAML generation with an AI key configured.")
-    else:
-        def _record_date(r: dict):
+with st.sidebar.expander(_sched_label, expanded=False):
+    if _is_sched_running:
+        _sched_info = st.session_state.get("sched_meta", {})
+        st.markdown(
+            f"**Status:** 🟢 Running\n\n"
+            f"**Layer:** `{_sched_info.get('layer','—')}`  "
+            f"**Env:** `{_sched_info.get('env','—')}`  \n"
+            f"**Interval:** {_sched_info.get('interval','—')}"
+        )
+        if st.button("⏹ Stop scheduler", key="sched_stop", type="primary", use_container_width=True):
             try:
-                return datetime.datetime.strptime(r["timestamp"], "%Y-%m-%dT%H:%M:%S").date()
+                st.session_state[_SCHED_KEY].shutdown(wait=False)
             except Exception:
-                return None
-
-        today = datetime.date.today()
-        last_7 = today - datetime.timedelta(days=6)
-
-        today_records = [r for r in records if _record_date(r) == today]
-        week_records = [r for r in records if (d := _record_date(r)) and last_7 <= d <= today]
-
-        def _totals(recs):
-            tokens = sum(r.get("total_tokens", 0) for r in recs)
-            cost = sum(_cost_for(r.get("model", "unknown"), r.get("prompt_tokens", 0), r.get("completion_tokens", 0), pricing) for r in recs)
-            return tokens, cost
-
-        today_tokens, today_cost = _totals(today_records)
-        week_tokens, week_cost = _totals(week_records)
-
-        c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("Today — cost", f"${today_cost:.4f}")
-        c2.metric("Today — tokens", f"{today_tokens:,}")
-        c3.metric("Last 7 days — cost", f"${week_cost:.4f}")
-        c4.metric("Last 7 days — tokens", f"{week_tokens:,}")
-        c5.metric("Last 7 days — AI calls", f"{len(week_records):,}")
-
-        st.markdown("**Daily cost — last 7 days**")
-        daily_cost = defaultdict(float)
-        for d_offset in range(6, -1, -1):
-            daily_cost[(today - datetime.timedelta(days=d_offset)).isoformat()] = 0.0
-        for r in week_records:
-            d = _record_date(r)
-            if d:
-                daily_cost[d.isoformat()] += _cost_for(
-                    r.get("model", "unknown"), r.get("prompt_tokens", 0), r.get("completion_tokens", 0), pricing
-                )
-        import pandas as pd
-        chart_df = pd.DataFrame({"Date": list(daily_cost.keys()), "Cost (USD)": list(daily_cost.values())}).set_index("Date")
-        st.bar_chart(chart_df)
-
-        col_a, col_b = st.columns(2)
-        with col_a:
-            st.markdown("**Last 7 days — by model**")
-            by_model = defaultdict(lambda: {"calls": 0, "tokens": 0, "cost": 0.0})
-            for r in week_records:
-                m = r.get("model", "unknown")
-                by_model[m]["calls"] += 1
-                by_model[m]["tokens"] += r.get("total_tokens", 0)
-                by_model[m]["cost"] += _cost_for(m, r.get("prompt_tokens", 0), r.get("completion_tokens", 0), pricing)
-            st.dataframe(
-                [{"Model": m, "Calls": s["calls"], "Tokens": s["tokens"], "Cost (USD)": round(s["cost"], 4)} for m, s in sorted(by_model.items())],
-                width='stretch', hide_index=True,
-            )
-        with col_b:
-            st.markdown("**Last 7 days — by call type**")
-            by_type = defaultdict(lambda: {"calls": 0, "tokens": 0, "cost": 0.0})
-            for r in week_records:
-                t = r.get("call_type", "unknown")
-                by_type[t]["calls"] += 1
-                by_type[t]["tokens"] += r.get("total_tokens", 0)
-                by_type[t]["cost"] += _cost_for(r.get("model", "unknown"), r.get("prompt_tokens", 0), r.get("completion_tokens", 0), pricing)
-            st.dataframe(
-                [{"Call type": t, "Calls": s["calls"], "Tokens": s["tokens"], "Cost (USD)": round(s["cost"], 4)} for t, s in sorted(by_type.items())],
-                width='stretch', hide_index=True,
-            )
-
+                pass
+            for _k in (_SCHED_KEY, "sched_meta"):
+                st.session_state.pop(_k, None)
+            flash("Scheduler stopped.", icon="⏹")
+            st.rerun()
+    else:
+        st.markdown("**Auto-run validation on a fixed schedule.**  \n*App must stay open.*")
         st.divider()
-        all_tokens, all_cost = _totals(records)
-        st.caption(f"All-time: {len(records):,} AI calls · {all_tokens:,} tokens · ${all_cost:.4f} estimated cost.")
-        st.code("python token_usage_analysis/report_token_usage.py --all", language="bash")
+        _sched_layer = st.selectbox("Layer", _LAYERS, key="sched_layer")
+        _sched_env = st.selectbox("Environment", ["local", "dev", "uat", "prod"], key="sched_env")
+        _sched_interval = st.selectbox(
+            "Interval",
+            ["Every 1 hour", "Every 6 hours", "Every 12 hours", "Daily (midnight)"],
+            key="sched_interval",
+        )
+        _sched_notify = st.checkbox("🔔 Notify on failure (Slack/email)", value=True, key="sched_notify")
+
+        _interval_map = {
+            "Every 1 hour": 3600, "Every 6 hours": 21600,
+            "Every 12 hours": 43200, "Daily (midnight)": 86400,
+        }
+
+        if st.button("▶ Start scheduler", key="sched_start", type="primary", use_container_width=True):
+            try:
+                from apscheduler.schedulers.background import BackgroundScheduler
+                _scheduler = BackgroundScheduler()
+                _secs = _interval_map[_sched_interval]
+                _snap_layer, _snap_env, _snap_notify = _sched_layer, _sched_env, _sched_notify
+
+                def _scheduled_run():
+                    try:
+                        _r = run_validation(_snap_layer, _snap_env, ["all"], True, True)
+                        if _snap_notify and _r.get("returncode", 0) != 0:
+                            from notifier import notify_failure
+                            notify_failure(
+                                subject=f"[Scheduled] Validation failure — {_snap_layer}",
+                                body=f"Run ID: {_r.get('run_id','?')}\n{_r.get('stdout_tail','')[-500:]}",
+                            )
+                    except Exception:
+                        pass
+
+                _scheduler.add_job(_scheduled_run, "interval", seconds=_secs)
+                _scheduler.start()
+                st.session_state[_SCHED_KEY] = _scheduler
+                st.session_state["sched_meta"] = {
+                    "layer": _sched_layer, "env": _sched_env, "interval": _sched_interval,
+                }
+                flash(f"Scheduler started — {_sched_interval.lower()}.", icon="⏰")
+                st.rerun()
+            except ImportError:
+                st.error("Run `pip install apscheduler` to enable scheduled runs.")
+
+# Usage & Cost moved to tab_usage — see below
 
 # =============================================================================
 # FLOATING WIDGET: Gemini Chat — fixed bottom-right bubble, not a tab.
@@ -1829,20 +4506,21 @@ st.markdown("""
 .st-key-gemini_chat_panel {
     position: fixed !important; bottom: 100px !important; right: 24px !important;
     z-index: 9999 !important; left: auto !important;
-    /* Width/height are set by a second, dynamic <style> block further down based
-       on st.session_state["_gemini_chat_size"] — NOT a native CSS `resize`
-       handle. Streamlit's own components only recompute their layout on an
-       actual rerun; dragging a native resize handle changes the container's
-       box size without Streamlit ever re-running, so the widgets inside keep
-       their originally-computed widths and visibly overlap. A button-driven
-       size toggle (see below) triggers a real rerun instead, so everything
-       inside reflows correctly for the new size. */
     max-width: 92vw !important; max-height: 85vh !important;
     overflow-y: auto;
     background: var(--background-color, white); border-radius: 16px;
     box-shadow: 0 10px 32px rgba(0,0,0,0.28); padding: 0;
     border: 1px solid rgba(128,128,128,0.2);
 }
+/* Drag handle on the left edge */
+#gemini-resize-handle {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 6px;
+    cursor: ew-resize; z-index: 10000;
+    border-radius: 16px 0 0 16px;
+    background: transparent;
+    transition: background 0.15s;
+}
+#gemini-resize-handle:hover { background: rgba(108,92,231,0.25); }
 .st-key-gemini_chat_size_btn {
     position: fixed !important; z-index: 10001 !important; left: auto !important;
 }
@@ -1853,18 +4531,72 @@ st.markdown("""
     border: none !important; font-size: 0.85rem !important; line-height: 1 !important;
 }
 .gemini-chat-header {
-    background: linear-gradient(135deg, #6C5CE7 0%, #A29BFE 100%);
+    background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%);
     color: white; padding: 14px 18px; border-radius: 16px 16px 0 0;
-    display: flex; align-items: center; gap: 10px;
+    display: flex; align-items: center; gap: 12px;
+    box-shadow: 0 2px 8px rgba(79,70,229,.3);
 }
 .gemini-chat-header .gemini-logo {
-    width: 30px; height: 30px; border-radius: 50%;
-    background: rgba(255,255,255,0.2); display: flex; align-items: center;
-    justify-content: center; font-size: 1.1rem; flex-shrink: 0;
+    width: 36px; height: 36px; border-radius: 50%;
+    background: rgba(255,255,255,0.18);
+    border: 1.5px solid rgba(255,255,255,0.35);
+    display: flex; align-items: center;
+    justify-content: center; font-size: 1.15rem; flex-shrink: 0;
 }
-.gemini-chat-header .gemini-title { font-weight: 700; font-size: 1.05rem; }
-.gemini-chat-header .gemini-subtitle { font-size: 0.78rem; opacity: 0.9; }
-.gemini-chat-body { padding: 14px 18px; }
+.gemini-chat-header .gemini-title { font-weight: 800; font-size: 1rem; letter-spacing: -.01em; }
+.gemini-chat-header .gemini-subtitle { font-size: 0.73rem; opacity: 0.85; margin-top: 1px; }
+.gemini-online-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #34D399; box-shadow: 0 0 0 2px rgba(52,211,153,.35);
+    flex-shrink: 0; margin-left: auto;
+}
+.gemini-chat-body { padding: 12px 16px; }
+.gemini-status-bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 0 10px; flex-wrap: wrap;
+}
+.gemini-status-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    border-radius: 999px; padding: 4px 10px;
+    font-size: 0.73rem; font-weight: 600; white-space: nowrap;
+}
+.gsb-success { background:#ECFDF5; color:#065F46; border:1px solid #6EE7B7; }
+.gsb-warning { background:#FFFBEB; color:#92400E; border:1px solid #FDE68A; }
+.gsb-info    { background:#EEF2FF; color:#3730A3; border:1px solid #A5B4FC; }
+.gsb-neutral { background:#F1F5F9; color:#475569; border:1px solid #CBD5E1; }
+/* Chat message bubble overrides */
+[data-testid="stChatMessage"] {
+    padding: 6px 0 !important;
+    gap: 8px !important;
+    background: transparent !important;
+}
+[data-testid="stChatMessageContent"] > div > p {
+    margin-bottom: 4px !important;
+    font-size: 0.875rem !important;
+    line-height: 1.55 !important;
+}
+[data-testid="stChatMessage"][data-role="user"] [data-testid="stChatMessageContent"] {
+    background: linear-gradient(135deg,#4F46E5,#7C3AED) !important;
+    color: white !important; border-radius: 16px 16px 4px 16px !important;
+    padding: 10px 14px !important; box-shadow: 0 2px 8px rgba(79,70,229,.28) !important;
+}
+[data-testid="stChatMessage"][data-role="user"] [data-testid="stChatMessageContent"] p { color: white !important; }
+[data-testid="stChatMessage"][data-role="assistant"] [data-testid="stChatMessageContent"] {
+    background: white !important; border: 1px solid #E2E8F0 !important;
+    border-radius: 16px 16px 16px 4px !important;
+    padding: 10px 14px !important; box-shadow: 0 1px 4px rgba(0,0,0,.07) !important;
+}
+/* Quick-action chip buttons */
+.st-key-gemini_chat_panel .stButton button[kind="secondary"] {
+    border-radius: 999px !important; font-size: 0.76rem !important;
+    padding: 5px 12px !important; font-weight: 600 !important;
+    background: #EEF2FF !important; color: #4338CA !important;
+    border: 1.5px solid #A5B4FC !important;
+    transition: background .15s, box-shadow .15s !important;
+}
+.st-key-gemini_chat_panel .stButton button[kind="secondary"]:hover {
+    background: #E0E7FF !important; box-shadow: 0 2px 8px rgba(79,70,229,.2) !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -1879,8 +4611,55 @@ with st.container(key="gemini_chat_toggle"):
         st.session_state["_gemini_chat_open"] = not st.session_state["_gemini_chat_open"]
         st.rerun()
 
-# Discrete size presets applied via a real Streamlit rerun (not a native CSS
-# resize drag) — see the note on .st-key-gemini_chat_panel above for why.
+# Horizontal drag-to-resize via a JS handle injected into the panel.
+# JS reads/writes localStorage so the user's chosen width survives reruns.
+st.markdown("""
+<script>
+(function() {
+  function initResize() {
+    const panel = document.querySelector('.st-key-gemini_chat_panel');
+    if (!panel) return;
+    if (panel.querySelector('#gemini-resize-handle')) return;
+
+    // Restore saved width
+    const saved = localStorage.getItem('gemini_chat_w');
+    if (saved) panel.style.setProperty('width', saved + 'px', 'important');
+
+    const handle = document.createElement('div');
+    handle.id = 'gemini-resize-handle';
+    panel.style.position = 'fixed';
+    panel.appendChild(handle);
+
+    let startX, startW;
+    handle.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      startX = e.clientX;
+      startW = panel.getBoundingClientRect().width;
+      document.addEventListener('mousemove', onDrag);
+      document.addEventListener('mouseup', stopDrag);
+    });
+
+    function onDrag(e) {
+      // Dragging left = wider (panel anchored to right edge)
+      const newW = Math.min(Math.max(280, startW + (startX - e.clientX)), window.innerWidth * 0.92);
+      panel.style.setProperty('width', newW + 'px', 'important');
+    }
+
+    function stopDrag() {
+      const w = Math.round(panel.getBoundingClientRect().width);
+      localStorage.setItem('gemini_chat_w', w);
+      document.removeEventListener('mousemove', onDrag);
+      document.removeEventListener('mouseup', stopDrag);
+    }
+  }
+
+  // Streamlit re-renders the DOM; re-attach after each mutation.
+  new MutationObserver(initResize).observe(document.body, {childList: true, subtree: true});
+  initResize();
+})();
+</script>
+""", unsafe_allow_html=True)
+
 _GEMINI_CHAT_SIZES = {"default": (400, 520), "large": (640, 760)}
 _gemini_size = st.session_state["_gemini_chat_size"]
 _gemini_w, _gemini_h = _GEMINI_CHAT_SIZES.get(_gemini_size, _GEMINI_CHAT_SIZES["default"])
@@ -1908,21 +4687,7 @@ else:
             st.rerun()
 
 with st.container(key="gemini_chat_panel"):
-    st.markdown(
-        '<div class="gemini-chat-header">'
-        '<div class="gemini-logo">✨</div>'
-        '<div><div class="gemini-title">Gemini Migration Intelligence</div>'
-        '<div class="gemini-subtitle">AI assistant · 24 tools · human-approved actions</div></div>'
-        '</div>',
-        unsafe_allow_html=True,
-    )
-    st.markdown('<div class="gemini-chat-body">', unsafe_allow_html=True)
-    st.caption(
-        "Gemini orchestrates the 24 Migration Validator tools — it never invents data. "
-        "Every write action is audited and requires a human reviewer with the appropriate RBAC role."
-    )
-
-    # ── Connector + model status ───────────────────────────────────────────
+    # ── Header ─────────────────────────────────────────────────────────────
     sys.path.insert(0, str(_SRC_DIR))
     from gemini_connector.gemini_agent import is_gemini_configured, _vertexai_configured
 
@@ -1931,32 +4696,45 @@ with st.container(key="gemini_chat_panel"):
     _auth_mode    = os.getenv("AUTH_MODE", "static").upper()
     _connector_ok = bool(os.getenv("CONNECTOR_API_TOKEN") or _auth_mode == "DEV")
 
-    # Determine active backend (mirrors create_agent() priority)
     if _dial_key:
         _ai_backend = "DIAL · " + os.getenv("DIAL_MODEL", "gpt-4o")
-        _ai_icon, _ai_status = "✅", "success"
+        _ai_status  = "success"
     elif _gemini_key:
-        _mode_label = "Vertex AI" if _vertexai_configured() else "Developer API"
+        _mode_label = "Vertex AI" if _vertexai_configured() else "Dev API"
         _ai_backend = f"Gemini ({_mode_label}) · " + os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-        _ai_icon, _ai_status = "🤖", "success"
+        _ai_status  = "success"
     else:
-        _ai_backend = "Offline mode"
-        _ai_icon, _ai_status = "⚠️", "warning"
+        _ai_backend = "Offline"
+        _ai_status  = "warning"
 
-    _s1, _s2, _s3 = st.columns(3)
-    with _s1:
-        if _ai_status == "success":
-            st.success(f"**AI Backend** · {_ai_backend}", icon=_ai_icon)
-        else:
-            st.warning(f"**AI Backend** · {_ai_backend}", icon=_ai_icon)
-    with _s2:
-        _auth_icon = "🔐" if _auth_mode == "JWT" else ("🔑" if _auth_mode == "STATIC" else "🧪")
-        st.info(f"**Auth mode** · {_auth_mode}", icon=_auth_icon)
-    with _s3:
-        if _connector_ok:
-            st.success("**Connector** · ready", icon="✅")
-        else:
-            st.warning("**Connector** · token not set", icon="⚠️")
+    st.markdown(
+        '<div class="gemini-chat-header">'
+        '<div class="gemini-logo">✨</div>'
+        '<div>'
+        '<div class="gemini-title">Migration Intelligence</div>'
+        '<div class="gemini-subtitle">AI assistant · 24 governed tools · human-approved writes</div>'
+        '</div>'
+        '<div class="gemini-online-dot" title="Ready"></div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown('<div class="gemini-chat-body">', unsafe_allow_html=True)
+
+    # ── Compact status bar ─────────────────────────────────────────────────
+    _ai_cls   = "gsb-success" if _ai_status == "success" else "gsb-warning"
+    _ai_dot   = "🟢" if _ai_status == "success" else "🟡"
+    _conn_cls = "gsb-success" if _connector_ok else "gsb-warning"
+    _conn_lbl = "Connector ready" if _connector_ok else "Connector: token not set"
+    _auth_cls = "gsb-info" if _auth_mode == "JWT" else "gsb-neutral"
+    _auth_ico = "🔐" if _auth_mode == "JWT" else ("🔑" if _auth_mode == "STATIC" else "🧪")
+    st.markdown(
+        f'<div class="gemini-status-bar">'
+        f'<span class="gemini-status-badge {_ai_cls}">{_ai_dot} {_ai_backend}</span>'
+        f'<span class="gemini-status-badge {_conn_cls}">{"✅" if _connector_ok else "⚠️"} {_conn_lbl}</span>'
+        f'<span class="gemini-status-badge {_auth_cls}">{_auth_ico} {_auth_mode}</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
 
     # ── Enterprise identity panel ──────────────────────────────────────────
     with st.expander("🪪 Session Identity & Permissions", expanded=not st.session_state.get("gemini_actor")):
@@ -2059,28 +4837,24 @@ with st.container(key="gemini_chat_panel"):
                     st.error(err_msg)
                     st.session_state["gemini_messages"].append({"role": "assistant", "content": err_msg})
 
-    # ── Quick-action expander sits just above the chat input ───────────────
+    # ── Quick-action chips ─────────────────────────────────────────────────
     _quick_actions = [
-        ("📋 Migration summary",    "Show me a summary of all migrations and which tables need attention."),
-        ("🔍 Pending reviews",      "Show me all column mappings that need my approval."),
-        ("📊 Business metrics",     "Show me the automation metrics and ROI for the Migration Intelligence Connector."),
-        ("🔌 Discover connections", "What database connections are configured?"),
-        ("📉 Coverage below 95%",   "Show me all tables in the bronze layer with validation coverage below 95%."),
-        ("🔎 Coverage below 100%",  "Show me all tables across all sources where coverage is below 100%."),
+        ("📋 Health",          "Give me a quick scorecard — how many tables are passing, failing, and need attention?"),
+        ("🔍 Approvals",       "What column mappings need my sign-off? Show confidence scores and flag anything below 75%."),
+        ("📊 ROI",             "Show me the automation rate, SQL scripts avoided, and failures caught so far."),
+        ("🔌 Connections",     "What source databases are connected and which Snowflake target are they pointing to?"),
+        ("📉 Coverage gaps",   "Which tables have validation coverage below 95%? Rank worst first."),
+        ("⚡ Run & explain",   "Validate the migration_test table and explain any failures you find."),
     ]
-    with st.expander("⚡ Quick actions", expanded=False):
-        qa_row1 = st.columns(3)
-        for col, (label, prompt) in zip(qa_row1, _quick_actions[:3]):
-            if col.button(label, key=f"qa_{label}", use_container_width=True):
-                st.session_state["gemini_pending_prompt"] = prompt
-                st.rerun()
-        qa_row2 = st.columns(3)
-        for col, (label, prompt) in zip(qa_row2, _quick_actions[3:]):
-            if col.button(label, key=f"qa_{label}", use_container_width=True):
-                st.session_state["gemini_pending_prompt"] = prompt
-                st.rerun()
-        st.divider()
-        if st.button("🗑️ Clear chat history", key="gemini_clear", help="Reset conversation and agent"):
+    st.markdown("<div style='font-size:0.72rem;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:.07em;margin-bottom:5px;'>Quick actions</div>", unsafe_allow_html=True)
+    _qa_cols = st.columns(len(_quick_actions))
+    for col, (label, prompt) in zip(_qa_cols, _quick_actions):
+        if col.button(label, key=f"qa_{label}"):
+            st.session_state["gemini_pending_prompt"] = prompt
+            st.rerun()
+    _cl1, _cl2 = st.columns([6, 1])
+    with _cl2:
+        if st.button("🗑️", key="gemini_clear", help="Clear conversation"):
             st.session_state["gemini_messages"] = []
             st.session_state.pop("gemini_agent_instance", None)
             st.rerun()
@@ -2090,7 +4864,7 @@ with st.container(key="gemini_chat_panel"):
     # fixed-position floating panel. A form stays inside the panel's bounds.
     with st.form("gemini_chat_form", clear_on_submit=True, border=False):
         _fc1, _fc2 = st.columns([5, 1])
-        user_input = _fc1.text_input("Ask about your migration…", key="gemini_input", label_visibility="collapsed")
+        user_input = _fc1.text_input("Ask anything — 'validate X', 'why did Y fail?', 'approve all high-confidence'…", key="gemini_input", label_visibility="collapsed")
         sent = _fc2.form_submit_button("➤")
     if sent and user_input:
         st.session_state["gemini_messages"].append({"role": "user", "content": user_input})
@@ -2633,333 +5407,468 @@ with tab_review:
 
 
 # =============================================================================
+# TAB: My Jira Tickets
+# =============================================================================
+with tab_jira:
+    st.subheader("My Jira Tickets")
+    st.caption("Tickets assigned to you in the configured Jira project — update status or attach a validation result.")
+
+    try:
+        from gemini_connector.jira_client import (
+            is_configured, get_my_tickets, get_ticket,
+            transition_ticket, add_comment, JiraError, JiraNotConfiguredError,
+        )
+    except ImportError:
+        get_my_tickets = None
+
+    if get_my_tickets is None or not is_configured():
+        st.info("Jira not configured — add `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_PROJECT_KEY` to `.env`.")
+    else:
+        _jql_filter = st.text_input(
+            "Extra JQL filter (optional)",
+            placeholder='e.g. priority = High AND labels = "data-migration"',
+            key="jira_jql_extra",
+        )
+        _jira_refresh = st.button("🔄 Refresh tickets", key="jira_refresh")
+
+        _JIRA_TICKETS_KEY = "jira_my_tickets"
+        if _jira_refresh or _JIRA_TICKETS_KEY not in st.session_state:
+            with st.spinner("Fetching your Jira tickets…"):
+                try:
+                    st.session_state[_JIRA_TICKETS_KEY] = get_my_tickets(_jql_filter.strip())
+                except JiraError as _je:
+                    st.error(f"Jira error: {_je}")
+                    st.session_state[_JIRA_TICKETS_KEY] = []
+
+        _tickets = st.session_state.get(_JIRA_TICKETS_KEY, [])
+        if not _tickets:
+            st.info("No open tickets assigned to you.")
+        else:
+            st.caption(f"{len(_tickets)} open ticket(s)")
+
+            _STATUS_COLORS = {
+                "To Do": "#94A3B8", "In Progress": "#F59E0B",
+                "In Review": "#6366F1", "Done": "#10B981",
+            }
+            _PRIORITY_ICONS = {
+                "Highest": "🔴", "High": "🟠", "Medium": "🟡",
+                "Low": "🔵", "Lowest": "⚪",
+            }
+
+            for _tk in _tickets:
+                _status_color = _STATUS_COLORS.get(_tk["status"], "#94A3B8")
+                _priority_icon = _PRIORITY_ICONS.get(_tk["priority"], "")
+                with st.expander(
+                    f"{_priority_icon} **{_tk['key']}** — {_tk['summary']}",
+                    expanded=False,
+                ):
+                    _tc1, _tc2 = st.columns([3, 1])
+                    with _tc1:
+                        st.markdown(
+                            f"<span style='background:{_status_color};color:#fff;"
+                            f"padding:2px 10px;border-radius:12px;font-size:0.78rem;'>"
+                            f"{_tk['status']}</span> &nbsp; "
+                            f"<a href='{_tk['url']}' target='_blank' style='font-size:0.82rem;'>"
+                            f"Open in Jira ↗</a>",
+                            unsafe_allow_html=True,
+                        )
+
+                    # ── Transition buttons ────────────────────────────────────
+                    with _tc2:
+                        _trans_target = (
+                            "In Progress" if _tk["status"] == "To Do"
+                            else "Done" if _tk["status"] == "In Progress"
+                            else None
+                        )
+                        if _trans_target:
+                            if st.button(
+                                f"→ {_trans_target}",
+                                key=f"jira_trans_{_tk['key']}",
+                                type="primary",
+                            ):
+                                try:
+                                    transition_ticket(_tk["key"], _trans_target)
+                                    st.session_state.pop(_JIRA_TICKETS_KEY, None)
+                                    flash(f"{_tk['key']} moved to '{_trans_target}'.", icon="✅")
+                                    st.rerun()
+                                except JiraError as _je:
+                                    st.error(str(_je))
+
+                    # ── Attach validation result as comment ───────────────────
+                    with st.expander("📎 Attach validation result to this ticket", expanded=False):
+                        _yaml_files = sorted(
+                            (p for p in (_PROJECT_DIR / "config").rglob("*.yaml")
+                             if p.parent.name in ("data_validation", "count_validation")),
+                            key=lambda p: p.stat().st_mtime, reverse=True,
+                        )
+                        if not _yaml_files:
+                            st.caption("No validation YAMLs found yet.")
+                        else:
+                            _sel_yaml = st.selectbox(
+                                "Validation YAML",
+                                options=_yaml_files,
+                                format_func=lambda p: str(p),
+                                key=f"jira_yaml_{_tk['key']}",
+                            )
+                            _note = st.text_area(
+                                "Notes (optional)",
+                                key=f"jira_note_{_tk['key']}",
+                                height=68,
+                            )
+                            if st.button("📤 Post comment", key=f"jira_comment_{_tk['key']}"):
+                                _comment = (
+                                    f"[Migration Validator] Validation result attached: {_sel_yaml}\n"
+                                    + (f"\n{_note}" if _note.strip() else "")
+                                )
+                                try:
+                                    add_comment(_tk["key"], _comment)
+                                    flash(f"Comment posted on {_tk['key']}.", icon="✅")
+                                except JiraError as _je:
+                                    st.error(str(_je))
+
+
+# =============================================================================
+# =============================================================================
+# TAB: Usage & Cost
+# =============================================================================
+with tab_usage:
+    import datetime as _dt
+    from collections import defaultdict as _dd
+
+    st.subheader("💰 AI Usage & Cost")
+    st.caption(
+        "Real token counts from every AI call (column mapping + SQL generation), "
+        "logged to token_usage_analysis/logs/token_usage.jsonl. "
+        "Cost estimated from public list prices — see token_usage_analysis/pricing.json."
+    )
+
+    _u_records = _load_token_records()
+    _u_pricing = _load_pricing()
+
+    if not _u_records:
+        st.info("No AI calls logged yet. Run a Single YAML or Batch YAML generation with an AI key configured.")
+    else:
+        def _u_record_date(r: dict):
+            try:
+                return _dt.datetime.strptime(r["timestamp"], "%Y-%m-%dT%H:%M:%S").date()
+            except Exception:
+                return None
+
+        _u_today = _dt.date.today()
+        _u_last7 = _u_today - _dt.timedelta(days=6)
+        _u_today_recs = [r for r in _u_records if _u_record_date(r) == _u_today]
+        _u_week_recs  = [r for r in _u_records if (d := _u_record_date(r)) and _u_last7 <= d <= _u_today]
+
+        def _u_totals(recs):
+            tokens = sum(r.get("total_tokens", 0) for r in recs)
+            cost   = sum(_cost_for(r.get("model", "unknown"), r.get("prompt_tokens", 0), r.get("completion_tokens", 0), _u_pricing) for r in recs)
+            return tokens, cost
+
+        _u_today_tok, _u_today_cost = _u_totals(_u_today_recs)
+        _u_week_tok,  _u_week_cost  = _u_totals(_u_week_recs)
+        _u_all_tok,   _u_all_cost   = _u_totals(_u_records)
+
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Today — cost",         f"${_u_today_cost:.4f}")
+        c2.metric("Today — tokens",       f"{_u_today_tok:,}")
+        c3.metric("Last 7 days — cost",   f"${_u_week_cost:.4f}")
+        c4.metric("Last 7 days — tokens", f"{_u_week_tok:,}")
+        c5.metric("Last 7 days — calls",  f"{len(_u_week_recs):,}")
+
+        st.divider()
+        st.markdown("**Daily cost — last 7 days**")
+        _u_daily = _dd(float)
+        for _d_off in range(6, -1, -1):
+            _u_daily[(_u_today - _dt.timedelta(days=_d_off)).isoformat()] = 0.0
+        for r in _u_week_recs:
+            d = _u_record_date(r)
+            if d:
+                _u_daily[d.isoformat()] += _cost_for(
+                    r.get("model", "unknown"), r.get("prompt_tokens", 0), r.get("completion_tokens", 0), _u_pricing
+                )
+        import pandas as _pd_usage
+        _u_chart = _pd_usage.DataFrame({"Date": list(_u_daily.keys()), "Cost (USD)": list(_u_daily.values())}).set_index("Date")
+        st.bar_chart(_u_chart)
+
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.markdown("**Last 7 days — by model**")
+            _u_by_model = _dd(lambda: {"calls": 0, "tokens": 0, "cost": 0.0})
+            for r in _u_week_recs:
+                m = r.get("model", "unknown")
+                _u_by_model[m]["calls"]  += 1
+                _u_by_model[m]["tokens"] += r.get("total_tokens", 0)
+                _u_by_model[m]["cost"]   += _cost_for(m, r.get("prompt_tokens", 0), r.get("completion_tokens", 0), _u_pricing)
+            st.dataframe(
+                [{"Model": m, "Calls": s["calls"], "Tokens": s["tokens"], "Cost (USD)": round(s["cost"], 4)}
+                 for m, s in sorted(_u_by_model.items())],
+                use_container_width=True, hide_index=True,
+            )
+        with col_b:
+            st.markdown("**Last 7 days — by call type**")
+            _u_by_type = _dd(lambda: {"calls": 0, "tokens": 0, "cost": 0.0})
+            for r in _u_week_recs:
+                t = r.get("call_type", "unknown")
+                _u_by_type[t]["calls"]  += 1
+                _u_by_type[t]["tokens"] += r.get("total_tokens", 0)
+                _u_by_type[t]["cost"]   += _cost_for(r.get("model", "unknown"), r.get("prompt_tokens", 0), r.get("completion_tokens", 0), _u_pricing)
+            st.dataframe(
+                [{"Call type": t, "Calls": s["calls"], "Tokens": s["tokens"], "Cost (USD)": round(s["cost"], 4)}
+                 for t, s in sorted(_u_by_type.items())],
+                use_container_width=True, hide_index=True,
+            )
+
+        st.divider()
+        st.caption(f"All-time: {len(_u_records):,} AI calls · {_u_all_tok:,} tokens · **${_u_all_cost:.4f}** estimated cost.")
+
 # TAB: Guide
 # =============================================================================
 with tab_guide:
-    st.subheader("Guide — how to use Migration Validator")
-    st.caption(
-        "A plain-language walkthrough of every tab. If something in the app is unclear, it should be "
-        "explained here — if it isn't, treat that as a gap in this guide, not something you need to "
-        "already know."
-    )
+    # ── Header ────────────────────────────────────────────────────────────────
+    st.markdown("""
+    <div style="display:flex;align-items:center;gap:14px;padding:8px 0 16px;">
+        <div style="width:44px;height:44px;border-radius:10px;
+                    background:linear-gradient(135deg,#4F46E5,#818CF8);
+                    display:flex;align-items:center;justify-content:center;font-size:1.3rem;">📘</div>
+        <div>
+            <div style="font-size:1.2rem;font-weight:800;color:#0F172A;">Documentation &amp; Guide</div>
+            <div style="font-size:0.8rem;color:#64748B;">Everything you need to know — from quickstart to RBAC details</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    st.markdown("### 1. What this app does")
-    st.markdown(
-        "Migration Validator compares a source table (PostgreSQL / MSSQL / Athena) against its migrated "
-        "Snowflake table, column by column, and generates two kinds of output for every table you run:\n\n"
-        "- **SQL files** — one query per side (source + Snowflake) that pull back the values to compare.\n"
-        "- **A validation YAML** — the config that ties the two SQL queries together, records which "
-        "columns were skipped and why, and is what a downstream validation run actually reads.\n\n"
-        "There are two ways to generate this output — pick whichever matches how many tables you're doing "
-        "right now:"
-    )
-    st.markdown(
-        "- **▶️ Generate Single YAML** — one source table → one Snowflake table. Best when you're setting "
-        "up a new table, debugging a mismatch, or want to carefully check one mapping before trusting it.\n"
-        "- **📋 Generate Batch YAML** — many source tables in one pass. Best once you've already validated "
-        "the pattern works (e.g. via Single YAML) and just need to repeat it across a schema."
-    )
+    # ── Quick nav sub-tabs ────────────────────────────────────────────────────
+    _g1, _g2, _g3, _g4 = st.tabs(["🚀 Quickstart", "⚙️ Features", "🔐 Security & RBAC", "📜 Audit & Compliance"])
 
-    st.divider()
-    st.markdown("### 2. Generate Single YAML — step by step")
-    st.markdown(
-        "1. **① Source** — pick the connection, database, schema, and table you're validating.\n"
-        "2. **② Target (Snowflake)** — pick the database, schema, and table it was migrated to.\n"
-        "3. **③ Columns to exclude** — see section 4 below, this decides which columns are skipped.\n"
-        "4. **④ Column mapping** — click **🔍 Preview column mapping** to see how the AI/fuzzy matcher "
-        "paired up every source column with a target column. Fix anything it got wrong directly in the "
-        "grid — this is your chance to catch a bad rename match before it's baked into the YAML.\n"
-        "5. *(Optional)* **🧪 Generate custom SQL from a prompt** — see section 5 below.\n"
-        "6. Click **▶️ Generate SQL + YAML**. The output file paths are shown once it finishes — that's "
-        "where the SQL and YAML were written, based on the medallion layer you picked."
-    )
+    with _g1:
+        # Workflow diagram
+        st.markdown("""
+        <div style="background:white;border:1px solid #E2E8F0;border-radius:12px;padding:20px;margin-bottom:16px;box-shadow:0 1px 3px rgba(0,0,0,.06);">
+            <div style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#94A3B8;margin-bottom:12px;">END-TO-END WORKFLOW</div>
+            <div style="display:flex;align-items:center;gap:0;flex-wrap:wrap;">
+                <div style="background:#EEF2FF;border:1.5px solid #A5B4FC;border-radius:999px;padding:7px 18px;font-size:0.8rem;font-weight:700;color:#4338CA;">1 · Connect</div>
+                <div style="color:#A5B4FC;font-size:1.2rem;padding:0 6px;">→</div>
+                <div style="background:#EEF2FF;border:1.5px solid #A5B4FC;border-radius:999px;padding:7px 18px;font-size:0.8rem;font-weight:700;color:#4338CA;">2 · Exclusions</div>
+                <div style="color:#A5B4FC;font-size:1.2rem;padding:0 6px;">→</div>
+                <div style="background:#EEF2FF;border:1.5px solid #A5B4FC;border-radius:999px;padding:7px 18px;font-size:0.8rem;font-weight:700;color:#4338CA;">3 · Generate YAML</div>
+                <div style="color:#A5B4FC;font-size:1.2rem;padding:0 6px;">→</div>
+                <div style="background:#EEF2FF;border:1.5px solid #A5B4FC;border-radius:999px;padding:7px 18px;font-size:0.8rem;font-weight:700;color:#4338CA;">4 · Review &amp; Approve</div>
+                <div style="color:#A5B4FC;font-size:1.2rem;padding:0 6px;">→</div>
+                <div style="background:#EEF2FF;border:1.5px solid #A5B4FC;border-radius:999px;padding:7px 18px;font-size:0.8rem;font-weight:700;color:#4338CA;">5 · Run Validation</div>
+                <div style="color:#A5B4FC;font-size:1.2rem;padding:0 6px;">→</div>
+                <div style="background:#ECFDF5;border:1.5px solid #6EE7B7;border-radius:999px;padding:7px 18px;font-size:0.8rem;font-weight:700;color:#065F46;">✅ Results</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
-    st.divider()
-    st.markdown("### 3. Generate Batch YAML — step by step")
-    st.markdown(
-        "1. **① Source** — pick the connection/database/schema, then select every source table you want "
-        "to validate in this run.\n"
-        "2. **② Target (Snowflake)** — pick just the database and schema (there's no single Snowflake "
-        "table picker here — you map each table individually in the next step).\n"
-        "3. **③ Mapping grid** — the app auto-suggests a Snowflake target per source table (exact name "
-        "match, or the closest fuzzy match). Rows marked **⚠️ Ambiguous** or **⚠️ No close match found** "
-        "are left blank on purpose — pick the correct target yourself rather than trust a guess. You "
-        "cannot generate until every row has a distinct target.\n"
-        "4. **④ Columns to exclude (per table)** — see section 4 below.\n"
-        "5. **⑤ Column mapping** — same idea as Single YAML, but one review grid per table (in a "
-        "collapsed expander so the page stays manageable with many tables).\n"
-        "6. Click **▶️ Generate All** — it processes every table in sequence and shows a success/failure "
-        "row for each one at the end."
-    )
+        # Step cards
+        _steps = [
+            ("Configure connections", ".env holds your source DB and Snowflake credentials. No credentials are entered inside the app itself — it reads from the environment, keeping secrets out of session state."),
+            ("Set exclusion policy", "Open the Exclusions tab and add any columns your team always wants skipped (Fivetran metadata, internal audit columns). These apply globally per source type."),
+            ("Generate Single YAML", "Pick source table → Snowflake table. Preview the column mapping, fix any wrong suggestions in the grid, then click Generate. The YAML and SQL files are written to the chosen medallion layer folder."),
+            ("Batch-generate for a schema", "Once you're confident one table works, switch to Batch YAML. Select many tables at once, map each to its Snowflake target, and generate in one pass."),
+            ("Review & Approve", "Any mapping the AI is less than 95% confident about goes to PENDING. A human reviewer must approve, reject, or modify it before it can be used."),
+            ("Run Validation", "Execute the Run Validation tab. It calls Project/main.py against the generated YAMLs and shows PASS/FAIL per table with a row-level diff view for failures."),
+        ]
+        _sc1, _sc2 = st.columns(2)
+        for i, (title, body) in enumerate(_steps):
+            col = _sc1 if i % 2 == 0 else _sc2
+            col.markdown(f"""
+            <div class="step-card" style="margin-bottom:22px;margin-top:18px;">
+                <div class="step-num">{i+1}</div>
+                <div class="step-title">{title}</div>
+                <div class="step-body">{body}</div>
+            </div>
+            """, unsafe_allow_html=True)
 
-    st.divider()
-    st.markdown("### 4. Columns to exclude — the 3 categories, explained")
-    st.markdown(
-        "Every \"Columns to exclude\" section (in both Single YAML and Batch YAML) always shows the "
-        "**same table columns split into 3 groups**, so it's never a mystery which columns are being "
-        "skipped and why:"
-    )
-    st.markdown(
-        "1. **🔒 Built-in auto-excluded** — hardcoded in the app's code (Fivetran sync/CDC metadata "
-        "columns like `_fivetran_synced`, `_fivetran_id`, etc.). Always applied to every table, for every "
-        "source type. You cannot remove these from the app — they are not real business columns.\n"
-        "2. **🌐 User-defined global exclusions** — columns your team has explicitly added as \"always "
-        "skip this, for every table of this source type\" — managed entirely from the **Exclusions** tab "
-        "(add there with the form; remove with the 🗑️ Remove button next to each one). Example: your team "
-        "decided `uts`/`uuid` should never be compared for PostgreSQL sources.\n"
-        "3. **➕ Additional columns to exclude (optional, just for this run)** — the picker box you "
-        "interact with directly on the Single YAML / Batch YAML screen. Use this for a one-off skip that "
-        "only applies to *this* table, *this* generation run — e.g. a column you know is broken in this "
-        "one legacy table. Click into the box to add a column; click the ✕ on a chip to remove it."
-    )
-    st.markdown(
-        "**Why 3 groups instead of one combined list?** Groups 1 and 2 are always applied no matter what "
-        "— they're shown as plain, read-only text so you know *why* a column disappeared from the mapping "
-        "grid without having to guess. Only group 3 is something you actively choose on this screen. "
-        "Before this change, all three were merged into one pre-checked pick-list, which made it easy to "
-        "mistake a permanent, team-wide exclusion for something you personally selected (or vice versa)."
-    )
-    st.info(
-        "**Fixed bug:** Single YAML previously failed to reliably apply groups 1 and 2 at all — a Streamlit "
-        "widget-state issue meant the auto-excluded columns looked pre-checked but weren't actually excluded "
-        "from the generated YAML. This is fixed: groups 1 and 2 are now applied unconditionally, independent "
-        "of anything in the picker.",
-        icon="🛠️",
-    )
+        # What it does box
+        st.markdown("""
+        <div style="background:#F0FDF4;border:1px solid #86EFAC;border-radius:10px;padding:16px 20px;margin-top:8px;">
+        <div style="font-weight:700;color:#166534;margin-bottom:8px;">What Migration Validator produces for every table</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:0.83rem;color:#14532D;">
+            <div>📄 <b>Source SQL</b> — normalised SELECT query for the source DB (PostgreSQL / MSSQL / Athena)</div>
+            <div>🏔️ <b>Snowflake SQL</b> — matching normalised SELECT for the Snowflake target</div>
+            <div>📋 <b>Validation YAML</b> — config that ties both queries together with metadata</div>
+            <div>📊 <b>Row-level CSV</b> — PASS/FAIL status per row with source vs. target values side-by-side</div>
+        </div>
+        </div>
+        """, unsafe_allow_html=True)
 
-    st.divider()
-    st.markdown("### 5. Generate custom SQL from a prompt")
-    st.markdown(
-        "After you preview a table's column mapping (Single YAML or Batch YAML), an optional "
-        "**\"🧪 Generate custom SQL from a prompt\"** section appears below the mapping grid. Use it when "
-        "the standard column-by-column comparison isn't what you need — for example:\n\n"
-        "- *\"Count rows where status = 'active', grouped by region\"* (an aggregate check, not a "
-        "row-by-row diff)\n"
-        "- *\"Compare only the amount and currency columns for orders placed in the last 30 days\"* "
-        "(a filtered subset check)\n"
-        "- *\"Row count only, no column comparison\"* (a lightweight sanity check before running the full "
-        "validation)"
-    )
-    st.markdown(
-        "How to use it:\n"
-        "1. Expand the section and pick which mapped columns should be included in the query.\n"
-        "2. Choose the target side: source only, Snowflake only, or both (so you get a matching pair of "
-        "queries to diff against each other).\n"
-        "3. Type your request in plain English in the prompt box.\n"
-        "4. Pick an AI model and click generate. **Always read the generated SQL before trusting it** — "
-        "it's a starting point, not a guarantee.\n"
-        "5. Save it — it's written to the same output folder as the table's regular SQL/YAML files."
-    )
+    with _g2:
+        # Column exclusions
+        st.markdown("""
+        <div style="font-size:1rem;font-weight:700;color:#0F172A;margin:4px 0 12px;">Column exclusion — 3 categories</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:20px;">
+            <div style="background:white;border:1px solid #E2E8F0;border-radius:10px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.06);">
+                <div style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#64748B;margin-bottom:6px;">🔒 Built-in</div>
+                <div style="font-size:0.83rem;color:#334155;">Fivetran metadata columns hardcoded in the app. Always excluded — no UI to change them.</div>
+            </div>
+            <div style="background:white;border:1px solid #E2E8F0;border-radius:10px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.06);">
+                <div style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#64748B;margin-bottom:6px;">🌐 Global user exclusions</div>
+                <div style="font-size:0.83rem;color:#334155;">Managed in the <b>Exclusions</b> tab. Apply to every table of that source type.</div>
+            </div>
+            <div style="background:white;border:1px solid #E2E8F0;border-radius:10px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.06);">
+                <div style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#64748B;margin-bottom:6px;">➕ Run-specific</div>
+                <div style="font-size:0.83rem;color:#334155;">The picker on Single/Batch YAML. One-off skip for this generation only — not saved anywhere.</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
-    st.divider()
-    st.markdown("### 6. Rule Book — Base / Draft / Active rules")
-    st.markdown(
-        "The Rule Book decides *how* a source column type gets compared to its Snowflake counterpart "
-        "(e.g. does a `TIMESTAMP` get compared to microsecond precision? is a `UUID` comparison case-"
-        "sensitive?). Every rule is in exactly one of three states:"
-    )
-    st.markdown(
-        "- **Base rule** — written directly into the code (`src/rules/postgres_base_rules.py`). Always "
-        "checked first for a given type pair. Nothing below can ever override, hide, or shadow a base "
-        "rule — it's the source of truth.\n"
-        "- **Draft rule** — a rule someone (or the AI paste tool) proposed, saved to "
-        "`src/rule_book_learned.json`, but not yet reviewed. **A draft never affects real SQL generation "
-        "— it's advisory only**, shown here and fed to the AI as extra context, but silently ignored by "
-        "the actual query-generation logic. This is the safe default: nothing changes just by proposing "
-        "a rule.\n"
-        "- **Active rule** — a draft that a person reviewed and clicked **Activate** on. From that point "
-        "it *is* used — but strictly as a **gap filler**: only for a type pair that has no base rule at "
-        "all. It can never compete with or replace a base rule."
-    )
-    st.markdown(
-        "**Two ways to add a draft rule:**\n"
-        "1. **Paste a type-mapping table (AI-assisted)** — paste any text describing type mappings (e.g. "
-        "`nvarchar -> TEXT`), and the AI proposes rules. It can only ever *reuse* an existing base rule's "
-        "already-tested SQL behavior — it cannot invent brand-new SQL. Review the proposed rows, check "
-        "the ones you want, and save — they land as drafts.\n"
-        "2. **Add manually** — fill in the form with your own SQL templates. Also starts as a draft.\n\n"
-        "Either way, nothing is live until you find it in the **Learned rules** list and click **Activate**."
-    )
+        # Rule book
+        st.markdown("---")
+        st.markdown("""
+        <div style="font-size:1rem;font-weight:700;color:#0F172A;margin:4px 0 12px;">Rule Book — how types are normalised</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:20px;">
+            <div style="background:#ECFDF5;border:1px solid #86EFAC;border-radius:10px;padding:14px;">
+                <div style="font-weight:700;color:#065F46;margin-bottom:5px;">🔒 Base rules</div>
+                <div style="font-size:0.82rem;color:#166534;">In <code>postgres_base_rules.py</code>. Always run first. Cannot be overridden.</div>
+            </div>
+            <div style="background:#EEF2FF;border:1px solid #C7D2FE;border-radius:10px;padding:14px;">
+                <div style="font-weight:700;color:#3730A3;margin-bottom:5px;">📝 Draft rules</div>
+                <div style="font-size:0.82rem;color:#4338CA;">Saved to <code>rule_book_learned.json</code>. Advisory only — never generate real SQL until activated.</div>
+            </div>
+            <div style="background:#FEF3C7;border:1px solid #FDE68A;border-radius:10px;padding:14px;">
+                <div style="font-weight:700;color:#92400E;margin-bottom:5px;">⚡ Active rules</div>
+                <div style="font-size:0.82rem;color:#78350F;">Gap fillers — only for type pairs with no base rule. Activate a draft in the Rule Book tab.</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
-    st.divider()
-    st.markdown("### 7. Exclusions tab — managing the global lists")
-    st.markdown(
-        "This tab is where the **🌐 user-defined global exclusions** (category 2 in section 4) are "
-        "managed — one list per source type (PostgreSQL / MSSQL / Athena), since a column excluded here "
-        "applies to every table of that source type going forward.\n\n"
-        "- **Add** — enter one or more comma-separated column names, a reason, and which source type(s) "
-        "it applies to, then **Save exclusion**.\n"
-        "- **Remove** — expand a source type, find the column under **User-saved global exclusions**, "
-        "and click **🗑️ Remove** next to it.\n\n"
-        "The **🔒 built-in auto-excluded** list (Fivetran metadata columns) is shown here too, for "
-        "reference — but it's code-defined and can't be edited from the app."
-    )
+        # Custom SQL
+        st.markdown("---")
+        st.markdown("""
+        <div style="font-size:1rem;font-weight:700;color:#0F172A;margin:4px 0 8px;">Custom SQL from a prompt</div>
+        <div style="font-size:0.85rem;color:#475569;line-height:1.65;">
+        After previewing a column mapping in Single or Batch YAML, a <b>🧪 Generate custom SQL from a prompt</b>
+        section appears. Use it when you need something the standard column-diff doesn't cover:
+        <ul style="margin:8px 0 0 16px;">
+            <li>Aggregate checks — <em>"Count rows where status = 'active', grouped by region"</em></li>
+            <li>Filtered subsets — <em>"Compare only orders in the last 30 days"</em></li>
+            <li>Lightweight sanity checks — <em>"Row count only, no column comparison"</em></li>
+        </ul>
+        Always review the generated SQL before trusting it — it's a starting point, not a guarantee.
+        </div>
+        """, unsafe_allow_html=True)
 
-    st.divider()
-    st.markdown("### 8. Typical workflow, end to end")
-    st.markdown(
-        "1. **Connections** — confirm your source and Snowflake connections are configured (read from "
-        "`.env`, nothing to set up in the app itself).\n"
-        "2. **Exclusions** — check the global exclusion list for your source type; add anything your team "
-        "always wants skipped before you start generating.\n"
-        "3. **Generate Single YAML** (for one table, or your first time validating a new pattern) or "
-        "**Generate Batch YAML** (once you're confident and have several tables to push through) — pick "
-        "table(s), review the column mapping, adjust any run-specific exclusions, optionally add a custom "
-        "SQL query, then generate.\n"
-        "4. **Rule Book** — if the AI flags a type pair it's unsure about during mapping, come here to "
-        "add/paste a rule (starts as a draft), review it carefully, then activate it so future runs use "
-        "it automatically.\n"
-        "5. **Usage & Cost** — check AI token usage and estimated cost for the session, especially before "
-        "a large batch run."
-    )
+        # AI chat
+        st.markdown("---")
+        st.markdown("""
+        <div style="font-size:1rem;font-weight:700;color:#0F172A;margin:4px 0 8px;">AI Migration Intelligence Chat</div>
+        <div style="font-size:0.85rem;color:#475569;line-height:1.65;">
+        The <b>✨ chat bubble</b> (bottom-right) gives you a governed tool loop — not a free chatbot:
+        <ol style="margin:8px 0 0 16px;">
+            <li>You type a natural-language request.</li>
+            <li>The AI selects from <b>24 registered tools</b> and calls them in sequence (up to 10 rounds).</li>
+            <li>Every tool returns live data — no fabrication.</li>
+            <li>Results are synthesised into a plain-English response.</li>
+            <li>Every tool call is visible in the <b>🔧 Tools used</b> expander below each reply.</li>
+        </ol>
+        <b>Quick actions</b> send pre-built prompts so you don't have to type.
+        </div>
+        """, unsafe_allow_html=True)
 
-    st.divider()
-    st.markdown("### 9. Gemini Migration Intelligence — how the AI chat works")
-    st.markdown(
-        "The **🤖 Gemini Chat** tab gives you a conversational interface to the entire Migration Validator "
-        "platform. It is not a free-form chatbot — Gemini operates strictly within a governed tool loop:"
-    )
-    st.markdown(
-        "1. You send a natural-language request (e.g. *\"Show me all tables in bronze with coverage below 95%\"*).\n"
-        "2. Gemini selects one or more of the **24 registered tools** and calls them in sequence (up to 10 rounds).\n"
-        "3. Each tool returns real, live data from your source/Snowflake connections or the plan store — "
-        "Gemini never fabricates values.\n"
-        "4. Gemini synthesises the tool results into a plain-English response.\n"
-        "5. Every tool call and its result is visible in the **🔧 Tools used** expander beneath the response."
-    )
-    st.markdown(
-        "**What Gemini can do via the chat:**\n"
-        "- Discover connected databases and list available tables\n"
-        "- Generate, inspect, and compare validation plans\n"
-        "- Surface column mappings that need human review (confidence < 95%)\n"
-        "- Show business metrics: automation rate, SQL queries avoided, ROI\n"
-        "- Initiate governed approval workflows (writes are audited and role-gated)\n\n"
-        "**What Gemini cannot do:**\n"
-        "- Invent column names, row counts, or validation results\n"
-        "- Approve its own suggestions — a human with the REVIEWER role must sign off\n"
-        "- Bypass authentication or ignore RBAC restrictions"
-    )
-    st.info(
-        "**Quick actions** below the status bar send pre-built prompts so you don't have to type. "
-        "Each button maps to a specific tool combination — click one, watch the tool calls unfold in the expander.",
-        icon="ℹ️",
-    )
+    with _g3:
+        st.markdown("""
+        <div style="font-size:1rem;font-weight:700;color:#0F172A;margin:4px 0 12px;">Authentication modes</div>
+        """, unsafe_allow_html=True)
+        import pandas as _pd_guide
+        _auth_table = {
+            "Mode": ["`jwt`", "`static`", "`dev`"],
+            "When to use": ["Production / staging", "CI pipelines, demos", "Local development only"],
+            "How it works": [
+                "Validates a signed JWT (HS256 or RS256). Roles extracted from token claims. Expiry, issuer, and audience enforced.",
+                "Pre-shared bearer token (CONNECTOR_API_TOKEN). Roles via CONNECTOR_ROLES env var.",
+                "No validation. Every request accepted with ADMIN role. Never use outside localhost.",
+            ],
+            "Env vars": [
+                "JWT_SECRET or JWT_PUBLIC_KEY; optionally JWT_ISSUER, JWT_AUDIENCE",
+                "CONNECTOR_API_TOKEN; optionally CONNECTOR_ROLES",
+                "None",
+            ],
+        }
+        st.dataframe(_pd_guide.DataFrame(_auth_table), hide_index=True, use_container_width=True)
 
-    st.divider()
-    st.markdown("### 10. Authentication — three modes explained")
-    st.markdown(
-        "The Migration Intelligence Connector (the FastAPI server that backs the Gemini tools) enforces "
-        "bearer-token authentication on every request. The mode is controlled by the `AUTH_MODE` env var:"
-    )
+        st.markdown("---")
+        st.markdown("""
+        <div style="font-size:1rem;font-weight:700;color:#0F172A;margin:4px 0 12px;">Role-Based Access Control (RBAC)</div>
+        <div style="font-size:0.83rem;color:#475569;margin-bottom:12px;">Roles are cumulative — each level includes all permissions of the level below it.</div>
+        """, unsafe_allow_html=True)
+        _rbac_rows = [
+            ("VIEWER",               "#F1F5F9", "#334155", "Read schemas, mappings, rules, validation results"),
+            ("REVIEWER",             "#EEF2FF", "#3730A3", "VIEWER + approve / reject / modify column mappings"),
+            ("RULE_ADMIN",           "#FEF3C7", "#92400E", "REVIEWER + create, update, approve and activate transformation rules"),
+            ("VALIDATION_OPERATOR",  "#ECFDF5", "#065F46", "REVIEWER + trigger validation runs, generate and execute SQL"),
+            ("ADMIN",                "#FFF1F2", "#9F1239", "All permissions across all resources"),
+        ]
+        for role, bg, fg, desc in _rbac_rows:
+            st.markdown(f"""
+            <div style="background:{bg};border-radius:8px;padding:10px 16px;margin-bottom:6px;display:flex;align-items:center;gap:14px;">
+                <div style="font-size:0.75rem;font-weight:800;color:{fg};font-family:monospace;min-width:140px;">{role}</div>
+                <div style="font-size:0.82rem;color:#334155;">{desc}</div>
+            </div>
+            """, unsafe_allow_html=True)
 
-    _auth_table = {
-        "Mode": ["`jwt`", "`static`", "`dev`"],
-        "When to use": ["Production / staging", "CI pipelines, hackathon demos", "Local development only"],
-        "How it works": [
-            "Validates a signed JWT (HS256 or RS256). Roles and permissions are extracted from the token claims (`roles`, `permissions`). Expiry, issuer, and audience are all enforced.",
-            "Pre-shared bearer token (`CONNECTOR_API_TOKEN`). Roles configured via `CONNECTOR_ROLES` env var. Simple but no expiry — rotate regularly.",
-            "No validation. Every request is accepted with ADMIN role. Never use outside localhost.",
-        ],
-        "Env vars required": [
-            "`JWT_SECRET` (HS256) or `JWT_PUBLIC_KEY` (RS256). Optionally `JWT_ISSUER`, `JWT_AUDIENCE`.",
-            "`CONNECTOR_API_TOKEN`, optionally `CONNECTOR_ROLES`.",
-            "None.",
-        ],
-    }
-    import pandas as pd
-    st.dataframe(pd.DataFrame(_auth_table), hide_index=True, use_container_width=True)
+        st.warning(
+            "**Security invariant:** The string `gemini_ai` is always rejected as an actor on write tools. "
+            "Gemini can never self-approve — a human with the correct role must confirm.",
+            icon="🛡️",
+        )
 
-    st.markdown(
-        "**Bearer token format** — all requests to the connector must include:\n"
-        "```\nAuthorization: Bearer <your-token>\n```\n"
-        "A missing or invalid token returns HTTP 401. An expired JWT returns `TOKEN_EXPIRED`."
-    )
+    with _g4:
+        # Confidence tiers
+        st.markdown("""
+        <div style="font-size:1rem;font-weight:700;color:#0F172A;margin:4px 0 8px;">Confidence tiers &amp; approval gates</div>
+        """, unsafe_allow_html=True)
+        _conf_tiers = [
+            ("≥ 95%", "Auto-accepted", "#ECFDF5", "#065F46", "Proceeds to plan immediately — no human action required"),
+            ("75–95%", "Pending review", "#FEF3C7", "#92400E", "Reviewer must approve or reject before mapping is used"),
+            ("< 75%", "Mandatory review", "#FFF1F2", "#9F1239", "Reviewer must approve, reject, or modify — cannot skip"),
+        ]
+        for conf, state, bg, fg, desc in _conf_tiers:
+            st.markdown(f"""
+            <div style="background:{bg};border-radius:8px;padding:12px 16px;margin-bottom:8px;
+                        display:flex;align-items:center;gap:16px;">
+                <div style="font-size:1rem;font-weight:800;color:{fg};min-width:60px;text-align:center;">{conf}</div>
+                <div>
+                    <div style="font-weight:700;color:{fg};font-size:0.85rem;">{state}</div>
+                    <div style="font-size:0.8rem;color:#334155;">{desc}</div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
-    st.divider()
-    st.markdown("### 11. Role-Based Access Control (RBAC)")
-    st.markdown(
-        "Every write-back and approval action is gated by a five-level RBAC hierarchy. "
-        "Roles are cumulative — each level includes all permissions of the level below it."
-    )
+        st.markdown("---")
+        st.markdown("""
+        <div style="font-size:1rem;font-weight:700;color:#0F172A;margin:4px 0 8px;">Audit trail</div>
+        <div style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:10px;padding:16px 20px;font-size:0.83rem;color:#334155;">
+        Every write action — approval, rejection, modification, rule activation, plan sign-off — is appended to
+        an <b>immutable append-only JSONL log</b> at <code>output/audit_log.jsonl</code>. Records are never
+        modified or deleted.<br><br>
+        Each record contains: <code>audit_id</code> · <code>action</code> · <code>actor</code> ·
+        <code>timestamp</code> (ISO 8601 UTC) · <code>resource_type</code> / <code>resource_id</code> ·
+        <code>reason</code> · <code>before</code> / <code>after</code> state snapshot.<br><br>
+        <b>Never recorded:</b> passwords, API keys, JWT secrets, or raw bearer tokens.
+        </div>
+        """, unsafe_allow_html=True)
+        st.info(
+            "The audit trail is designed for regulatory and compliance review. It can be exported to a SIEM "
+            "or reviewed by a security team without exposing any credentials.",
+            icon="📋",
+        )
 
-    _rbac_table = {
-        "Role": ["VIEWER", "REVIEWER", "RULE_ADMIN", "VALIDATION_OPERATOR", "ADMIN"],
-        "Permissions": [
-            "Read schemas, mappings, rules, validation results",
-            "VIEWER + approve / reject / modify column mappings, add comments",
-            "REVIEWER + create, update, approve, and activate transformation rules",
-            "REVIEWER + trigger validation runs, generate and execute SQL",
-            "All permissions across all resources",
-        ],
-        "Typical user": [
-            "Data analyst, read-only stakeholder",
-            "Migration engineer, data steward",
-            "Platform / rules owner",
-            "Validation pipeline operator",
-            "Platform administrator",
-        ],
-    }
-    st.dataframe(pd.DataFrame(_rbac_table), hide_index=True, use_container_width=True)
+        st.markdown("---")
+        st.markdown("""
+        <div style="font-size:1rem;font-weight:700;color:#0F172A;margin:4px 0 8px;">Human-in-the-loop guarantee</div>
+        <div style="font-size:0.83rem;color:#475569;line-height:1.65;">
+        Three review decisions are available in the <b>✅ Review &amp; Approve</b> tab:
+        <ul style="margin:8px 0 0 16px;">
+            <li><b>Approve</b> — accepts the AI mapping as-is. Recorded with your identity and timestamp.</li>
+            <li><b>Reject</b> — discards the mapping. It will not be used. Reason is required and recorded.</li>
+            <li><b>Modify</b> — accepts the mapping but substitutes a different target column. Both the
+                original AI suggestion and your override are recorded for auditability.</li>
+        </ul>
+        All decisions use <b>optimistic concurrency control (OCC)</b> — two reviewers cannot simultaneously
+        approve the same mapping, eliminating race conditions.
+        </div>
+        """, unsafe_allow_html=True)
 
-    st.markdown(
-        "Fine-grained permissions (e.g. `mapping.approve`, `rule.activate`, `validation.execute`) are "
-        "derived from the role list automatically. Explicit `permissions` claims in the JWT override "
-        "role-derived defaults, enabling resource-level restrictions (e.g. allow `mapping.approve` "
-        "only for a specific schema)."
-    )
-    st.warning(
-        "**Security invariant:** The string `gemini_ai` is rejected as an actor on all write tools — "
-        "Gemini can never self-approve. A human identity with the correct role must always confirm.",
-        icon="🛡️",
-    )
-
-    st.divider()
-    st.markdown("### 12. Human-in-the-Loop approval workflow")
-    st.markdown(
-        "When the AI's confidence in a column mapping falls below the `CONFIDENCE_AUTO_ACCEPT` threshold "
-        "(default 95%), the mapping enters **PENDING** state and must be reviewed before it can affect "
-        "any generated validation SQL. The **✅ Review & Approve** tab is where this happens."
-    )
-    st.markdown(
-        "**Confidence tiers:**\n"
-        "| Confidence | State | Action required |\n"
-        "|---|---|---|\n"
-        "| ≥ 95% (`CONFIDENCE_AUTO_ACCEPT`) | Auto-accepted | None — proceeds to plan immediately |\n"
-        "| 75–95% (`CONFIDENCE_REVIEW`) | Pending human review | Reviewer must approve or reject |\n"
-        "| < 75% | Mandatory review | Reviewer must approve, reject, or modify |\n"
-    )
-    st.markdown(
-        "**Three review decisions:**\n"
-        "- **Approve** — accepts the AI mapping as-is. Recorded with your identity and timestamp.\n"
-        "- **Reject** — discards the mapping. It will not be used. Reason is required and recorded.\n"
-        "- **Modify** — accepts the mapping but substitutes a different target column you specify. "
-        "Both the original AI suggestion and your override are recorded for auditability."
-    )
-    st.markdown(
-        "All decisions use **optimistic concurrency control** (OCC) — a version token ensures two "
-        "reviewers cannot simultaneously approve the same mapping, eliminating race conditions."
-    )
-
-    st.divider()
-    st.markdown("### 13. Audit trail — what is recorded and where")
-    st.markdown(
-        "Every write action (approval, rejection, modification, rule activation, plan sign-off) is "
-        "appended to an **immutable append-only JSONL audit log** at `output/audit_log.jsonl`. "
-        "Records are never modified or deleted."
-    )
-    st.markdown(
-        "Each audit record contains:\n"
-        "- `audit_id` — globally unique identifier for the record\n"
-        "- `action` — what happened (e.g. `mapping.approve`, `rule.activate`)\n"
-        "- `actor` — your corporate email / user ID\n"
-        "- `timestamp` — ISO 8601 UTC\n"
-        "- `resource_type` / `resource_id` — what was acted on\n"
-        "- `reason` — required for rejections; optional for approvals\n"
-        "- `before` / `after` — state snapshot (for modify actions)\n\n"
-        "**What is never recorded:** passwords, API keys, JWT secrets, or raw bearer tokens."
-    )
-    st.info(
-        "The audit trail is designed for regulatory and compliance use. It can be exported, shipped "
-        "to a SIEM, or reviewed by a security team without exposing any credentials.",
-        icon="📋",
-    )
+    # (old flat-markdown guide replaced by sub-tabs above)
