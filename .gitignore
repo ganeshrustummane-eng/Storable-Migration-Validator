@@ -29,3 +29,5 @@ Project/output/
 # OS
 .DS_Store
 Thumbs.db
+
+/project/config/
