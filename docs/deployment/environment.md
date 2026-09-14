@@ -53,7 +53,7 @@ For each source connection N (1, 2, 3, ...):
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `SRC_N_DB_TYPE` | Yes | `postgresql`, `mssql`, `athena` |
+| `SRC_N_DB_TYPE` | Yes | `postgresql`, `mssql`, or `athena` |
 | `SRC_N_HOST` | Yes | Database host |
 | `SRC_N_PORT` | No | Database port (default varies by type) |
 | `SRC_N_USERNAME` | Yes | Username or AWS access key |

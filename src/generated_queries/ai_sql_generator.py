@@ -629,6 +629,20 @@ Generate the query now:
         schema_block = "\n".join(schema_lines)
         table_list = ", ".join(schema_context.keys())
 
+        # Detect boolean/bit columns so we can call them out explicitly in the prompt
+        _bool_types = {"boolean", "bool", "bit"}
+        _bool_col_refs = [
+            f"{tbl}.{c['column_name']}"
+            for tbl, cols in schema_context.items()
+            for c in cols
+            if c.get("data_type", "").lower().split("(")[0].strip() in _bool_types
+        ]
+        _bool_req = (
+            f"\n8. BOOLEAN/BIT columns found: {', '.join(_bool_col_refs)}\n"
+            "   These MUST use CASE WHEN (see system MANDATORY rules), "
+            "NEVER CAST(col AS STRING/VARCHAR) — that produces 'True'/'False' which breaks comparison."
+        ) if _bool_col_refs else ""
+
         if normalize:
             system_prompt = self._build_system_prompt(db_type, db_type)
         else:
@@ -657,7 +671,7 @@ Generate the query now:
    whatever SQL structure best answers the request.
 6. The query is for DATA QUALITY VALIDATION, not an application query — it may read
    any rows from any listed table. Return ALL rows that satisfy the request (no arbitrary LIMIT).
-7. Return ONLY the SQL — no markdown fences, no explanation.
+7. Return ONLY the SQL — no markdown fences, no explanation.{_bool_req}
 
 Generate the {db_type.upper()} query now:
 """
@@ -862,6 +876,14 @@ Your task: Generate database-specific SQL queries for validation between {source
 - NULL coalesce: COALESCE(CAST(column AS VARCHAR), '<<NULL>>')
 
 ## MANDATORY Type-Specific Normalization Rules (USE EXACTLY AS SHOWN):
+
+### BOOLEAN / BIT — MUST produce '1' or '0' (never 'True'/'False'/'true'/'false')
+- MSSQL BIT source:      COALESCE(CASE WHEN col = 1 THEN '1' WHEN col = 0 THEN '0' ELSE NULL END, '<<NULL>>')
+- PostgreSQL BOOLEAN:    COALESCE(CASE WHEN col = true THEN '1' WHEN col = false THEN '0' ELSE NULL END, '<<NULL>>')
+- Snowflake BOOLEAN:     COALESCE(CASE WHEN col = TRUE THEN '1' WHEN col = FALSE THEN '0' ELSE NULL END, '<<NULL>>')
+- Athena BOOLEAN:        COALESCE(CASE WHEN col THEN '1' WHEN NOT col THEN '0' ELSE NULL END, '<<NULL>>')
+- NEVER use CAST(bool_col AS STRING/TEXT/VARCHAR) — it produces 'True'/'False' which does NOT match '1'/'0'.
+- Apply this rule to ANY column whose data_type is boolean, bool, bit, tinyint (when used as flag), or similar.
 
 ### UUID — use UPPER+TRIM so both sides compare case-insensitively
 - PostgreSQL source: COALESCE(CAST(UPPER(TRIM(CAST(col AS TEXT))) AS TEXT), '<<NULL>>')

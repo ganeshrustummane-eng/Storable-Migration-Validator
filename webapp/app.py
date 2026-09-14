@@ -19,6 +19,7 @@ Run with:
 
 import difflib
 import os
+import re
 import sys
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="snowflake.connector")
@@ -1361,7 +1362,9 @@ tab_single, tab_batch, tab_custom, tab_execute, tab_history, tab_rules, tab_excl
 # TAB: Generate — Single YAML
 # =============================================================================
 with tab_single:
-    st.subheader("Single YAML — pick source and target from live dropdowns")
+    st.subheader("Generate one validation YAML")
+    st.caption("Compare one source table with one Snowflake table. Review mappings, choose scope, then generate reproducible SQL and YAML.")
+    st.info("Workflow: **1. Connect**  →  **2. Choose tables**  →  **3. Review mappings**  →  **4. Set scope**  →  **5. Generate**", icon="🧭")
     registry = load_registry()
     rec = select_connection(registry, key="single_conn")
 
@@ -1370,12 +1373,14 @@ with tab_single:
         src_db_type = rec["db_type"]
 
         with st.container(border=True):
-            st.markdown("**① Source**")
+            st.markdown("### 1. Choose source table")
+            st.caption("Select database, schema, and table from your source connection.")
             database, schema, table_options = pick_source_location(rec, "single")
             source_table = select_or_type("Source table", table_options, "", "single_table")
 
         with st.container(border=True):
-            st.markdown("**② Target (Snowflake)**")
+            st.markdown("### 2. Choose Snowflake target")
+            st.caption("Select target database, schema, and table. Suggested names are not final until reviewed.")
             suggested_sf_table = source_table.upper() if source_table else ""
             sf_database, sf_schema, sf_table = pick_snowflake_target(suggested_sf_table, "single")
 
@@ -1529,7 +1534,7 @@ with tab_single:
         auto_excluded_present = static_present + user_global_present
         pickable_cols = [c for c in col_names if c.lower() not in auto_excluded]
 
-        st.markdown("**③ Columns to exclude**")
+        st.markdown("### 3. Choose columns to exclude")
         st.caption(
             f"🔒 Built-in auto-excluded (system default for {_DB_TYPE_LABELS.get(src_db_type, src_db_type)}, "
             f"always applied): {', '.join(static_present) or '(none present in this table)'}"
@@ -1555,7 +1560,8 @@ with tab_single:
 
         column_overrides = {}
         if source_table and sf_table:
-            st.markdown("**④ Column mapping — review before generating**")
+            st.markdown("### 4. Review column mapping")
+            st.caption("Confirm source-to-target matches. Low-confidence or missing matches block generation until reviewed.")
             extractor = ExtractorFactory.create(
                 src_db_type, host=rec["host"], port=int(rec.get("port") or 0),
                 database=database, username=rec["username"], password=source_password(rec),
@@ -1686,7 +1692,7 @@ with tab_single:
                 if not _single_confirmed:
                     _single_generate_blocked = True
 
-        with st.expander("🔍 Migration filter (optional)", expanded=False):
+        with st.expander("5. Define validation scope (optional)", expanded=False):
             st.caption(
                 "Use this when the migration team only moved a subset of rows "
                 "(e.g. by date range, status, or tenant). "
@@ -1713,9 +1719,152 @@ with tab_single:
                     f"Target queries will include: `WHERE {single_target_filter or single_source_filter}`"
                 )
 
-        if st.button("▶️ Generate SQL + YAML", type="primary", key="single_generate", disabled=_single_generate_blocked):
+        # ── Optional JOIN rules (routes through AI instead of pipeline) ────────
+        _single_join_rules: list = []
+        _single_join_prompt: str = ""
+        _single_join_sf_schema: str = sf_schema
+        with st.expander("6. Add JOIN rules (optional — uses AI SQL generation)", expanded=False):
+            st.caption(
+                "Define LEFT JOINs for this table. When joins are configured the standard "
+                "column-mapping pipeline is bypassed and AI generates the SQL directly. "
+                "Use `schema.table` notation for the right-hand table."
+            )
+            _sj_use = st.checkbox("Enable JOIN rules for this table", key="single_use_joins")
+            if _sj_use:
+                _sj_all_opts = [f"{schema}.{t}" for t in (table_options or [])] or [f"{schema}.{source_table}"]
+                _sj_count = st.number_input(
+                    "Number of LEFT JOINs", min_value=1, max_value=10, value=1, step=1,
+                    key="single_join_count",
+                )
+                for _sji in range(int(_sj_count)):
+                    _sjc1, _sjc2 = st.columns(2)
+                    with _sjc1:
+                        _sj_right = st.selectbox(
+                            f"LEFT JOIN {_sji + 1} — right table",
+                            options=_sj_all_opts,
+                            key=f"single_join_right_{_sji}",
+                        )
+                    with _sjc2:
+                        _sj_on = st.text_input(
+                            f"LEFT JOIN {_sji + 1} — ON condition",
+                            placeholder=f"{source_table}.id = {_sj_right.split('.')[-1] if _sj_all_opts else 'other'}.{source_table}_id",
+                            key=f"single_join_on_{_sji}",
+                        )
+                    if _sj_on.strip():
+                        _single_join_rules.append({"right": _sj_right, "on": _sj_on.strip()})
+                _single_join_prompt = st.text_area(
+                    "Prompt for AI SQL generation",
+                    key="single_join_prompt",
+                    height=80,
+                    placeholder="e.g. Join inventory with products on product_id and return all columns normalised for comparison",
+                ).strip()
+                _single_join_sf_schema = st.text_input(
+                    "Snowflake target schema (leave blank to use main selection above)",
+                    key="single_join_sf_schema",
+                ).strip() or sf_schema
+
+        st.divider()
+        st.caption("Ready when source, target, mappings, and review checks are complete.")
+        if st.button("Generate SQL + YAML", type="primary", key="single_generate", disabled=_single_generate_blocked):
             if not source_table or not sf_table:
                 st.error("Source table and Snowflake table are required.")
+            elif _single_join_rules and _single_join_prompt:
+                # ── JOIN path: AI schema-aware generation ────────────────────
+                with st.spinner(f"Generating JOIN SQL for {source_table} → {sf_table} ..."):
+                    try:
+                        from excel_batch_loader import _build_schema_context as _sj_bsc
+                        _sj_gen = AISQLQueryGenerator(model=model)
+                        _sj_extractor = ExtractorFactory.create(
+                            src_db_type, host=rec["host"], port=int(rec.get("port") or 0),
+                            database=database, username=rec["username"], password=source_password(rec),
+                            auth=rec.get("auth", ""), s3_output=rec.get("s3_output", ""),
+                        )
+                        _sj_rule_lines = [f"Driving table: {schema}.{source_table}"]
+                        _sj_rule_lines.extend(
+                            f"LEFT JOIN {r['right']} ON {r['on']}" for r in _single_join_rules
+                        )
+                        _sj_join_spec = (
+                            "\n\nSTRUCTURED VALIDATION RULES (mandatory):\n"
+                            + "\n".join(_sj_rule_lines)
+                            + f"\nSource WHERE predicate: {single_source_filter or '(none)'}"
+                            + f"\nSnowflake WHERE predicate: {single_target_filter or single_source_filter or '(none)'}"
+                            + "\nUse LEFT JOIN only. Do not use INNER JOIN, RIGHT JOIN, FULL JOIN, CROSS JOIN, or comma joins."
+                            + " Apply source predicate only in source SQL and Snowflake predicate only in Snowflake SQL."
+                        )
+                        _sj_src_ctx = _sj_bsc(
+                            _sj_extractor, src_db_type, database, schema,
+                            [source_table] + [r["right"].split(".")[-1] for r in _single_join_rules],
+                            grain_cols=[],
+                        )
+                        _sj_sf_creds = snowflake_creds()
+                        _sj_tgt_ctx: dict = {}
+                        if _sj_sf_creds.get("account") and sf_database:
+                            _sj_sf_ext = SnowflakeExtractor(
+                                account=_sj_sf_creds["account"],
+                                database=sf_database, schema=_single_join_sf_schema,
+                                username=_sj_sf_creds["username"],
+                                password=_sj_sf_creds["password"],
+                            )
+                            _sj_tgt_ctx = _sj_bsc(
+                                _sj_sf_ext, "snowflake", sf_database, _single_join_sf_schema,
+                                [sf_table.upper()] + [r["right"].split(".")[-1].upper() for r in _single_join_rules],
+                                grain_cols=[],
+                            )
+                        _sj_src_sql = _sj_gen.generate_schema_aware_query(
+                            user_instruction=_single_join_prompt + _sj_join_spec,
+                            schema_context=_sj_src_ctx,
+                            db_type=src_db_type,
+                            default_schema=schema,
+                            normalize=True,
+                        ).query
+                        _sj_tgt_sql = _sj_gen.generate_schema_aware_query(
+                            user_instruction=_single_join_prompt + _sj_join_spec,
+                            schema_context=_sj_tgt_ctx,
+                            db_type="snowflake",
+                            default_schema=_single_join_sf_schema,
+                            normalize=True,
+                        ).query
+                        import yaml as _sj_yaml
+                        _sj_oneline = lambda s: " ".join(s.split())
+                        _sj_out_dir = Path(output_dir) / "data_validation"
+                        _sj_out_dir.mkdir(parents=True, exist_ok=True)
+                        _sj_path = _sj_out_dir / f"{source_table}.yaml"
+                        _sj_doc = {
+                            "tables": {
+                                source_table: {
+                                    "validations": {
+                                        "data_validation": {
+                                            "source_table_name": source_table,
+                                            "source": src_db_type,
+                                            "source_database": database,
+                                            "source_schema": schema,
+                                            "pksourcecolumn": "row_hash",
+                                            "sourcequery": _sj_oneline(_sj_src_sql),
+                                            "target_table_name": sf_table,
+                                            "target": "snowflake",
+                                            "target_database": sf_database,
+                                            "target_schema": _single_join_sf_schema,
+                                            "pktargetcolumn": "row_hash",
+                                            "targetquery": _sj_oneline(_sj_tgt_sql),
+                                            "source_filter": single_source_filter,
+                                            "target_filter": single_target_filter or single_source_filter,
+                                            "joins": _single_join_rules,
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        with open(_sj_path, "w", encoding="utf-8") as _sj_f:
+                            _sj_yaml.dump(_sj_doc, _sj_f, allow_unicode=True,
+                                          sort_keys=False, default_flow_style=False)
+                        st.success(f"Generated JOIN YAML for {source_table} → {sf_table}")
+                        st.code(str(_sj_path))
+                        with st.expander("Source SQL"):
+                            st.code(_sj_src_sql, language="sql")
+                        with st.expander("Target SQL"):
+                            st.code(_sj_tgt_sql, language="sql")
+                    except Exception as exc:
+                        st.error(f"JOIN generation failed: {exc}")
             else:
                 with st.spinner(f"Running pipeline for {source_table} → {sf_table} ..."):
                     try:
@@ -1757,12 +1906,15 @@ with tab_single:
 # TAB: Generate — Batch YAML
 # =============================================================================
 with tab_batch:
+    st.subheader("Generate validation YAML for multiple tables")
+    st.caption("Map each source table to one Snowflake target. Review every mapping, set table scope, then generate all configs together.")
+    st.info("Workflow: **1. Select tables**  →  **2. Map targets**  →  **3. Review columns**  →  **4. Set scope**  →  **5. Generate all**", icon="🧭")
     _batch_mode = st.radio(
-        "Mode",
+        "Choose batch workflow",
         ["📋 Standard (table mapping)", "📊 Report Pack (Excel)"],
         horizontal=True,
         key="batch_mode_radio",
-        label_visibility="collapsed",
+        help="Standard creates one validation YAML per source table. Report Pack creates configs from an Excel report.",
     )
 
     registry = load_registry()
@@ -1773,10 +1925,11 @@ with tab_batch:
         src_db_type = rec["db_type"]
 
         with st.container(border=True):
-            st.markdown("**① Source**")
+            st.markdown("### 1. Select source tables")
+            st.caption("Choose multiple source tables from one connection. Each selected table becomes one validation job.")
             database, schema, table_options = pick_source_location(rec, "batch")
             source_tables = st.multiselect(
-                "Tables to validate — select N source tables",
+                "Source tables to validate",
                 options=table_options,
                 key="batch_tables_select",
             )
@@ -1786,7 +1939,8 @@ with tab_batch:
                 source_tables = [t.strip() for t in manual_raw.split(",") if t.strip()]
 
         with st.container(border=True):
-            st.markdown("**② Target (Snowflake)**")
+            st.markdown("### 2. Choose Snowflake target area")
+            st.caption("Select target database and schema. You will map each source table below.")
             sf_database, sf_schema, _ = pick_snowflake_target("", "batch", include_table=False)
 
             sf_tables_live = []
@@ -1799,7 +1953,8 @@ with tab_batch:
         target_map: dict = {}
         ambiguous_tables: set = set()
         if source_tables:
-            st.markdown("**③ Map each source table to its Snowflake target — review before generating**")
+            st.markdown("### 3. Map source tables to Snowflake targets")
+            st.caption("Green or confirmed matches are suggestions. Resolve every warning manually before generation.")
 
             creds = snowflake_creds()
             confirmed_mappings = {}
@@ -1908,7 +2063,8 @@ with tab_batch:
             if mapping_valid:
                 st.success(f"{len(source_tables)} source table(s) mapped to {len(source_tables)} distinct target(s) — ready to generate.")
 
-        st.markdown("**④ Columns to exclude (per table)**")
+        st.markdown("### 4. Set column exclusions")
+        st.caption("System exclusions apply automatically. Add table-specific exclusions only when needed.")
         auto_excluded = _get_all_exclusions(src_db_type)
         static_set = {c.lower() for c in STATIC_EXCLUDE_COLUMNS}
         user_global_excluded = [c for c in auto_excluded if c not in static_set]
@@ -1957,7 +2113,8 @@ with tab_batch:
 
         per_table_col_overrides: dict = {}
         if source_tables and mapping_valid:
-            st.markdown("**⑤ Column mapping — review per table before generating**")
+            st.markdown("### 5. Review columns for each table")
+            st.caption("Expand each table. Confirm matches before continuing.")
             batch_extractor = ExtractorFactory.create(
                 src_db_type, host=rec["host"], port=int(rec.get("port") or 0),
                 database=database, username=rec["username"], password=source_password(rec),
@@ -2100,13 +2257,16 @@ with tab_batch:
                 if not _batch_confirmed:
                     _batch_generate_blocked = True
 
-        # ── Per-table migration filters ─────────────────────────────────────
+        # ── Per-table migration filters + optional JOIN rules ──────────────
         # Each table gets its own filter expander so different tables can have
         # different predicates (e.g. orders: created_at >= '2024-01-01',
         # customers: is_active = true).
         # Previously-used filters for each table are surfaced from plan history
         # as a dropdown — no need to retype the same predicate every run.
-        st.markdown("**⑥ Migration filter — per table (optional)**")
+        # Each expander also lets you add LEFT JOINs for that table; the join
+        # spec and a natural-language prompt are forwarded to AISQLQueryGenerator
+        # instead of the default column-mapping pipeline.
+        st.markdown("### 6. Define validation scope per table")
         st.caption(
             "**What is this?**  When the migration team moved only a *subset* of rows from a table "
             "(e.g. only the last 2 years of orders, or only active customers), the validator must "
@@ -2116,10 +2276,15 @@ with tab_batch:
             "**Target filter** is applied to the Snowflake query (defaults to the source filter when left blank). "
             "Write the predicate *without* the WHERE keyword — e.g. `created_at >= '2024-01-01'` or "
             "`status = 'active' AND tenant_id = 42`.\n\n"
+            "**Join rules (optional)** — if this table needs to be validated via a JOIN query (e.g. "
+            "orders → customers), configure the LEFT JOINs and provide a short prompt. "
+            "AI generates the SQL using the live schema. "
             "Previously-used filters for each table are shown in a dropdown so you can reuse them without retyping."
         )
 
         per_table_filters: dict = {}   # {src_table: (source_filter, target_filter)}
+        per_table_joins:   dict = {}   # {src_table: {"joins": [...], "prompt": str, "join_sf_schema": str}}
+        _pt_all_table_options = [f"{schema}.{t}" for t in source_tables]
         for src_table in source_tables:
             _history = filter_options_for(src_table)
             _label = f"🔍 Migration filter — {src_table}"
@@ -2172,304 +2337,82 @@ with tab_batch:
 
                 per_table_filters[src_table] = (_src_f, _tgt_f)
 
-        # ── ⑦ Multi-schema / Multi-prompt JOIN validation (optional) ─────────
-        # Independent table pool: select tables from N schemas (across the same
-        # connection). Provide M prompts → generates M YAMLs, one per prompt.
-        # YAML filename = first pool table whose name appears in the prompt;
-        # falls back to join_1, join_2, … when no table name matches.
-        st.markdown("**⑦ Multi-schema JOIN batch (optional)**")
-        st.caption(
-            "Select tables from **multiple schemas** on the same connection, then supply "
-            "one or more JOIN prompts. Each prompt → one YAML. "
-            "AI uses live PK/FK schema for fully-qualified `db.schema.table.column` SQL."
-        )
-        with st.expander("➕ Configure multi-schema JOIN batch", expanded=False):
-
-            # ── A. Schema + table pool ────────────────────────────────────────
-            st.markdown("**A. Build your table pool**")
-            _jv_all_schemas = cached_source_schemas(
-                src_db_type, rec["host"], int(rec.get("port") or 0),
-                database, rec["username"], source_password(rec), rec.get("auth", ""),
-            ) or [schema]
-            _jv_sel_schemas = st.multiselect(
-                "Select schemas to draw tables from",
-                options=_jv_all_schemas,
-                default=[schema] if schema in _jv_all_schemas else [],
-                key="jv_schemas",
-                help="Pick one or more schemas. Each schema gets its own table multiselect below.",
-            )
-
-            # {schema: [table, ...]}
-            _jv_pool: dict = {}
-            for _jv_sch in _jv_sel_schemas:
-                try:
-                    _jv_sch_tables = cached_source_tables(
-                        src_db_type, rec["host"], int(rec.get("port") or 0),
-                        database, rec["username"], source_password(rec),
-                        rec.get("auth", ""), rec.get("s3_output", ""), _jv_sch,
+                # ── Optional per-table JOIN rules ──────────────────────────────
+                st.divider()
+                _pt_use_joins = st.checkbox(
+                    "Add JOIN rules for this table (optional)",
+                    key=f"pt_use_joins_{src_table}",
+                    help="When this table must be validated via a JOIN query, enable this to define "
+                         "LEFT JOIN conditions. AI generates the SQL using live schema context.",
+                )
+                if _pt_use_joins:
+                    st.caption(
+                        "Define LEFT JOINs below. This table is the driving (left) side. "
+                        "Select the joined table and write the ON condition without the ON keyword."
                     )
-                except Exception:
-                    _jv_sch_tables = []
-                _jv_pool[_jv_sch] = st.multiselect(
-                    f"Tables from `{_jv_sch}`",
-                    options=_jv_sch_tables,
-                    key=f"jv_tables_{_jv_sch}",
-                )
-
-            # Flat list of all selected tables across all schemas (for name matching)
-            _jv_all_tables_flat = [t for ts in _jv_pool.values() for t in ts]
-
-            st.divider()
-
-            # ── B. Snowflake target schemas ───────────────────────────────────
-            st.markdown("**B. Snowflake target**")
-            _jv_sf_creds = snowflake_creds()
-            _jv_sf_databases = cached_sf_databases(
-                _jv_sf_creds["account"], _jv_sf_creds["username"],
-                _jv_sf_creds["password"], _jv_sf_creds["warehouse"], _jv_sf_creds["role"],
-            )
-            _jv_bj_c1, _jv_bj_c2 = st.columns(2)
-            with _jv_bj_c1:
-                _jv_sf_db = select_or_type("Snowflake database", _jv_sf_databases,
-                                           sf_database, "jv_sf_db")
-            _jv_sf_schemas_list = cached_sf_schemas(
-                _jv_sf_creds["account"], _jv_sf_db, _jv_sf_creds["username"],
-                _jv_sf_creds["password"], _jv_sf_creds["warehouse"], _jv_sf_creds["role"],
-            )
-            with _jv_bj_c2:
-                _jv_sf_sch = select_or_type("Snowflake schema", _jv_sf_schemas_list,
-                                            sf_schema, "jv_sf_sch")
-
-            st.divider()
-
-            # ── C. Prompts ────────────────────────────────────────────────────
-            st.markdown("**C. Prompts** — one per line or uploaded file")
-            _jv_prompt_tab, _jv_file_tab = st.tabs(["✏️ Type prompts", "📎 Upload file"])
-
-            _jv_raw_prompts: list[str] = []
-            with _jv_prompt_tab:
-                _jv_typed = st.text_area(
-                    "One prompt per line",
-                    placeholder=(
-                        "Join orders to products on product_id where manufacturer='Acme'\n"
-                        "Summarise customers by region, count orders per customer\n"
-                        "Get inventory with warehouse location joined on warehouse_id"
-                    ),
-                    key="jv_typed_prompts",
-                    height=150,
-                )
-                _jv_raw_prompts = [p.strip() for p in _jv_typed.splitlines() if p.strip()]
-
-            with _jv_file_tab:
-                _jv_upload = st.file_uploader(
-                    "Upload .txt (one prompt per line) or .xlsx (first column = prompts)",
-                    type=["txt", "xlsx"],
-                    key="jv_prompt_file",
-                )
-                if _jv_upload:
-                    if _jv_upload.name.endswith(".xlsx"):
-                        import pandas as _jv_pd
-                        _jv_df = _jv_pd.read_excel(_jv_upload)
-                        _jv_raw_prompts = [
-                            str(v).strip() for v in _jv_df.iloc[:, 0].dropna()
-                            if str(v).strip()
-                        ]
-                    else:
-                        _jv_raw_prompts = [
-                            p.strip()
-                            for p in _jv_upload.read().decode("utf-8", errors="replace").splitlines()
-                            if p.strip()
-                        ]
-                    st.success(f"Loaded {len(_jv_raw_prompts)} prompt(s) from file.")
-
-            if _jv_raw_prompts:
-                st.info(f"**{len(_jv_raw_prompts)} prompt(s)** → will generate **{len(_jv_raw_prompts)} YAML(s)**.")
-
-            st.divider()
-
-            # ── D. Model + confirmation ───────────────────────────────────────
-            _jv_model = select_or_type(
-                "AI model", available_models_for_ui(),
-                os.getenv("DIAL_MODEL", "gpt-4o"),
-                "jv_model", format_func=_model_label,
-            )
-
-            _jv_ready = bool(_jv_all_tables_flat) and bool(_jv_raw_prompts)
-            _jv_confirmed = st.checkbox(
-                f"✅ I have reviewed the table pool ({len(_jv_all_tables_flat)} table(s)) "
-                f"and {len(_jv_raw_prompts)} prompt(s) — ready to generate",
-                key="jv_confirmed",
-                disabled=not _jv_ready,
-            )
-
-            if st.button(
-                f"✨ Generate {len(_jv_raw_prompts)} JOIN YAML(s)",
-                key="jv_batch_generate",
-                type="primary",
-                disabled=not (_jv_ready and _jv_confirmed),
-            ):
-                from excel_batch_loader import _build_schema_context as _bsc
-
-                # Build shared full schema context once for source and target
-                with st.spinner("Connecting and fetching live schema for all selected tables…"):
-                    try:
-                        _jv_extractor = ExtractorFactory.create(
-                            src_db_type, host=rec["host"], port=int(rec.get("port") or 0),
-                            database=database, username=rec["username"],
-                            password=source_password(rec),
-                            auth=rec.get("auth", ""), s3_output=rec.get("s3_output", ""),
-                        )
-                        # Merge contexts across all selected schemas
-                        _jv_src_ctx: dict = {}
-                        for _jv_sch, _jv_tbls in _jv_pool.items():
-                            if _jv_tbls:
-                                _jv_src_ctx.update(
-                                    _bsc(_jv_extractor, src_db_type, database,
-                                         _jv_sch, _jv_tbls, grain_cols=[])
-                                )
-
-                        _jv_sf_ext = SnowflakeExtractor(
-                            account=_jv_sf_creds["account"],
-                            database=_jv_sf_db, schema=_jv_sf_sch,
-                            username=_jv_sf_creds["username"],
-                            password=_jv_sf_creds["password"],
-                        ) if _jv_sf_creds.get("account") and _jv_sf_db else None
-                        # Mirror: assume same table names upper-cased in target schema
-                        _jv_tgt_ctx: dict = {}
-                        for _jv_sch, _jv_tbls in _jv_pool.items():
-                            if _jv_tbls and _jv_sf_ext:
-                                _jv_tgt_ctx.update(
-                                    _bsc(_jv_sf_ext, "snowflake", _jv_sf_db,
-                                         _jv_sf_sch, [t.upper() for t in _jv_tbls],
-                                         grain_cols=[])
-                                )
-                            elif _jv_tbls:
-                                for _t in _jv_tbls:
-                                    _jv_tgt_ctx[f"{_jv_sf_db}.{_jv_sf_sch}.{_t.upper()}"] = []
-
-                        _jv_schema_err = None
-                    except Exception as _jv_schema_exc:
-                        _jv_schema_err = _jv_schema_exc
-
-                if _jv_schema_err:
-                    st.error(f"Schema fetch failed: {_jv_schema_err}")
-                else:
-                    _jv_gen = AISQLQueryGenerator(model=_jv_model)
-                    _jv_results: list = []
-                    _jv_bar = st.progress(0, text="Starting…")
-
-                    for _jv_i, _jv_prompt in enumerate(_jv_raw_prompts):
-                        _jv_bar.progress(
-                            (_jv_i) / len(_jv_raw_prompts),
-                            text=f"Prompt {_jv_i + 1}/{len(_jv_raw_prompts)}: {_jv_prompt[:60]}…",
-                        )
-                        try:
-                            # Auto-derive filename: first pool table name found in prompt
-                            _jv_prompt_lower = _jv_prompt.lower()
-                            _jv_fname = next(
-                                (t for t in _jv_all_tables_flat
-                                 if t.lower() in _jv_prompt_lower),
-                                f"join_{_jv_i + 1}",
+                    _pt_join_count = st.number_input(
+                        "Number of LEFT JOINs",
+                        min_value=1, max_value=max(1, len(_pt_all_table_options) - 1),
+                        value=1, step=1,
+                        key=f"pt_join_count_{src_table}",
+                    )
+                    _pt_join_rules: list = []
+                    for _pt_ji in range(int(_pt_join_count)):
+                        _ptj1, _ptj2 = st.columns(2)
+                        with _ptj1:
+                            _pt_right = st.selectbox(
+                                f"LEFT JOIN {_pt_ji + 1} — table",
+                                options=_pt_all_table_options,
+                                key=f"pt_join_right_{src_table}_{_pt_ji}",
                             )
-                            _jv_src_sql = _jv_gen.generate_schema_aware_query(
-                                user_instruction=_jv_prompt,
-                                schema_context=_jv_src_ctx,
-                                db_type=src_db_type,
-                                default_schema=list(_jv_pool.keys())[0] if _jv_pool else schema,
-                                normalize=True,
-                            ).query
-                            _jv_tgt_sql = _jv_gen.generate_schema_aware_query(
-                                user_instruction=_jv_prompt,
-                                schema_context=_jv_tgt_ctx,
-                                db_type="snowflake",
-                                default_schema=_jv_sf_sch,
-                                normalize=True,
-                            ).query
-                            _jv_results.append({
-                                "idx": _jv_i + 1,
-                                "prompt": _jv_prompt,
-                                "filename": _jv_fname,
-                                "src": _jv_src_sql,
-                                "tgt": _jv_tgt_sql,
-                                "saved": False,
-                                "error": None,
-                            })
-                        except Exception as _jv_exc:
-                            _jv_results.append({
-                                "idx": _jv_i + 1,
-                                "prompt": _jv_prompt,
-                                "filename": f"join_{_jv_i + 1}",
-                                "src": "", "tgt": "",
-                                "saved": False,
-                                "error": str(_jv_exc),
-                            })
+                        with _ptj2:
+                            _pt_on = st.text_input(
+                                f"LEFT JOIN {_pt_ji + 1} — ON condition",
+                                placeholder=f"{src_table}.id = {_pt_right.split('.')[-1] if _pt_all_table_options else 'other'}.{src_table}_id",
+                                key=f"pt_join_on_{src_table}_{_pt_ji}",
+                                help="Condition without ON keyword. Use table.column notation.",
+                            )
+                        if _pt_on.strip():
+                            _pt_join_rules.append({"right": _pt_right, "on": _pt_on.strip()})
 
-                    _jv_bar.progress(1.0, text=f"Done — {len(_jv_results)} YAML(s) ready.")
-                    st.session_state["jv_batch_results"] = _jv_results
+                    _pt_join_prompt = st.text_area(
+                        "Prompt for AI SQL generation",
+                        placeholder=f"Validate {src_table} joined to products. "
+                                    "Compare row counts and key aggregates after applying the filter above.",
+                        key=f"pt_join_prompt_{src_table}",
+                        height=80,
+                        help="Describe what the joined query should validate. "
+                             "AI uses live PK/FK schema for fully-qualified SQL.",
+                    ).strip()
 
-            # ── E. Results ────────────────────────────────────────────────────
-            _jv_batch_results = st.session_state.get("jv_batch_results", [])
-            if _jv_batch_results:
-                st.markdown(f"**Results — {len(_jv_batch_results)} JOIN YAML(s)**")
-                for _jv_r in _jv_batch_results:
-                    _jv_label = (
-                        f"{'✅' if _jv_r['saved'] else ('❌' if _jv_r['error'] else '⏳')} "
-                        f"#{_jv_r['idx']} — `{_jv_r['filename']}.yaml`"
-                    )
-                    with st.expander(_jv_label, expanded=_jv_r.get("error") is not None):
-                        st.caption(_jv_r["prompt"])
-                        if _jv_r["error"]:
-                            st.error(_jv_r["error"])
-                        else:
-                            st.markdown(f"**Source SQL ({src_db_type}):**")
-                            st.code(_jv_r["src"], language="sql")
-                            st.markdown("**Snowflake SQL:**")
-                            st.code(_jv_r["tgt"], language="sql")
+                    _pt_join_sf_schema_input = st.text_input(
+                        "Snowflake target schema for joined tables (leave blank to use selected target schema)",
+                        key=f"pt_join_sf_schema_{src_table}",
+                        placeholder=f"e.g. {sf_schema}",
+                    ).strip() or sf_schema
 
-                            if not _jv_r["saved"]:
-                                if st.button(
-                                    f"💾 Save `{_jv_r['filename']}.yaml`",
-                                    key=f"jv_save_{_jv_r['idx']}",
-                                ):
-                                    try:
-                                        import yaml as _jv_yaml
-                                        _jv_out_dir = Path(output_dir) / "data_validation"
-                                        _jv_out_dir.mkdir(parents=True, exist_ok=True)
-                                        _jv_path = _jv_out_dir / f"{_jv_r['filename']}.yaml"
-                                        _jv_doc = {
-                                            "tables": {
-                                                _jv_r["filename"]: {
-                                                    "validations": {
-                                                        "data_validation": {
-                                                            "source_table_name": _jv_r["filename"],
-                                                            "source": src_db_type,
-                                                            "source_database": database,
-                                                            "source_schema": ", ".join(_jv_pool.keys()),
-                                                            "pksourcecolumn": "row_hash",
-                                                            "sourcequery": _jv_r["src"],
-                                                            "target_table_name": _jv_r["filename"],
-                                                            "target": "snowflake",
-                                                            "target_database": _jv_sf_db,
-                                                            "target_schema": _jv_sf_sch,
-                                                            "pktargetcolumn": "row_hash",
-                                                            "targetquery": _jv_r["tgt"],
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        with open(_jv_path, "w", encoding="utf-8") as _jv_f:
-                                            _jv_yaml.dump(_jv_doc, _jv_f, allow_unicode=True,
-                                                          sort_keys=False, default_flow_style=False)
-                                        _jv_r["saved"] = True
-                                        st.success(f"Saved: `{_jv_path}`")
-                                        st.rerun()
-                                    except Exception as _jv_save_exc:
-                                        st.error(f"Save failed: {_jv_save_exc}")
-                            else:
-                                st.success("Already saved.")
+                    if int(_pt_join_count) > len(_pt_join_rules):
+                        st.warning("Fill in every ON condition before generating.")
 
-        if st.button("▶️ Generate All", type="primary", key="batch_generate", disabled=generate_disabled or _batch_generate_blocked):
+                    if _pt_join_rules and _pt_join_prompt:
+                        per_table_joins[src_table] = {
+                            "joins": _pt_join_rules,
+                            "prompt": _pt_join_prompt,
+                            "join_sf_schema": _pt_join_sf_schema_input,
+                        }
+                        st.info(
+                            f"**{src_table}** will be validated with {len(_pt_join_rules)} LEFT JOIN(s). "
+                            f"AI prompt: _{_pt_join_prompt[:80]}{'…' if len(_pt_join_prompt) > 80 else ''}_"
+                        )
+
+        st.divider()
+        if per_table_joins:
+            st.info(
+                f"**{len(per_table_joins)} table(s)** have JOIN rules configured and will use "
+                "AI SQL generation instead of the standard column-mapping pipeline."
+            )
+        st.caption("Final check: every source table has one unique target, mappings are reviewed, and scope is set.")
+        if st.button("Generate all table YAMLs", type="primary", key="batch_generate", disabled=generate_disabled or _batch_generate_blocked):
             extractor = ExtractorFactory.create(
                 src_db_type, host=rec["host"], port=int(rec.get("port") or 0),
                 database=database, username=rec["username"], password=source_password(rec),
@@ -2478,35 +2421,134 @@ with tab_batch:
             progress = st.progress(0.0, text="Starting...")
             results = []
             pairs = list(target_map.items())
+            # Build AI generator once — reused by all tables that have JOIN rules
+            _pt_gen = AISQLQueryGenerator(model=model) if per_table_joins else None
+            _pt_sf_creds = snowflake_creds()
+
             for i, (src_table, tgt_table) in enumerate(pairs, 1):
                 progress.progress(i / len(pairs), text=f"{src_table} → {tgt_table}  ({i}/{len(pairs)})")
                 try:
-                    pipeline = ValidationPipeline(model=model, source_extractor=extractor)
-                    result, _plan = pipeline.run_with_plan(
-                        pg_schema=schema,
-                        pg_table=src_table,
-                        sf_schema=sf_schema,
-                        sf_table=tgt_table,
-                        sf_database=sf_database,
-                        pg_database=database,
-                        explicit_mappings=per_table_col_overrides.get(src_table) or None,
-                        exclude_columns=(list(auto_excluded) + per_table_excl.get(src_table, [])) or None,
-                        source_db_type=src_db_type,
-                        output_dir=output_dir,
-                        source_filter=per_table_filters.get(src_table, ("", ""))[0],
-                        target_filter=per_table_filters.get(src_table, ("", ""))[1],
-                    )
-                    results.append({
-                        "Source": src_table, "Target": tgt_table, "Status": "✅ Success",
-                        "Detail": f"{result.active_columns} cols, {result.generated_by}",
-                    })
-                    creds = snowflake_creds()
-                    if creds["account"]:
-                        mapping_store.save_mapping(
-                            creds["account"], creds["username"], creds["password"],
-                            sf_database, sf_schema, src_table, tgt_table,
-                            confirmed_by=creds["username"], source_connection=connection_label(rec),
+                    _pt_jinfo = per_table_joins.get(src_table)
+                    if _pt_jinfo:
+                        # ── JOIN path: use AISQLQueryGenerator ──────────────
+                        from excel_batch_loader import _build_schema_context as _pt_bsc
+                        _pt_join_rules = _pt_jinfo["joins"]
+                        _pt_join_prompt = _pt_jinfo["prompt"]
+                        _pt_sf_sch_override = _pt_jinfo.get("join_sf_schema") or sf_schema
+                        _pt_src_filter, _pt_tgt_filter = per_table_filters.get(src_table, ("", ""))
+
+                        _pt_rule_lines = [f"Driving table: {schema}.{src_table}"]
+                        _pt_rule_lines.extend(
+                            f"LEFT JOIN {r['right']} ON {r['on']}" for r in _pt_join_rules
                         )
+                        _pt_join_spec = (
+                            "\n\nSTRUCTURED VALIDATION RULES (mandatory):\n"
+                            + "\n".join(_pt_rule_lines)
+                            + f"\nSource WHERE predicate: {_pt_src_filter or '(none)'}"
+                            + f"\nSnowflake WHERE predicate: {_pt_tgt_filter or _pt_src_filter or '(none)'}"
+                            + "\nUse LEFT JOIN only. Do not use INNER JOIN, RIGHT JOIN, FULL JOIN, CROSS JOIN, or comma joins."
+                            + " Apply source predicate only in source SQL and Snowflake predicate only in Snowflake SQL."
+                        )
+
+                        _pt_src_ctx = _pt_bsc(
+                            extractor, src_db_type, database, schema,
+                            [src_table] + [r["right"].split(".")[-1] for r in _pt_join_rules],
+                            grain_cols=[],
+                        )
+                        _pt_tgt_ctx: dict = {}
+                        if _pt_sf_creds.get("account") and sf_database:
+                            _pt_sf_ext = SnowflakeExtractor(
+                                account=_pt_sf_creds["account"],
+                                database=sf_database, schema=_pt_sf_sch_override,
+                                username=_pt_sf_creds["username"],
+                                password=_pt_sf_creds["password"],
+                            )
+                            _pt_tgt_ctx = _pt_bsc(
+                                _pt_sf_ext, "snowflake", sf_database, _pt_sf_sch_override,
+                                [tgt_table.upper()] + [r["right"].split(".")[-1].upper() for r in _pt_join_rules],
+                                grain_cols=[],
+                            )
+
+                        _pt_src_sql = _pt_gen.generate_schema_aware_query(
+                            user_instruction=_pt_join_prompt + _pt_join_spec,
+                            schema_context=_pt_src_ctx,
+                            db_type=src_db_type,
+                            default_schema=schema,
+                            normalize=True,
+                        ).query
+                        _pt_tgt_sql = _pt_gen.generate_schema_aware_query(
+                            user_instruction=_pt_join_prompt + _pt_join_spec,
+                            schema_context=_pt_tgt_ctx,
+                            db_type="snowflake",
+                            default_schema=_pt_sf_sch_override,
+                            normalize=True,
+                        ).query
+
+                        import yaml as _pt_yaml
+                        _pt_out_dir = Path(output_dir) / "data_validation"
+                        _pt_out_dir.mkdir(parents=True, exist_ok=True)
+                        _pt_path = _pt_out_dir / f"{src_table}.yaml"
+                        _pt_sql_oneline = lambda s: " ".join(s.split())
+                        _pt_doc = {
+                            "tables": {
+                                src_table: {
+                                    "validations": {
+                                        "data_validation": {
+                                            "source_table_name": src_table,
+                                            "source": src_db_type,
+                                            "source_database": database,
+                                            "source_schema": schema,
+                                            "pksourcecolumn": "row_hash",
+                                            "sourcequery": _pt_sql_oneline(_pt_src_sql),
+                                            "target_table_name": tgt_table,
+                                            "target": "snowflake",
+                                            "target_database": sf_database,
+                                            "target_schema": _pt_sf_sch_override,
+                                            "pktargetcolumn": "row_hash",
+                                            "targetquery": _pt_sql_oneline(_pt_tgt_sql),
+                                            "source_filter": _pt_src_filter,
+                                            "target_filter": _pt_tgt_filter or _pt_src_filter,
+                                            "joins": _pt_join_rules,
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        with open(_pt_path, "w", encoding="utf-8") as _pt_f:
+                            _pt_yaml.dump(_pt_doc, _pt_f, allow_unicode=True,
+                                          sort_keys=False, default_flow_style=False)
+                        results.append({
+                            "Source": src_table, "Target": tgt_table, "Status": "✅ Success (JOIN)",
+                            "Detail": f"AI JOIN SQL, {len(_pt_join_rules)} join(s)",
+                        })
+                    else:
+                        # ── Standard column-mapping pipeline ─────────────────
+                        pipeline = ValidationPipeline(model=model, source_extractor=extractor)
+                        result, _plan = pipeline.run_with_plan(
+                            pg_schema=schema,
+                            pg_table=src_table,
+                            sf_schema=sf_schema,
+                            sf_table=tgt_table,
+                            sf_database=sf_database,
+                            pg_database=database,
+                            explicit_mappings=per_table_col_overrides.get(src_table) or None,
+                            exclude_columns=(list(auto_excluded) + per_table_excl.get(src_table, [])) or None,
+                            source_db_type=src_db_type,
+                            output_dir=output_dir,
+                            source_filter=per_table_filters.get(src_table, ("", ""))[0],
+                            target_filter=per_table_filters.get(src_table, ("", ""))[1],
+                        )
+                        results.append({
+                            "Source": src_table, "Target": tgt_table, "Status": "✅ Success",
+                            "Detail": f"{result.active_columns} cols, {result.generated_by}",
+                        })
+                        creds = snowflake_creds()
+                        if creds["account"]:
+                            mapping_store.save_mapping(
+                                creds["account"], creds["username"], creds["password"],
+                                sf_database, sf_schema, src_table, tgt_table,
+                                confirmed_by=creds["username"], source_connection=connection_label(rec),
+                            )
                 except Exception as exc:
                     results.append({"Source": src_table, "Target": tgt_table, "Status": "❌ Failed", "Detail": str(exc)})
             progress.empty()
@@ -2664,6 +2706,252 @@ with tab_batch:
                         st.error(_rp_e)
         elif _rp_file and not (_rp_database and _rp_schema):
             st.warning("Select a source database and schema above before uploading.")
+
+        # ── Multi-schema JOIN batch (Report Pack) ─────────────────────────────
+        # Moved here from Standard batch mode. Uses the same connection as Report
+        # Pack but sources tables from N schemas. One prompt → one YAML.
+        st.divider()
+        st.markdown("### Multi-schema JOIN batch")
+        st.caption(
+            "Select tables from **multiple schemas** on the same connection, then supply "
+            "one or more JOIN prompts. Each prompt → one YAML. "
+            "AI uses live PK/FK schema for fully-qualified `db.schema.table.column` SQL."
+        )
+        with st.expander("➕ Configure multi-schema JOIN batch", expanded=False):
+            # A. Table pool
+            st.markdown("**A. Table pool**")
+            _rpj_all_schemas = cached_source_schemas(
+                src_db_type, rec["host"], int(rec.get("port") or 0),
+                _rp_database or "", rec["username"], source_password(rec), rec.get("auth", ""),
+            ) or []
+            _rpj_sel_schemas = st.multiselect(
+                "Schemas to draw tables from",
+                options=_rpj_all_schemas,
+                default=[_rp_schema] if _rp_schema in _rpj_all_schemas else [],
+                key="rpj_schemas",
+            )
+            _rpj_pool: dict = {}
+            for _rpj_sch in _rpj_sel_schemas:
+                try:
+                    _rpj_sch_tables = cached_source_tables(
+                        src_db_type, rec["host"], int(rec.get("port") or 0),
+                        _rp_database or "", rec["username"], source_password(rec),
+                        rec.get("auth", ""), rec.get("s3_output", ""), _rpj_sch,
+                    )
+                except Exception:
+                    _rpj_sch_tables = []
+                _rpj_pool[_rpj_sch] = st.multiselect(
+                    f"Tables from `{_rpj_sch}`",
+                    options=_rpj_sch_tables,
+                    key=f"rpj_tables_{_rpj_sch}",
+                )
+            _rpj_all_tables_flat = [t for ts in _rpj_pool.values() for t in ts]
+            _rpj_table_options   = [f"{sch}.{tbl}" for sch, tbls in _rpj_pool.items() for tbl in tbls]
+
+            if _rpj_table_options:
+                st.markdown("**B. Join rules**")
+                _rpj_base = st.selectbox(
+                    "Driving table (left side)",
+                    options=_rpj_table_options,
+                    key="rpj_base_table",
+                )
+                _rpj_join_count = st.number_input(
+                    "Number of LEFT JOINs", min_value=0,
+                    max_value=max(0, len(_rpj_table_options) - 1),
+                    value=0, step=1, key="rpj_join_count",
+                )
+                _rpj_join_rules: list = []
+                for _rpj_ji in range(int(_rpj_join_count)):
+                    _rpjc1, _rpjc2 = st.columns(2)
+                    with _rpjc1:
+                        _rpj_right = st.selectbox(
+                            f"LEFT JOIN {_rpj_ji + 1} table",
+                            options=_rpj_table_options,
+                            key=f"rpj_join_right_{_rpj_ji}",
+                        )
+                    with _rpjc2:
+                        _rpj_on = st.text_input(
+                            f"LEFT JOIN {_rpj_ji + 1} ON condition",
+                            placeholder="orders.customer_id = customers.customer_id",
+                            key=f"rpj_join_on_{_rpj_ji}",
+                        )
+                    if _rpj_on.strip():
+                        _rpj_join_rules.append({"right": _rpj_right, "on": _rpj_on.strip()})
+
+                _rpjf1, _rpjf2 = st.columns(2)
+                with _rpjf1:
+                    _rpj_src_filter = st.text_input(
+                        "Source WHERE predicate", key="rpj_src_filter",
+                        placeholder="orders.created_at >= '2024-01-01'",
+                    ).strip()
+                with _rpjf2:
+                    _rpj_tgt_filter = st.text_input(
+                        "Snowflake WHERE predicate", key="rpj_tgt_filter",
+                        placeholder="ORDERS.CREATED_AT >= '2024-01-01'",
+                    ).strip() or _rpj_src_filter
+
+                if int(_rpj_join_count) > len(_rpj_join_rules):
+                    st.warning("Fill in every ON condition before generating.")
+
+                st.markdown("**C. Prompts** — one per line, one YAML per prompt")
+                _rpj_prompts_raw = st.text_area(
+                    "Prompts (one per line)",
+                    placeholder=(
+                        "Validate orders joined to customers, compare row counts and revenue totals\n"
+                        "Validate products joined to inventory, compare SKU coverage"
+                    ),
+                    key="rpj_prompts",
+                    height=120,
+                )
+                _rpj_prompt_list = [p.strip() for p in _rpj_prompts_raw.splitlines() if p.strip()]
+
+                _rpj_model = select_or_type(
+                    "AI model", available_models_for_ui(),
+                    os.getenv("DIAL_MODEL", "gpt-4o"),
+                    "rpj_model", format_func=_model_label,
+                )
+
+                _rpj_sf_creds = snowflake_creds()
+                _rpj_sf_schemas_list = cached_sf_schemas(
+                    _rpj_sf_creds["account"], _rp_sf_database or "", _rpj_sf_creds["username"],
+                    _rpj_sf_creds["password"], _rpj_sf_creds["warehouse"], _rpj_sf_creds["role"],
+                )
+                _rpj_sf_schemas = st.multiselect(
+                    "Snowflake target schemas",
+                    options=_rpj_sf_schemas_list,
+                    default=[_rp_sf_schema] if _rp_sf_schema in _rpj_sf_schemas_list else [],
+                    key="rpj_sf_schemas",
+                )
+                _rpj_sf_sch = _rpj_sf_schemas[0] if _rpj_sf_schemas else _rp_sf_schema
+
+                _rpj_ready = bool(_rpj_all_tables_flat) and bool(_rpj_prompt_list)
+                _rpj_confirmed = st.checkbox(
+                    f"✅ Ready — {len(_rpj_all_tables_flat)} table(s), {len(_rpj_prompt_list)} prompt(s)",
+                    key="rpj_confirmed", disabled=not _rpj_ready,
+                )
+
+                if st.button(
+                    f"✨ Generate {len(_rpj_prompt_list)} JOIN YAML(s)",
+                    key="rpj_generate", type="primary",
+                    disabled=not (_rpj_ready and _rpj_confirmed),
+                ):
+                    from excel_batch_loader import _build_schema_context as _rpj_bsc
+                    _rpj_rule_lines = [f"Driving table: {_rpj_base}"]
+                    _rpj_rule_lines.extend(
+                        f"LEFT JOIN {r['right']} ON {r['on']}" for r in _rpj_join_rules
+                    )
+                    _rpj_join_spec = (
+                        "\n\nSTRUCTURED VALIDATION RULES (mandatory):\n"
+                        + "\n".join(_rpj_rule_lines)
+                        + f"\nSource WHERE predicate: {_rpj_src_filter or '(none)'}"
+                        + f"\nSnowflake WHERE predicate: {_rpj_tgt_filter or '(none)'}"
+                        + "\nUse LEFT JOIN only. Do not use INNER JOIN, RIGHT JOIN, FULL JOIN, CROSS JOIN, or comma joins."
+                        + " Apply source predicate only in source SQL and Snowflake predicate only in Snowflake SQL."
+                    )
+                    with st.spinner("Fetching live schema…"):
+                        try:
+                            _rpj_extractor = ExtractorFactory.create(
+                                src_db_type, host=rec["host"], port=int(rec.get("port") or 0),
+                                database=_rp_database or "", username=rec["username"],
+                                password=source_password(rec),
+                                auth=rec.get("auth", ""), s3_output=rec.get("s3_output", ""),
+                            )
+                            _rpj_src_ctx: dict = {}
+                            for _rpj_sch, _rpj_tbls in _rpj_pool.items():
+                                if _rpj_tbls:
+                                    _rpj_src_ctx.update(
+                                        _rpj_bsc(_rpj_extractor, src_db_type, _rp_database or "",
+                                                 _rpj_sch, _rpj_tbls, grain_cols=[])
+                                    )
+                            _rpj_tgt_ctx: dict = {}
+                            if _rpj_sf_creds.get("account") and _rp_sf_database:
+                                for _rpj_tgt_schema in _rpj_sf_schemas:
+                                    _rpj_sf_ext = SnowflakeExtractor(
+                                        account=_rpj_sf_creds["account"],
+                                        database=_rp_sf_database, schema=_rpj_tgt_schema,
+                                        username=_rpj_sf_creds["username"],
+                                        password=_rpj_sf_creds["password"],
+                                    )
+                                    for _rpj_sch, _rpj_tbls in _rpj_pool.items():
+                                        if _rpj_tbls:
+                                            _rpj_tgt_ctx.update(
+                                                _rpj_bsc(_rpj_sf_ext, "snowflake", _rp_sf_database,
+                                                         _rpj_tgt_schema, [t.upper() for t in _rpj_tbls],
+                                                         grain_cols=[])
+                                            )
+                            _rpj_schema_err = None
+                        except Exception as _rpj_schema_exc:
+                            _rpj_schema_err = _rpj_schema_exc
+
+                    if _rpj_schema_err:
+                        st.error(f"Schema fetch failed: {_rpj_schema_err}")
+                    else:
+                        _rpj_gen    = AISQLQueryGenerator(model=_rpj_model)
+                        _rpj_bar    = st.progress(0, text="Starting…")
+                        _rpj_res    = []
+                        _rpj_out_dir = _ROOT_DIR / "Project" / "config" / "report" / "data_validation"
+                        _rpj_out_dir.mkdir(parents=True, exist_ok=True)
+
+                        for _rpj_pi, _rpj_prompt in enumerate(_rpj_prompt_list):
+                            _rpj_bar.progress(_rpj_pi / len(_rpj_prompt_list),
+                                              text=f"Prompt {_rpj_pi + 1}/{len(_rpj_prompt_list)}")
+                            _rpj_fname = next(
+                                (t for t in _rpj_all_tables_flat if t.lower() in _rpj_prompt.lower()),
+                                f"join_{_rpj_pi + 1}",
+                            )
+                            try:
+                                _rpj_src_sql = _rpj_gen.generate_schema_aware_query(
+                                    user_instruction=_rpj_prompt + _rpj_join_spec,
+                                    schema_context=_rpj_src_ctx,
+                                    db_type=src_db_type,
+                                    default_schema=list(_rpj_pool.keys())[0] if _rpj_pool else _rp_schema,
+                                    normalize=True,
+                                ).query
+                                _rpj_tgt_sql = _rpj_gen.generate_schema_aware_query(
+                                    user_instruction=_rpj_prompt + _rpj_join_spec,
+                                    schema_context=_rpj_tgt_ctx,
+                                    db_type="snowflake",
+                                    default_schema=_rpj_sf_sch,
+                                    normalize=True,
+                                ).query
+                                import yaml as _rpj_yaml
+                                _rpj_sql_oneline = lambda s: " ".join(s.split())
+                                _rpj_path = _rpj_out_dir / f"{_rpj_fname}.yaml"
+                                _rpj_doc = {
+                                    "tables": {
+                                        _rpj_fname: {
+                                            "validations": {
+                                                "data_validation": {
+                                                    "source_table_name": _rpj_fname,
+                                                    "source": src_db_type,
+                                                    "source_database": _rp_database,
+                                                    "source_schema": ", ".join(_rpj_pool.keys()),
+                                                    "pksourcecolumn": "row_hash",
+                                                    "sourcequery": _rpj_sql_oneline(_rpj_src_sql),
+                                                    "target_table_name": _rpj_fname,
+                                                    "target": "snowflake",
+                                                    "target_database": _rp_sf_database,
+                                                    "target_schema": _rpj_sf_sch,
+                                                    "pktargetcolumn": "row_hash",
+                                                    "targetquery": _rpj_sql_oneline(_rpj_tgt_sql),
+                                                    "source_filter": _rpj_src_filter,
+                                                    "target_filter": _rpj_tgt_filter,
+                                                    "joins": _rpj_join_rules,
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                with open(_rpj_path, "w", encoding="utf-8") as _rpj_f:
+                                    _rpj_yaml.dump(_rpj_doc, _rpj_f, allow_unicode=True,
+                                                   sort_keys=False, default_flow_style=False)
+                                _rpj_res.append({"Prompt": _rpj_prompt[:60], "File": str(_rpj_path), "Status": "✅"})
+                            except Exception as _rpj_exc:
+                                _rpj_res.append({"Prompt": _rpj_prompt[:60], "File": "", "Status": f"❌ {_rpj_exc}"})
+
+                        _rpj_bar.progress(1.0, text="Done.")
+                        import pandas as _rpj_pd
+                        st.dataframe(_rpj_pd.DataFrame(_rpj_res), use_container_width=True, hide_index=True)
 
 # =============================================================================
 # Row-hash SQL builder — used by Custom SQL tab when a table has no PK.

@@ -1,9 +1,9 @@
 # ============================================================
 # Migration Validator — Data Validation Config
-# Table      : products
-# Generated  : 2026-09-13T14:39:21.483079
+# Table      : inventory
+# Generated  : 2026-09-13T14:39:02.575561
 # By         : ai (model: gpt-4o)
-# Columns    : 9 comparable columns
+# Columns    : 8 comparable columns
 #
 # Validation blocks (row count is in bronze.yaml):
 #   data_validation           — normalised full-scan SELECT (all columns)
@@ -26,27 +26,27 @@
 # ============================================================
 
 tables:
-  products:
+  inventory:
     validations:
 
       # ── ③ / ④ Normalised data validation (all columns) ───────────
       data_validation:
-        source_table_name: products
+        source_table_name: inventory
         source: mssql
         source_database: mv_test_mssql
         source_schema: dbo
         pksourcecolumn: id_normalized
         source_audit_column: 
         sourcequery: |
-          SELECT COALESCE(CAST(CAST(id AS VARCHAR(MAX)) AS VARCHAR(MAX)), '<<NULL>>') AS id_normalized, COALESCE(CAST(LTRIM(RTRIM(sku)) AS VARCHAR(MAX)), '<<NULL>>') AS sku_normalized, COALESCE(CAST(LTRIM(RTRIM(product_name)) AS VARCHAR(MAX)), '<<NULL>>') AS product_name_normalized, COALESCE(CAST(LTRIM(RTRIM(category)) AS VARCHAR(MAX)), '<<NULL>>') AS category_normalized, COALESCE(CAST(CAST(unit_price AS VARCHAR(MAX)) AS VARCHAR(MAX)), '<<NULL>>') AS unit_price_normalized, COALESCE(CAST(CASE WHEN is_available = 1 THEN '1' WHEN is_available = 0 THEN '0' ELSE NULL END AS VARCHAR(MAX)), '<<NULL>>') AS is_available_normalized, COALESCE(CAST(CAST(weight_kg AS VARCHAR(MAX)) AS VARCHAR(MAX)), '<<NULL>>') AS weight_kg_normalized, COALESCE(CAST(FORMAT(created_at, 'yyyy-MM-dd HH:mm:ss.ffffff') AS VARCHAR(MAX)), '<<NULL>>') AS created_at_normalized, COALESCE(CAST(FORMAT(updated_at, 'yyyy-MM-dd HH:mm:ss.ffffff') AS VARCHAR(MAX)), '<<NULL>>') AS updated_at_normalized FROM dbo.products;
-        target_table_name: PRODUCTS
+          SELECT COALESCE(CAST(CAST(id AS VARCHAR(MAX)) AS VARCHAR(MAX)), '<<NULL>>') AS id_normalized, COALESCE(CAST(CAST(product_id AS VARCHAR(MAX)) AS VARCHAR(MAX)), '<<NULL>>') AS product_id_normalized, COALESCE(CAST(LTRIM(RTRIM(warehouse_code)) AS VARCHAR(MAX)), '<<NULL>>') AS warehouse_code_normalized, COALESCE(CAST(CAST(quantity AS VARCHAR(MAX)) AS VARCHAR(MAX)), '<<NULL>>') AS quantity_normalized, COALESCE(CAST(CAST(reorder_level AS VARCHAR(MAX)) AS VARCHAR(MAX)), '<<NULL>>') AS reorder_level_normalized, COALESCE(CAST(FORMAT(last_restocked, 'yyyy-MM-dd HH:mm:ss.ffffff') AS VARCHAR(MAX)), '<<NULL>>') AS last_restocked_normalized, COALESCE(CAST(FORMAT(created_at, 'yyyy-MM-dd HH:mm:ss.ffffff') AS VARCHAR(MAX)), '<<NULL>>') AS created_at_normalized, COALESCE(CAST(FORMAT(updated_at, 'yyyy-MM-dd HH:mm:ss.ffffff') AS VARCHAR(MAX)), '<<NULL>>') AS updated_at_normalized FROM dbo.inventory;
+        target_table_name: INVENTORY
         target: snowflake
         target_database: MV_TEST
         target_schema: PUBLIC
         pktargetcolumn: id_normalized
         target_audit_column: 
         targetquery: |
-          SELECT COALESCE(CAST(CAST(ID AS STRING) AS STRING), '<<NULL>>') AS "id_normalized", COALESCE(CAST(TRIM(SKU) AS STRING), '<<NULL>>') AS "sku_normalized", COALESCE(CAST(TRIM(PRODUCT_NAME) AS STRING), '<<NULL>>') AS "product_name_normalized", COALESCE(CAST(TRIM(CATEGORY) AS STRING), '<<NULL>>') AS "category_normalized", COALESCE(CAST(CAST(UNIT_PRICE AS STRING) AS STRING), '<<NULL>>') AS "unit_price_normalized", COALESCE(CAST(CASE WHEN IS_AVAILABLE = TRUE THEN '1' WHEN IS_AVAILABLE = FALSE THEN '0' ELSE NULL END AS STRING), '<<NULL>>') AS "is_available_normalized", COALESCE(CAST(CAST(WEIGHT_KG AS STRING) AS STRING), '<<NULL>>') AS "weight_kg_normalized", COALESCE(CAST(TO_VARCHAR(CREATED_AT, 'YYYY-MM-DD HH24:MI:SS.FF6') AS STRING), '<<NULL>>') AS "created_at_normalized", COALESCE(CAST(TO_VARCHAR(UPDATED_AT, 'YYYY-MM-DD HH24:MI:SS.FF6') AS STRING), '<<NULL>>') AS "updated_at_normalized" FROM MV_TEST.PUBLIC.PRODUCTS;
+          SELECT COALESCE(CAST(CAST(ID AS STRING) AS STRING), '<<NULL>>') AS "id_normalized", COALESCE(CAST(CAST(PRODUCT_ID AS STRING) AS STRING), '<<NULL>>') AS "product_id_normalized", COALESCE(CAST(TRIM(WAREHOUSE_CODE) AS STRING), '<<NULL>>') AS "warehouse_code_normalized", COALESCE(CAST(CAST(QUANTITY AS STRING) AS STRING), '<<NULL>>') AS "quantity_normalized", COALESCE(CAST(CAST(REORDER_LEVEL AS STRING) AS STRING), '<<NULL>>') AS "reorder_level_normalized", COALESCE(CAST(TO_VARCHAR(LAST_RESTOCKED, 'YYYY-MM-DD HH24:MI:SS.FF6') AS STRING), '<<NULL>>') AS "last_restocked_normalized", COALESCE(CAST(TO_VARCHAR(CREATED_AT, 'YYYY-MM-DD HH24:MI:SS.FF6') AS STRING), '<<NULL>>') AS "created_at_normalized", COALESCE(CAST(TO_VARCHAR(UPDATED_AT, 'YYYY-MM-DD HH24:MI:SS.FF6') AS STRING), '<<NULL>>') AS "updated_at_normalized" FROM MV_TEST.PUBLIC.INVENTORY;
 
       validation_plan:
         population_scope: {}
@@ -65,26 +65,26 @@ tables:
         review_reasons: []
 
       transformation_validation:
-        source_table_name: products
+        source_table_name: inventory
         source: mssql
         source_database: mv_test_mssql
         source_schema: dbo
         sourcequery: |
           SELECT 1;
-        target_table_name: PRODUCTS
+        target_table_name: INVENTORY
         target: snowflake
         target_database: MV_TEST
         target_schema: PUBLIC
         targetquery: |
           SELECT 1;
       aggregate_validation:
-        source_table_name: products
+        source_table_name: inventory
         source: mssql
         source_database: mv_test_mssql
         source_schema: dbo
         sourcequery: |
           SELECT 1;
-        target_table_name: PRODUCTS
+        target_table_name: INVENTORY
         target: snowflake
         target_database: MV_TEST
         target_schema: PUBLIC

@@ -10,10 +10,19 @@ from .validation_plan import (
     PLAN_SCHEMA_VERSION,
     CanonicalValidationPlan,
     ColumnMappingEntry,
+    RelationshipSpec,
+    RowHashSpec,
+    TransformationCheck,
+    ValidationSpec,
     MatchMethod,
     PlanStatus,
 )
 from .plan_store import PlanStore, PlanStoreError
+from .requirement_planner import (
+    RequirementPlanError,
+    build_plan_from_requirement,
+    build_planner_prompt,
+)
 from .exclusion_report import (
     BatchExclusionReport,
     ExcludedColumn,
@@ -24,10 +33,17 @@ __all__ = [
     "PLAN_SCHEMA_VERSION",
     "CanonicalValidationPlan",
     "ColumnMappingEntry",
+    "RelationshipSpec",
+    "RowHashSpec",
+    "TransformationCheck",
+    "ValidationSpec",
     "MatchMethod",
     "PlanStatus",
     "PlanStore",
     "PlanStoreError",
+    "RequirementPlanError",
+    "build_plan_from_requirement",
+    "build_planner_prompt",
     "ExclusionReport",
     "BatchExclusionReport",
     "ExcludedColumn",

@@ -114,6 +114,7 @@ class YAMLConfigWriter:
         source_database: str = "",
         source_primary_keys: Optional[List[str]] = None,
         target_primary_keys: Optional[List[str]] = None,
+        plan: Optional["CanonicalValidationPlan"] = None,
     ) -> Path:
         """
         Write the data validation YAML for a single table.
@@ -189,6 +190,25 @@ class YAMLConfigWriter:
             model_used=query_set.model_used,
             source_audit_column=source_audit_column,
             target_audit_column=target_audit_column,
+            plan_intent={
+                "population_scope": plan.population_scope,
+                "relationships": [r.to_dict() for r in plan.relationships],
+                "identity": {
+                    "type": plan.identity_type,
+                    "source_primary_keys": plan.source_primary_keys,
+                    "target_primary_keys": plan.target_primary_keys,
+                    "candidate_keys": plan.candidate_keys,
+                },
+                "row_hash": plan.row_hash.to_dict() if plan.row_hash else None,
+                "transformations": [t.to_dict() for t in plan.transformations],
+                "validations": [v.to_dict() for v in plan.validations],
+                "requires_review": plan.requires_review,
+                "review_reasons": plan.review_reasons,
+            } if plan is not None else None,
+            transformation_source_yaml=_prep(query_set.transformation_source),
+            transformation_target_yaml=_prep(query_set.transformation_target),
+            aggregate_source_yaml=_prep(query_set.aggregate_source),
+            aggregate_target_yaml=_prep(query_set.aggregate_target),
         )
 
         yaml_path = out_dir / f"{pg_table}.yaml"
@@ -329,6 +349,7 @@ class YAMLConfigWriter:
             source_primary_keys=plan.source_primary_keys or [],
             target_primary_keys=plan.target_primary_keys or [],
             output_dir=output_dir,
+            plan=plan,
         )
 
 
@@ -375,6 +396,11 @@ def _build_data_yaml(
     model_used: str,
     source_audit_column: str = "",
     target_audit_column: str = "",
+    plan_intent: Optional[dict] = None,
+    transformation_source_yaml: str = "",
+    transformation_target_yaml: str = "",
+    aggregate_source_yaml: str = "",
+    aggregate_target_yaml: str = "",
 ) -> str:
     fivetran_comment = (
         "\n#   - Fivetran  : WHERE _FIVETRAN_ACTIVE = TRUE (Snowflake side — active records only)"
@@ -434,6 +460,44 @@ def _build_data_yaml(
         data_target_yaml,
         "",
     ]
+
+    if plan_intent:
+        lines.extend([
+            "      validation_plan:",
+            *[f"        {line}" if line else "" for line in yaml.safe_dump(
+                plan_intent, sort_keys=False, default_flow_style=False
+            ).rstrip().splitlines()],
+            "",
+        ])
+
+    if transformation_source_yaml and transformation_target_yaml:
+        lines.extend([
+            "      transformation_validation:",
+            f"        source_table_name: {table_name_source}",
+            f"        source: {source_db_type}",
+            f"        source_database: {source_database}",
+            f"        source_schema: {pg_schema}",
+            "        sourcequery: |", transformation_source_yaml,
+            f"        target_table_name: {table_name_target}",
+            "        target: snowflake",
+            f"        target_database: {sf_database}",
+            f"        target_schema: {sf_schema}",
+            "        targetquery: |", transformation_target_yaml,
+        ])
+    if aggregate_source_yaml and aggregate_target_yaml:
+        lines.extend([
+            "      aggregate_validation:",
+            f"        source_table_name: {table_name_source}",
+            f"        source: {source_db_type}",
+            f"        source_database: {source_database}",
+            f"        source_schema: {pg_schema}",
+            "        sourcequery: |", aggregate_source_yaml,
+            f"        target_table_name: {table_name_target}",
+            "        target: snowflake",
+            f"        target_database: {sf_database}",
+            f"        target_schema: {sf_schema}",
+            "        targetquery: |", aggregate_target_yaml,
+        ])
 
     return "\n".join(lines)
 

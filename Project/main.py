@@ -9,10 +9,12 @@ import yaml
 import time
 import pyodbc
 import psycopg2
+from pathlib import Path
 from db.factory import get_database
 from utils.utility import (generate_runid,get_config_output_paths,create_summary,get_logger,add_file_handler,
                             count_validation_match,row_hash_fallback_looks_like_column_drift)
 from utils.semantic_normalize import canonicalize_frames
+from utils.quality_checks import append_validation_audit, run_quality_checks, validate_expected_grain
 from datetime import datetime
 
 
@@ -188,6 +190,15 @@ for validation in validation_dirs:
                 source_schema   = validation_config.get("source_schema", "")
                 target_database = validation_config.get("target_database", "")
                 target_schema   = validation_config.get("target_schema", "")
+                validation_plan = validation_config.get("validation_plan") or {}
+                transformation_specs = validation_plan.get("transformations") or []
+
+                if not source or not source_query or str(source_query).strip() in ("SELECT 1;", "SELECT 1"):
+                    logger.debug(
+                        "Skipping validation_block=%s table=%s — placeholder/metadata block.",
+                        validation_name, table_name,
+                    )
+                    continue
 
                 try:
                     batch_start_time = datetime.now()
@@ -243,6 +254,8 @@ for validation in validation_dirs:
                     # so equal documents become byte-identical strings before the
                     # row comparison below.
                     source_df, target_df = canonicalize_frames(source_df, target_df)
+                    quality_failures = []
+                    grain_failures = []
 
                     output_file_path = ""
                     if validation_name == "count_validation":
@@ -290,17 +303,30 @@ for validation in validation_dirs:
                         )
                         if used_row_hash_fallback and "row_hash" not in source_df.columns:
                             import hashlib
+                            _intent = validation_config.get("validation_plan") or {}
+                            _hash_spec = _intent.get("row_hash") or {}
+                            _configured = [str(c).lower() for c in (_hash_spec.get("columns") or [])]
                             _common = [c for c in source_df.columns if c in set(target_df.columns)]
+                            if _configured:
+                                _common = [c for c in _configured if c in source_df.columns and c in target_df.columns]
+                            _algorithm = str(_hash_spec.get("algorithm", "MD5")).upper()
+                            _hash_name = "sha256" if _algorithm == "SHA256" else "md5"
                             def _hash_row(row, cols=_common):
                                 def _v(c):
                                     v = row[c]
                                     if v is None or (isinstance(v, float) and v != v):
                                         return "<<NULL>>"
-                                    return str(v)
-                                return hashlib.md5("|".join(_v(c) for c in cols).encode()).hexdigest()
+                                    text = str(v).strip() if isinstance(v, str) else str(v)
+                                    return text
+                                return hashlib.new(_hash_name, "|".join(_v(c) for c in cols).encode()).hexdigest()
                             source_df["row_hash"] = source_df.apply(_hash_row, axis=1)
                             target_df["row_hash"] = target_df.apply(_hash_row, axis=1)
                             pk_src = pk_tgt = "row_hash"
+
+                        quality_failures = run_quality_checks(source_df, target_df, validation_config)
+                        grain_failures = validate_expected_grain(source_df, target_df, validation_config)
+                        for quality_failure in quality_failures + grain_failures:
+                            logger.warning("Quality check failed for %s: %s", table_name, quality_failure)
 
                         composite = isinstance(pk_src, list)
                         src = source_df.set_index(pk_src).sort_index()
@@ -384,6 +410,20 @@ for validation in validation_dirs:
                                 for col in display_cols:
                                     rec[f"{col}__source"] = (s_row[col] if s_row is not None and col in s_row.index else "")
                                     rec[f"{col}__target"] = (t_row[col] if t_row is not None and col in t_row.index else "")
+                                if transformation_specs:
+                                    rec["validation_type"] = "TRANSFORMATION"
+                                    for spec in transformation_specs:
+                                        name = str(spec.get("name", ""))
+                                        value_column = f"{name}_value"
+                                        expected = s_row.get(value_column, "") if s_row is not None else ""
+                                        actual = t_row.get(value_column, "") if t_row is not None else ""
+                                        rec[f"{name}__expected"] = expected
+                                        rec[f"{name}__actual"] = actual
+                                        try:
+                                            rec[f"{name}__difference"] = float(actual) - float(expected)
+                                        except (TypeError, ValueError):
+                                            rec[f"{name}__difference"] = "" if actual == expected else "MISMATCH"
+                                        rec[f"{name}__status"] = "PASS" if expected == actual else "FAIL"
                                 return rec
 
                             if s_df.empty:
@@ -405,13 +445,13 @@ for validation in validation_dirs:
                                 rows.append(_rec(pk_str, row_status, s_row=s_df.iloc[0], t_row=t_df.iloc[0]))
 
                         result_df = pd.DataFrame(rows).sort_values("row_key").reset_index(drop=True)
-                        filepath = os.path.join(output_path, f"{table_name}_{validation}_result_{run_id}.csv")
+                        filepath = os.path.join(output_path, f"{table_name}_{validation_name}_result_{run_id}.csv")
                         result_df.to_csv(filepath, index=False)
                         logger.info("Saved row-level results (%d rows) to %s", len(result_df), filepath)
 
                         failed_df = result_df[result_df["status"] != "PASS"]
                         if not failed_df.empty:
-                            failed_path = os.path.join(output_path, f"{table_name}_{validation}_failed_{run_id}.csv")
+                            failed_path = os.path.join(output_path, f"{table_name}_{validation_name}_failed_{run_id}.csv")
                             failed_df.to_csv(failed_path, index=False)
                             logger.info("Saved failed rows (%d rows) to %s", len(failed_df), failed_path)
 
@@ -439,6 +479,9 @@ for validation in validation_dirs:
                         else:
                             is_match = (n_fail_rows == 0)
 
+                        if quality_failures or grain_failures:
+                            is_match = False
+
                     if is_match:
                         logger.info("Match/Mismatch: Match")
                         status = "PASS"
@@ -449,6 +492,26 @@ for validation in validation_dirs:
                         logger.warning("Validation failed for table=%s validation=%s", table_name, validation_name)
                         failure_count += 1
                         logger.info("Current failure count: %s", failure_count)
+
+                    append_validation_audit(
+                        Path(output_path) / "validation_audit.jsonl",
+                        {
+                            "run_id": run_id,
+                            "table": table_name,
+                            "validation": validation_name,
+                            "source": source,
+                            "target": target,
+                            "source_query": source_query,
+                            "target_query": target_query,
+                            "source_filter": validation_config.get("source_filter", ""),
+                            "target_filter": validation_config.get("target_filter", ""),
+                            "joins": validation_config.get("joins", []),
+                            "source_rows": source_rows,
+                            "target_rows": target_rows,
+                            "status": status,
+                            "quality_failures": quality_failures + grain_failures,
+                        },
+                    )
 
                     logger.info("Creating summary file")
                     batch_end_time = datetime.now()

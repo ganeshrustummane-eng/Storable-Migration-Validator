@@ -129,7 +129,7 @@ def test_create_jira_ticket_tool():
         return False, None
 
 
-def test_get_jira_ticket_status_tool(ticket_key):
+def run_get_jira_ticket_status_tool(ticket_key):
     """Test get_jira_ticket_status tool function."""
     print("\n" + "=" * 70)
     print("TEST 5: get_jira_ticket_status Tool")
@@ -275,7 +275,7 @@ def main():
         results.append(success)
         
         if ticket_key:
-            results.append(test_get_jira_ticket_status_tool(ticket_key))
+            results.append(run_get_jira_ticket_status_tool(ticket_key))
         
         results.append(test_reject_mapping_integration())
         

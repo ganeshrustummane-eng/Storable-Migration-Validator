@@ -179,6 +179,14 @@ class PlanValidator:
                 "Plan status is INVALID — it was marked invalid before validation"
             )
 
+        if plan.requires_review:
+            issues.extend(
+                f"Plan requires review: {reason}"
+                for reason in plan.review_reasons
+            )
+            if not plan.review_reasons:
+                issues.append("Plan requires review but has no review reason")
+
         # ── 7. Ambiguities check ─────────────────────────────────────────────
         if plan.ambiguities:
             warnings.append(
@@ -203,6 +211,57 @@ class PlanValidator:
                     + ", ".join(plan.unmatched_source_columns[:5])
                     + (" ..." if unmatched_count > 5 else "")
                 )
+
+        # ── 9. Relationship and fan-out safety ─────────────────────────────
+        for relationship in plan.relationships:
+            if not relationship.left_table.strip() or not relationship.right_table.strip():
+                issues.append("Relationship tables must both be provided")
+            if not relationship.left_columns or len(relationship.left_columns) != len(relationship.right_columns):
+                issues.append(
+                    f"Relationship {relationship.left_table}->{relationship.right_table} "
+                    "must have equal, non-empty left_columns and right_columns"
+                )
+            if relationship.cardinality in {"one_to_many", "many_to_many", "unknown"}:
+                if relationship.purpose == "comparison":
+                    plan.requires_review = True
+                    reason = (
+                        f"Relationship {relationship.left_table}->{relationship.right_table} "
+                        f"has {relationship.cardinality} cardinality and may fan out comparison rows"
+                    )
+                    if reason not in plan.review_reasons:
+                        plan.review_reasons.append(reason)
+                    warnings.append(reason)
+
+        # ── 10. Generalized intent safety ──────────────────────────────────
+        allowed_operators = {"=", "!=", "<>", ">", ">=", "<", "<=", "IS", "IS NOT"}
+        for predicate in (plan.population_scope.get("filters", []) or []):
+            operator = str(predicate.get("operator", "=")).upper()
+            if not predicate.get("column"):
+                issues.append("Population filter requires column")
+            if operator not in allowed_operators:
+                issues.append(f"Unsupported population filter operator '{operator}'")
+
+        if plan.identity_type not in {"primary_key", "candidate_key", "business_key", "unknown"}:
+            issues.append(f"Unsupported identity type '{plan.identity_type}'")
+
+        if plan.row_hash:
+            if plan.row_hash.algorithm.upper() != "SHA256":
+                issues.append(f"Unsupported row hash algorithm '{plan.row_hash.algorithm}'")
+            if len(plan.row_hash.columns) != len(set(plan.row_hash.columns)):
+                issues.append("Row hash columns must be unique and ordered")
+
+        for transformation in plan.transformations:
+            if not transformation.name.strip():
+                issues.append("Transformation check requires name")
+            if not transformation.source_expression.strip() or not transformation.target_expression.strip():
+                issues.append(f"Transformation '{transformation.name}' requires source and target expressions")
+            if ";" in transformation.source_expression or ";" in transformation.target_expression:
+                issues.append(f"Transformation '{transformation.name}' cannot contain SQL statement separators")
+
+        if plan.requires_review:
+            review_issue = "Plan requires review: " + (plan.review_reasons[0] if plan.review_reasons else "unspecified reason")
+            if review_issue not in issues:
+                issues.append(review_issue)
 
         # ── Finalise ─────────────────────────────────────────────────────────
         is_valid = len(issues) == 0

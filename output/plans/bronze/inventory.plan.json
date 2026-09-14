@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "source": {
     "database": "mv_test_mssql",
     "db_type": "mssql",
@@ -15,11 +15,30 @@
   "source_table": "mv_test_mssql.dbo.inventory",
   "target_table": "MV_TEST.PUBLIC.INVENTORY",
   "status": "complete",
-  "generated_at": "2026-09-08T15:50:00.994444",
+  "generated_at": "2026-09-13T14:39:02.572048",
   "generated_by": "ai",
   "model_used": "gpt-4o",
   "ai_calls_made": 0,
   "has_fivetran_active": false,
+  "source_filter": "",
+  "target_filter": "",
+  "population_scope": {},
+  "relationships": [],
+  "identity": {
+    "type": "primary_key",
+    "source_primary_keys": [
+      "id"
+    ],
+    "target_primary_keys": [
+      "ID"
+    ],
+    "candidate_keys": []
+  },
+  "row_hash": null,
+  "transformations": [],
+  "validations": [],
+  "requires_review": false,
+  "review_reasons": [],
   "primary_keys": {
     "source": [
       "id"

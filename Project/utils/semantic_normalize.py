@@ -207,14 +207,8 @@ def _canonicalize_node(node):
         return {str(k): _canonicalize_node(v) for k, v in node.items()}
 
     if isinstance(node, list):
-        # Elements recursed first, then the list is sorted by its serialized
-        # form so that [3,1,2] and [1,2,3] compare equal.
-        canonicalized = [_canonicalize_node(v) for v in node]
-        try:
-            canonicalized.sort(key=_serialize)
-        except Exception:
-            pass
-        return canonicalized
+        # Array order is data. Preserve order while canonicalizing nested values.
+        return [_canonicalize_node(v) for v in node]
 
     if isinstance(node, str):
         # Normalize boolean-like strings so that the JSON literal true and the
@@ -238,7 +232,7 @@ def _canonicalize_node(node):
         return node  # _serialize renders as "True" / "False"
 
     if isinstance(node, (Decimal, int, float)):
-        return _round_number(node)
+        return node
 
     return node
 
@@ -271,12 +265,14 @@ def _serialize(node):
         return "null"
 
     if isinstance(node, Decimal):
-        # Already rounded to 2 d.p. by _round_number; 'f' avoids exponent form.
+        # 'f' expands exponent notation while preserving decimal precision.
         return format(node, "f")
 
-    if isinstance(node, (int, float)):
-        # Round on the way out in case the node bypassed _canonicalize_node.
-        return format(_round_number(node), "f")
+    if isinstance(node, int):
+        return str(node)
+
+    if isinstance(node, float):
+        return format(node, "f")
 
     return json.dumps(node, ensure_ascii=False)
 
@@ -319,8 +315,10 @@ def canonicalize_value(value):
         return "True" if canonical else "False"
     if isinstance(canonical, Decimal):
         return format(canonical, "f")
-    if isinstance(canonical, (int, float)):
-        return format(_round_number(canonical), "f")
+    if isinstance(canonical, int):
+        return str(canonical)
+    if isinstance(canonical, float):
+        return format(canonical, "f")
 
     try:
         return _serialize(canonical)

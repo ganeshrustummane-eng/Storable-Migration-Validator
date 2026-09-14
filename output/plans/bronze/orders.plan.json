@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "source": {
     "database": "my_test_pg",
     "db_type": "postgresql",
@@ -15,11 +15,30 @@
   "source_table": "my_test_pg.public.orders",
   "target_table": "MV_TEST.PUBLIC.ORDERS",
   "status": "complete",
-  "generated_at": "2026-09-08T15:46:25.963197",
+  "generated_at": "2026-09-13T14:28:50.076106",
   "generated_by": "ai",
   "model_used": "gpt-4o",
   "ai_calls_made": 0,
   "has_fivetran_active": false,
+  "source_filter": "",
+  "target_filter": "",
+  "population_scope": {},
+  "relationships": [],
+  "identity": {
+    "type": "primary_key",
+    "source_primary_keys": [
+      "id"
+    ],
+    "target_primary_keys": [
+      "ID"
+    ],
+    "candidate_keys": []
+  },
+  "row_hash": null,
+  "transformations": [],
+  "validations": [],
+  "requires_review": false,
+  "review_reasons": [],
   "primary_keys": {
     "source": [
       "id"

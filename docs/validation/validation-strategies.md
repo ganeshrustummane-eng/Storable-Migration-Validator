@@ -25,7 +25,7 @@ FROM DEV_SITELINK_BRONZE.PUBLIC.CUSTOMER
 WHERE _FIVETRAN_ACTIVE = TRUE;
 ```
 
-**Output config:** `Project/config/<layer>/count_validation/<layer>.yaml`
+**Output config:** `config/<layer>/count_validation/<layer>.yaml`
 
 **Interpretation:**
 - Equal counts: row count validation passes
@@ -73,7 +73,7 @@ WHERE _FIVETRAN_ACTIVE = TRUE
 ORDER BY ID;
 ```
 
-**Output config:** `Project/config/<layer>/data_validation/<table>.yaml`
+**Output config:** `config/<layer>/data_validation/<table>.yaml`
 
 **Join strategy:** Primary key join (`pksourcecolumn` / `pktargetcolumn`). Each normalized column is compared. Mismatches are recorded with source and target values.
 
@@ -95,7 +95,7 @@ ORDER BY ID;
 | Status | Meaning |
 |--------|---------|
 | `PASS` | All checks within tolerance |
-| `WARNING` | Minor differences detected (within configured tolerance) |
+| `WARNING` | Minor differences detected or review is required |
 | `FAIL` | Significant mismatches detected |
 | `ERROR` | Validation could not complete (connection error, SQL error) |
 
@@ -112,4 +112,4 @@ Where:
 - `unmatched_source_columns` = columns in source with no target match
 - Excluded/skipped columns are not counted in either numerator or denominator
 
-Coverage below 95% triggers a warning in the migration summary.
+Coverage below the configured review threshold triggers a warning in the migration summary.

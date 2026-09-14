@@ -1,6 +1,6 @@
 # Migration Validator
 
-> AI-assisted database migration testing platform. Validates heterogeneous source migrations (PostgreSQL, MSSQL, AWS Athena) into Snowflake with automated SQL generation, row-level comparison, human-governed approvals, and full audit trail.
+> AI-assisted database migration testing platform. Validates heterogeneous source migrations (PostgreSQL, MSSQL, and AWS Athena) into Snowflake with automated SQL generation, row-level comparison, human-governed approvals, and full audit trail.
 
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-green)](#)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110%2B-009688)](#)
@@ -119,7 +119,7 @@ The Streamlit app (`webapp/app.py`) has 11 tabs:
 | Tab | Purpose |
 |---|---|
 | ▶️ Generate Single YAML | Pick one source table → AI maps columns → generate validation YAML |
-| 📋 Generate Batch YAML | Multi-table batch generation with progress |
+| 📋 Generate Batch YAML | Multi-table, multi-schema, JOIN, and Excel report YAML generation with progress |
 | ✍️ Custom SQL Validation | Write or AI-generate your own source + Snowflake SQL, build YAML |
 | 🚀 Run Validation | Execute count + data validation, set mismatch threshold |
 | 📈 History & Trends | Pass/fail history, trend charts from SQLite results store |
@@ -148,6 +148,9 @@ Runs `SELECT COUNT(*)` on source and target. Pass = counts match exactly.
 4. Emit `PASS` / `FAIL` / `SOURCE_ONLY` / `TARGET_ONLY` per row
 5. Write row-level CSV to `output/<layer>/validation_<run_id>/`
 6. Apply mismatch threshold: `actual_mismatch_pct <= threshold_pct` → PASS
+
+The batch workflow also supports multi-schema validation prompts, including
+required `LEFT JOIN` rules, and can generate one YAML configuration per prompt.
 
 ### YAML Config Format
 
@@ -377,7 +380,7 @@ JIRA_PROJECT_KEY=MIG
 
 ```
 Migration-validator/
-├── webapp/app.py                   # Streamlit web UI (11 tabs)
+├── webapp/app.py                   # Streamlit web UI (11 tabs + sidebar controls)
 ├── start_connector.py              # Gemini connector FastAPI server
 ├── requirements.txt
 ├── .env.example
@@ -395,10 +398,7 @@ Migration-validator/
 │   ├── utils/
 │   │   ├── utility.py              # run_id, summary CSV, logging
 │   │   └── semantic_normalize.py   # JSON/JSONB canonicalization
-│   └── config/
-│       ├── bronze/                 # YAML validation configs per layer
-│       ├── silver/
-│       └── gold/
+│   └── output/                     # Project-level validation output
 │
 ├── src/
 │   ├── notifier.py                 # Slack + email failure notifications
@@ -419,9 +419,11 @@ Migration-validator/
 │   └── matching/                   # Fuzzy + exact column matching
 │
 ├── config/
-│   ├── exclusions.yaml             # Fivetran column exclusions
+│   ├── exclusions.yaml             # Global column exclusions
 │   ├── postgresql_exclusions.yaml
-│   └── mssql_exclusions.yaml
+│   ├── mssql_exclusions.yaml
+│   ├── athena_exclusions.yaml
+│   └── redshift_exclusions.yaml
 │
 ├── output/                         # Validation results, audit log, plans
 ├── token_usage_analysis/           # AI token logging + cost reporting
