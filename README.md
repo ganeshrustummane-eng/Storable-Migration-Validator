@@ -84,6 +84,7 @@ PostgreSQL / MSSQL / Athena         Snowflake
 | PostgreSQL | Source | All schemas; `search_path` aware |
 | Microsoft SQL Server | Source | Windows + SQL auth |
 | AWS Athena | Source | S3 staging dir required |
+| AWS Redshift | Source | Speaks Postgres wire protocol (psycopg2), default port 5439 |
 | Snowflake | Target | Bronze / Silver / Gold / Reporting layers |
 | Google Gemini / Vertex AI | AI backend | SQL generation, column mapping |
 | EPAM DIAL | AI proxy | GPT-4o, Claude, Gemini, Llama |
@@ -239,17 +240,40 @@ Supported dialects: `postgresql`, `mssql`, `athena`, `snowflake`.
 
 ## 9. Rule Book
 
-Rules govern column exclusions, type normalization, and mapping patterns.
+Rules are the single governance layer that decides which columns are compared, how each type is normalized for cross-dialect comparison, and which AI-observed patterns get reused on future runs. Every rule ends up feeding the same `CanonicalValidationPlan` — there is no separate code path that hardcodes a one-off filter or transform.
 
 | Rule type | Storage | Applies to |
 |---|---|---|
 | Fivetran exclusions | `config/exclusions.yaml` | All tables |
-| DB-type exclusions | `config/postgresql_exclusions.yaml` etc. | Per source |
+| DB-type exclusions | `config/postgresql_exclusions.yaml`, `mssql_exclusions.yaml`, `athena_exclusions.yaml`, `redshift_exclusions.yaml` | Per source |
 | Pattern rules | UI Rule Book tab → `rule_book_learned.json` | Regex match |
-| Transformation rules | Validation plan | Type coercion |
+| Transformation rules | `src/rules/` (base, immutable) + validation plan | Type coercion |
 | Normalization rules | `Project/utils/semantic_normalize.py` | JSON/JSONB/HStore |
 
-Rule lifecycle: AI proposes → Draft → Human activates (RULE_ADMIN role) → Active → Versioned.
+**Rule lifecycle:** AI observes a pattern during column mapping → proposed as a **draft** in `rule_book_learned.json` → a human with the `RULE_ADMIN` role approves or rejects → approved rules are **activated** (`RULE_ACTIVATE` permission) → every change is versioned in `VersionStore` → active rules are applied to all future pipeline runs.
+
+**How rules flow into a validation run** (`src/rule_book.py`, `src/core/validation_plan.py`):
+
+```
+Schema extraction (source + target columns)
+        ↓
+ExclusionManager removes Fivetran + user-defined + pattern-excluded columns
+        ↓
+RuleBook.get_rule_for_type() resolves a type-normalization rule per remaining column
+        ↓
+Remaining ambiguous columns go to fuzzy match → AI (DIAL) for a proposed mapping
+        ↓
+CanonicalValidationPlan (immutable) — the ONE place SQL + YAML generators read from
+        ↓
+ai_sql_generator.py emits source/target SQL   +   yaml_config_writer.py persists the plan as YAML
+```
+
+**Guardrails baked into the Rule Book (not just convention):**
+
+- Base rules in `src/rules/` and `rules_catalog.json` are immutable — never edited at runtime, only *learned* rules are mutable.
+- Every learned rule's SQL template is validated before it can be saved (`_validate_sql_template` in `src/rule_book.py`): no `;`, no `--`/`/* */` comment markers, and a deny-list of DDL/DML keywords (`DROP`, `DELETE`, `ALTER`, `TRUNCATE`, `INSERT`, `UPDATE`, `GRANT`, `REVOKE`, `EXEC`, `EXECUTE`, `CREATE`, `MERGE`, `CALL`). This blocks SQL injection through the "AI-assisted paste" rule form even though rule text isn't wired into live SQL generation yet.
+- `source_filter` / `target_filter` and any join/transform expressed in the plan must encode the *same* logical condition in both dialects — the SQL generator never lets one side diverge from the other.
+- Rule text is only ever concatenated into AI **prompts** (`build_prompt_block()`); it never becomes a raw SQL fragment executed against a live connection without going through the plan → generator path above.
 
 ---
 
@@ -343,8 +367,8 @@ GEMINI_MODEL=gemini-2.5-flash
 DIAL_API_KEY=                      # EPAM DIAL proxy
 DIAL_API_BASE=
 
-# Source connections (repeat for SRC_2, SRC_3, ...)
-SRC_1_TYPE=postgresql              # postgresql | mssql | athena
+# Source connections (repeat for SRC_2, SRC_3, SRC_4, ...)
+SRC_1_TYPE=postgresql              # postgresql | mssql | athena | redshift
 SRC_1_HOST=
 SRC_1_PORT=5432
 SRC_1_DATABASE=

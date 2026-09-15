@@ -94,8 +94,9 @@ Migration Validator is a three-tier system: a conversational AI layer (Gemini), 
     │                    │          └───────────────────────┘
     │  AWS Athena        │
     │  (boto3)           │
-    └────────────────────┘
-```
+    │                    │
+    │  AWS Redshift      │
+    │  (psycopg2)        │
 
 ---
 
@@ -165,7 +166,7 @@ The DIAL proxy (`ai-proxy.lab.epam.com`) provides a single API key that routes t
            ▼                        ▼
     Source databases          Snowflake account
     (PostgreSQL / MSSQL /     (external)
-     Athena)
+     Athena / Redshift)
 ```
 
 ---
@@ -197,6 +198,7 @@ The DIAL proxy (`ai-proxy.lab.epam.com`) provides a single API key that routes t
 | MSSQL | pyodbc | Latest |
 | Snowflake | snowflake-connector-python | Latest |
 | AWS Athena | boto3 | Latest |
+| AWS Redshift | psycopg2-binary | Latest |
 | Fuzzy matching | RapidFuzz | Latest |
 | AI proxy | openai SDK (DIAL) | Latest |
 | Testing | pytest + pytest-cov | Latest |

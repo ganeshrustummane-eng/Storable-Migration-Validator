@@ -85,6 +85,32 @@ ATHENA_REGION=us-east-1
 
 ---
 
+### AWS Redshift
+
+**Driver:** `psycopg2-binary` (Redshift speaks the PostgreSQL wire protocol)
+**Status:** Implemented
+
+| Feature | Support |
+|---------|---------|
+| Schema extraction | ✓ |
+| Primary key discovery | ✓ |
+| Column type mapping | ✓ |
+| Count validation SQL | ✓ |
+| Data validation SQL | ✓ |
+
+**Connection config:**
+```bash
+SRC_4_DB_TYPE=redshift
+SRC_4_HOST=your-cluster.redshift.amazonaws.com
+SRC_4_PORT=5439
+SRC_4_USERNAME=your-user
+SRC_4_PASSWORD=your-password
+# In database_registry.yaml:
+# SRC_4: {database: dev, schema: public}
+```
+
+---
+
 ## Target System
 
 ### Snowflake

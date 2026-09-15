@@ -33,7 +33,8 @@ STATIC_EXCLUDE_COLUMNS = [
 Regex patterns applied to column names. Configured in per-DB-type YAML files.
 
 ```yaml
-# config/postgresql_exclusions.yaml
+# config/postgresql_exclusions.yaml (same shape for mssql_exclusions.yaml,
+# athena_exclusions.yaml, redshift_exclusions.yaml)
 pattern_exclusions:
   patterns:
     - pattern: "^_FIVETRAN_.*"
