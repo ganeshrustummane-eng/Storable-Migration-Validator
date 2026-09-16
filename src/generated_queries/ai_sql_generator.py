@@ -575,6 +575,56 @@ Generate the query now:
             + "\n".join(f"  {a}" for a in attempts)
         )
 
+    _INJECTION_MARKERS = (
+        "ignore previous instructions",
+        "ignore the above",
+        "disregard the system prompt",
+        "you are now",
+        "act as",
+    )
+    _DESTRUCTIVE_INSTRUCTION_RE = re.compile(
+        r"\b(DROP|DELETE|TRUNCATE|ALTER|GRANT|REVOKE|INSERT|UPDATE|EXEC|EXECUTE)\b",
+        re.IGNORECASE,
+    )
+    _MAX_INSTRUCTION_LENGTH = 2000
+
+    def _check_instruction_safety(self, user_instruction: str) -> None:
+        """
+        Deterministically reject a plain-English request before it ever reaches
+        the LLM prompt.
+
+        This is DQE tooling, not a chat product: a false positive just means a
+        DQE rephrases their request, while a false negative could smuggle a
+        prompt-injection payload or a destructive SQL verb into the model
+        context. That tradeoff is intentional — reject aggressively.
+
+        Raises:
+            AISQLGenerationError: instruction contains a prompt-injection
+                marker, a destructive/DDL/DML SQL verb, or exceeds the length
+                cap.
+        """
+        if len(user_instruction) > self._MAX_INSTRUCTION_LENGTH:
+            raise AISQLGenerationError(
+                f"user_instruction exceeds the {self._MAX_INSTRUCTION_LENGTH}-character "
+                "limit — shorten the request."
+            )
+
+        lowered = user_instruction.lower()
+        for marker in self._INJECTION_MARKERS:
+            if marker in lowered:
+                raise AISQLGenerationError(
+                    f"user_instruction contains a prompt-injection marker ('{marker}') "
+                    "and was rejected before being sent to the AI model."
+                )
+
+        destructive = self._DESTRUCTIVE_INSTRUCTION_RE.findall(user_instruction)
+        if destructive:
+            raise AISQLGenerationError(
+                f"user_instruction contains forbidden SQL keyword(s) {sorted(set(destructive))} "
+                "— destructive/DDL/DML verbs have no legitimate reason to appear in a "
+                "natural-language validation request."
+            )
+
     def generate_schema_aware_query(
         self,
         user_instruction: str,
@@ -615,6 +665,8 @@ Generate the query now:
 
         if not schema_context:
             raise AISQLGenerationError("schema_context is empty — select at least one table.")
+
+        self._check_instruction_safety(user_instruction)
 
         # Build a compact but complete schema dump the AI can reason over
         schema_lines = []
@@ -684,7 +736,7 @@ Generate the {db_type.upper()} query now:
 
         for attempt in range(1, MAX_GENERATION_ATTEMPTS + 1):
             raw    = self._call_ai(messages, f"schema_aware:{db_type}", attempt)
-            result = self._parse_response(raw, db_type, [], query_type="custom")
+            result = self._parse_response(raw, db_type, [], query_type="custom", schema_context=schema_context)
 
             # Verify at least one of the selected tables is referenced
             upper_q = result.query.upper()
@@ -1081,6 +1133,7 @@ Generate the complete SELECT query now:
         db_type: str,
         mappings: Optional[List[ColumnRuleMapping]] = None,
         query_type: str = "data_validation",
+        schema_context: Optional[dict] = None,
     ) -> AIGeneratedQuery:
         """Parse AI response and extract the query."""
         # Strip markdown code fences if present
@@ -1094,7 +1147,9 @@ Generate the complete SELECT query now:
                 cleaned = "\n".join(lines[1:])
             cleaned = cleaned.strip()
 
-        warnings = self._validate_generated_query(cleaned, db_type, mappings or [], query_type)
+        warnings = self._validate_generated_query(
+            cleaned, db_type, mappings or [], query_type, schema_context=schema_context
+        )
 
         return AIGeneratedQuery(
             query=cleaned,
@@ -1110,6 +1165,7 @@ Generate the complete SELECT query now:
         db_type: str,
         mappings: List[ColumnRuleMapping],
         query_type: str,
+        schema_context: Optional[dict] = None,
     ) -> List[str]:
         """Reject unsafe or incomplete AI output before it reaches SQL files."""
         warnings = []
@@ -1170,4 +1226,34 @@ Generate the complete SELECT query now:
             )
             if _comma_check.search(query):
                 warnings.append("SELECT expressions may be missing commas")
+
+        # Schema allowlist: every table the AI referenced must be one the DQE
+        # actually selected — otherwise the AI may have hallucinated a table
+        # name that happens to exist elsewhere in the warehouse. Only applies
+        # when the caller passed a schema_context (generate_schema_aware_query),
+        # so the existing data_validation mapping-alias checks above are untouched.
+        if schema_context:
+            allowed_bare = {t.split(".")[-1].strip('"').upper() for t in schema_context.keys()}
+            allowed_fqn = {t.strip('"').upper() for t in schema_context.keys()}
+            # CTEs are legitimate "tables" the AI defines itself — don't flag them.
+            cte_names = {
+                name.upper()
+                for name in re.findall(r"(?:WITH|,)\s+(\w+)\s+AS\s*\(", query, re.IGNORECASE)
+            }
+            referenced = re.findall(
+                r"\b(?:FROM|JOIN)\s+(\"?[\w.]+\"?)", query, re.IGNORECASE
+            )
+            for tbl in referenced:
+                tbl_clean = tbl.strip('"')
+                tbl_upper = tbl_clean.upper()
+                if tbl_upper == "LATERAL":
+                    # "JOIN LATERAL FLATTEN(...)" — LATERAL is a keyword here, not a table.
+                    continue
+                bare_upper = tbl_upper.split(".")[-1]
+                if tbl_upper in allowed_fqn or bare_upper in allowed_bare or bare_upper in cte_names:
+                    continue
+                warnings.append(
+                    f"Query references table '{tbl_clean}' not present in provided "
+                    "schema_context — possible hallucinated table name"
+                )
         return warnings

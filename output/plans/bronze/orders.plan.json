@@ -15,7 +15,7 @@
   "source_table": "my_test_pg.public.orders",
   "target_table": "MV_TEST.PUBLIC.ORDERS",
   "status": "complete",
-  "generated_at": "2026-09-13T14:28:50.076106",
+  "generated_at": "2026-09-16T14:33:09.877860",
   "generated_by": "ai",
   "model_used": "gpt-4o",
   "ai_calls_made": 0,

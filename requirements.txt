@@ -49,3 +49,4 @@ pytest-cov
 flake8
 black
 pylint
+openpyxl
