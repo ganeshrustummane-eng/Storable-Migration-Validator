@@ -30,4 +30,6 @@ Project/output/
 .DS_Store
 Thumbs.db
 
+# Project-specific configuration and output directories
 /project/config/
+/project/output/
