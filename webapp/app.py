@@ -994,7 +994,7 @@ def render_mapping_review(
         with _sk_c2:
             if st.button("🎫 Raise Jira ticket", key=f"{key_prefix}_skip_jira_btn"):
                 try:
-                    from gemini_connector.jira_client import create_ticket, is_configured
+                    from connector.jira_client import create_ticket, is_configured
                     if not is_configured():
                         st.info("Jira not configured — set `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_PROJECT_KEY` in `.env`.")
                     else:
@@ -1024,7 +1024,7 @@ def render_mapping_review(
         with _lc_col2:
             if st.button("🎫 Raise Jira ticket", key=f"{key_prefix}_inline_jira_btn"):
                 try:
-                    from gemini_connector.jira_client import create_ticket, is_configured
+                    from connector.jira_client import create_ticket, is_configured
                     if not is_configured():
                         st.info("Jira not configured — set `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_PROJECT_KEY` in `.env`.")
                     else:
@@ -1244,14 +1244,7 @@ with st.sidebar:
     elif _claude_key:
         st.success(f"AI backend: Claude ({os.getenv('CLAUDE_MODEL', 'claude-3-5-sonnet-20241022')})", icon="🤖")
     else:
-        # Column-mapping/SQL-generation AI (DIAL/Claude) is separate from the
-        # Gemini Chat widget's own backend — only warn "not configured" if
-        # neither is set, so a Vertex-AI-only setup doesn't look broken here.
-        from gemini_connector.gemini_agent import is_gemini_configured as _is_gemini_ready
-        if _is_gemini_ready():
-            st.info("AI mapping backend (DIAL/Claude) not set — Gemini Chat is configured separately.", icon="ℹ️")
-        else:
-            st.error("No AI backend configured (DIAL_API_KEY / CLAUDE_API_KEY missing)", icon="⚠️")
+        st.error("No AI backend configured (DIAL_API_KEY / CLAUDE_API_KEY missing)", icon="⚠️")
 
     _sf_account = os.getenv("SNOWFLAKE_ACCOUNT", "")
     if _sf_account:
@@ -1627,7 +1620,7 @@ with tab_single:
                     with _ssk_c2:
                         if st.button("🎫 Raise Jira ticket", key="single_skipped_jira_btn"):
                             try:
-                                from gemini_connector.jira_client import create_ticket, is_configured
+                                from connector.jira_client import create_ticket, is_configured
                                 if not is_configured():
                                     st.info("Jira not configured — set `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_PROJECT_KEY` in `.env`.")
                                 else:
@@ -1666,7 +1659,7 @@ with tab_single:
                     with _jira_col2:
                         if st.button("🎫 Raise Jira ticket", key="single_jira_btn"):
                             try:
-                                from gemini_connector.jira_client import create_ticket, is_configured
+                                from connector.jira_client import create_ticket, is_configured
                                 if not is_configured():
                                     st.info("Jira not configured — set `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_PROJECT_KEY` in your `.env` to enable.")
                                 else:
@@ -2193,7 +2186,7 @@ with tab_batch:
                         with _bsk_c2:
                             if st.button("🎫 Raise Jira ticket", key=f"batch_skip_jira_{_bi['table']}"):
                                 try:
-                                    from gemini_connector.jira_client import create_ticket, is_configured
+                                    from connector.jira_client import create_ticket, is_configured
                                     if not is_configured():
                                         st.info("Jira not configured — set env vars in `.env`.")
                                     else:
@@ -2229,7 +2222,7 @@ with tab_batch:
                 with _bj_col2:
                     if st.button("🎫 Raise Jira tickets", key="batch_jira_btn"):
                         try:
-                            from gemini_connector.jira_client import create_ticket, is_configured
+                            from connector.jira_client import create_ticket, is_configured
                             if not is_configured():
                                 st.info("Jira not configured — set `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_PROJECT_KEY` in your `.env`.")
                             else:
@@ -3726,27 +3719,45 @@ with tab_execute:
         import yaml as _yi
         rows = []
         for _ly in _LAYERS:
-            # Count validation — single shared YAML per layer
-            _cv_path = _PROJECT_DIR / "config" / _ly / "count_validation" / f"{_ly}.yaml"
-            if _cv_path.exists():
+            # Count validation — one YAML per source DB (mssql.yaml, postgres.yaml, …)
+            # Fall back to legacy {layer}.yaml for older runs
+            _cv_dir = _PROJECT_DIR / "config" / _ly / "count_validation"
+            _cv_yamls = sorted(_cv_dir.glob("*.yaml")) if _cv_dir.exists() else []
+            for _cv_path in _cv_yamls:
+                _source_db = _cv_path.stem  # filename IS the source db name
                 _cfg = _yi.safe_load(_cv_path.read_text(encoding="utf-8")) or {}
-                for tbl in (_cfg.get("tables") or {}):
+                for tbl, tbl_block in (_cfg.get("tables") or {}).items():
+                    # Also read source field from YAML for legacy files where stem != db type
+                    _src = ((tbl_block.get("validations") or {})
+                            .get("count_validation", {})
+                            .get("source") or _source_db)
                     rows.append({"stem": tbl, "vtype": "count_validation",
-                                 "folder": _ly, "layer": _ly, "path": _cv_path})
-            # Layer data_validation
+                                 "folder": _ly, "layer": _ly, "path": _cv_path,
+                                 "source_db": _src.lower()})
+            # Data validation — subdir per source DB: data_validation/{source_db}/{table}.yaml
+            # Also handles legacy flat layout: data_validation/{table}.yaml
             _dv_dir = _PROJECT_DIR / "config" / _ly / "data_validation"
             if _dv_dir.exists():
-                for p in sorted(_dv_dir.glob("*.yaml")):
+                for p in sorted(_dv_dir.rglob("*.yaml")):
+                    # subdir layout: p.parent.name = source_db, p.parent.parent.name = "data_validation"
+                    # flat layout: p.parent.name = "data_validation"
+                    if p.parent.name == "data_validation":
+                        _src_db = "unknown"
+                    else:
+                        _src_db = p.parent.name  # e.g. "mssql", "postgres"
                     rows.append({"stem": p.stem, "vtype": "data_validation",
-                                 "folder": _ly, "layer": _ly, "path": p})
+                                 "folder": _ly, "layer": _ly, "path": p,
+                                 "source_db": _src_db.lower()})
         # Report/ data_validation — independent of layer
         _rep_root = _PROJECT_DIR / "config" / "report"
         if _rep_root.exists():
             for p in sorted(_rep_root.rglob("*.yaml")):
-                if p.parent.name == "data_validation":
-                    subfolder = p.parent.parent.name
+                if p.parent.name == "data_validation" or p.parent.parent.name == "data_validation":
+                    subfolder = p.parent.parent.name if p.parent.parent.name != "data_validation" else p.parent.parent.parent.name
+                    _src_db = p.parent.name if p.parent.parent.name == "data_validation" else "unknown"
                     rows.append({"stem": p.stem, "vtype": "data_validation",
-                                 "folder": f"report/{subfolder}", "layer": "bronze", "path": p})
+                                 "folder": f"report/{subfolder}", "layer": "bronze", "path": p,
+                                 "source_db": _src_db.lower()})
         return rows
 
     _inventory = _build_exec_inventory()
@@ -3758,7 +3769,7 @@ with tab_execute:
         )
     else:
         # ── Filters row ──────────────────────────────────────────────────────
-        _fc1, _fc2, _fc3 = st.columns([2, 2, 3])
+        _fc1, _fc2, _fc3, _fc4 = st.columns([2, 2, 2, 3])
         with _fc1:
             _all_folders = sorted({r["folder"] for r in _inventory})
             _sel_folders = st.multiselect(
@@ -3773,6 +3784,13 @@ with tab_execute:
                 default=_vtype_opts, key="exec_vtype_filter",
             )
         with _fc3:
+            _all_src_dbs = sorted({r["source_db"] for r in _inventory})
+            _sel_src_dbs = st.multiselect(
+                "Source DB", options=_all_src_dbs,
+                default=_all_src_dbs, key="exec_source_db_filter",
+                help="Filter by source database type (mssql, postgres, athena, redshift, …).",
+            )
+        with _fc4:
             _search = st.text_input(
                 "Search tables", placeholder="Type to filter…", key="exec_search",
             )
@@ -3781,6 +3799,7 @@ with tab_execute:
             r for r in _inventory
             if r["folder"] in (_sel_folders or _all_folders)
             and r["vtype"] in (_sel_vtypes or _vtype_opts)
+            and r["source_db"] in (_sel_src_dbs or _all_src_dbs)
             and (_search.strip().lower() in r["stem"].lower() if _search.strip() else True)
         ]
 
@@ -3788,8 +3807,9 @@ with tab_execute:
         _sel_set_key = f"exec_sel_{layer}_{select_all}"
 
         file_rows = [
-            {"Run": select_all, "Table": r["stem"], "Type": r["vtype"],
-             "Folder": r["folder"], "File": str(r["path"].relative_to(_PROJECT_DIR))}
+            {"Run": select_all, "Table": r["stem"], "Source DB": r["source_db"],
+             "Type": r["vtype"], "Folder": r["folder"],
+             "File": str(r["path"].relative_to(_PROJECT_DIR))}
             for r in _filtered
         ]
         files_df = pd.DataFrame(file_rows) if file_rows else pd.DataFrame(
@@ -3800,10 +3820,11 @@ with tab_execute:
             files_df,
             column_config={
                 "Run":    st.column_config.CheckboxColumn(help="Include in run"),
-                "Table":  st.column_config.TextColumn(disabled=True),
-                "Type":   st.column_config.TextColumn(disabled=True),
-                "Folder": st.column_config.TextColumn(disabled=True),
-                "File":   st.column_config.TextColumn(disabled=True),
+                "Table":     st.column_config.TextColumn(disabled=True),
+                "Source DB": st.column_config.TextColumn(disabled=True),
+                "Type":      st.column_config.TextColumn(disabled=True),
+                "Folder":    st.column_config.TextColumn(disabled=True),
+                "File":      st.column_config.TextColumn(disabled=True),
             },
             hide_index=True, width="stretch", key=f"exec_file_grid_{_sel_set_key}",
         )
@@ -4608,7 +4629,7 @@ if "_gemini_chat_size" not in st.session_state:
 
 with st.container(key="gemini_chat_toggle"):
     _toggle_label = "✕" if st.session_state["_gemini_chat_open"] else "✨"
-    if st.button(_toggle_label, key="gemini_chat_toggle_btn", help="Gemini Migration Intelligence chat"):
+    if st.button(_toggle_label, key="gemini_chat_toggle_btn", help="Migration Intelligence chat"):
         st.session_state["_gemini_chat_open"] = not st.session_state["_gemini_chat_open"]
         st.rerun()
 
@@ -4690,19 +4711,19 @@ else:
 with st.container(key="gemini_chat_panel"):
     # ── Header ─────────────────────────────────────────────────────────────
     sys.path.insert(0, str(_SRC_DIR))
-    from gemini_connector.gemini_agent import is_gemini_configured, _vertexai_configured
+    from connector.agent import create_agent
 
     _dial_key     = os.getenv("DIAL_API_KEY", "")
-    _gemini_key   = is_gemini_configured()
+    _claude_key   = os.getenv("CLAUDE_API_KEY", "")
+    _chat_ready   = bool(_dial_key or _claude_key)
     _auth_mode    = os.getenv("AUTH_MODE", "static").upper()
     _connector_ok = bool(os.getenv("CONNECTOR_API_TOKEN") or _auth_mode == "DEV")
 
     if _dial_key:
         _ai_backend = "DIAL · " + os.getenv("DIAL_MODEL", "gpt-4o")
         _ai_status  = "success"
-    elif _gemini_key:
-        _mode_label = "Vertex AI" if _vertexai_configured() else "Dev API"
-        _ai_backend = f"Gemini ({_mode_label}) · " + os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    elif _claude_key:
+        _ai_backend = "Claude · " + os.getenv("CLAUDE_MODEL", "claude-3-5-sonnet-20241022")
         _ai_status  = "success"
     else:
         _ai_backend = "Offline"
@@ -4765,12 +4786,11 @@ with st.container(key="gemini_chat_panel"):
         else:
             st.warning("Identity required before any approval or write-back action is permitted.", icon="⚠️")
 
-    if not _gemini_key:
+    if not _chat_ready:
         st.info(
             "Running in **offline mode** — tool dispatch is available but conversational AI "
-            "requires either `GOOGLE_API_KEY`/`GEMINI_API_KEY` in `.env`, or "
-            "`GOOGLE_GENAI_USE_VERTEXAI=true` + `GOOGLE_CLOUD_PROJECT` (Vertex AI via ADC, "
-            "for orgs that disable personal API key creation).",
+            "requires `DIAL_API_KEY` in `.env` (current build/test backend), or "
+            "`CLAUDE_API_KEY` once a direct Anthropic key is issued.",
             icon="ℹ️",
         )
 
@@ -4796,24 +4816,24 @@ with st.container(key="gemini_chat_panel"):
     if msgs and msgs[-1]["role"] == "user":
         last_user_msg = msgs[-1]["content"]
         with st.chat_message("assistant"):
-            with st.spinner("Gemini is working…"):
+            with st.spinner("Migration Intelligence agent is working…"):
                 try:
                     sys.path.insert(0, str(_SRC_DIR))
-                    from gemini_connector.gemini_agent import create_agent
+                    from connector.agent import create_agent
 
-                    agent_key = "gemini_agent_instance"
+                    agent_key = "agent_instance"
                     if agent_key not in st.session_state:
                         st.session_state[agent_key] = create_agent()
                     agent = st.session_state[agent_key]
 
-                    if _dial_key or _gemini_key:
+                    if agent.is_configured():
                         result = agent.chat(last_user_msg, actor=st.session_state.get("gemini_actor", ""))
                     else:
                         result = agent.chat_offline(last_user_msg)
 
                     reply = result.get("text", "")
                     if not reply:
-                        reply = "_No text response from Gemini. Check API key and model configuration._"
+                        reply = "_No text response from the AI backend. Check API key and model configuration._"
 
                     st.markdown(reply)
 
@@ -4830,7 +4850,7 @@ with st.container(key="gemini_chat_panel"):
                     st.session_state["gemini_messages"].append({"role": "assistant", "content": reply})
 
                 except ImportError as exc:
-                    err_msg = f"Gemini connector not available: {exc}. Ensure the gemini_connector package is in src/."
+                    err_msg = f"Migration Intelligence connector not available: {exc}. Ensure the connector package is in src/."
                     st.error(err_msg)
                     st.session_state["gemini_messages"].append({"role": "assistant", "content": err_msg})
                 except Exception as exc:
@@ -4857,7 +4877,7 @@ with st.container(key="gemini_chat_panel"):
     with _cl2:
         if st.button("🗑️", key="gemini_clear", help="Clear conversation"):
             st.session_state["gemini_messages"] = []
-            st.session_state.pop("gemini_agent_instance", None)
+            st.session_state.pop("agent_instance", None)
             st.rerun()
 
     # Plain form instead of st.chat_input — chat_input pins itself to the
@@ -4886,11 +4906,11 @@ with tab_review:
 
     sys.path.insert(0, str(_SRC_DIR))
     try:
-        from gemini_connector.approval_store import approval_store, ApprovalStatus
-        from gemini_connector.audit import audit_logger
-        from gemini_connector.tools import get_migration_summary, get_business_metrics
+        from connector.approval_store import approval_store, ApprovalStatus
+        from connector.audit import audit_logger
+        from connector.tools import get_migration_summary, get_business_metrics
     except ImportError:
-        st.error("Gemini connector package not found. Ensure src/gemini_connector/ exists.")
+        st.error("Migration Intelligence connector package not found. Ensure src/connector/ exists.")
         st.stop()
 
     # ── Enterprise identity panel (shared with Gemini Chat via session state) ─
@@ -5061,7 +5081,7 @@ with tab_review:
                         st.session_state[_draft_key] = "Jira"
 
                     if st.session_state.get(_draft_key) == "Jira":
-                        from gemini_connector import jira_client
+                        from connector import jira_client
                         if not jira_client.is_configured():
                             st.warning(
                                 "Jira isn't configured — set JIRA_URL, JIRA_EMAIL, JIRA_API_TOKEN, "
@@ -5145,7 +5165,7 @@ with tab_review:
                             elif _action_verb in ("Reject", "Modify") and not reason_text.strip():
                                 st.error("A reason is required for reject and modify actions.", icon="⚠️")
                             else:
-                                from gemini_connector.tools import approve_mapping, reject_mapping, modify_mapping
+                                from connector.tools import approve_mapping, reject_mapping, modify_mapping
                                 if _action_verb == "Approve":
                                     res = approve_mapping(r.id, review_actor, reason="Approved via Review & Approve UI")
                                 elif _action_verb == "Reject":
@@ -5243,7 +5263,7 @@ with tab_review:
                                 if not review_actor:
                                     st.error("Enter your corporate email at the top before approving.", icon="⚠️")
                                 else:
-                                    from gemini_connector.tools import approve_plan
+                                    from connector.tools import approve_plan
                                     res = approve_plan(plan_obj.source_table, _plan_layer, review_actor, plan_reason)
                                     if res.get("status") == "ok":
                                         flash(f"Plan '{plan_obj.source_table}' approved by {review_actor}", icon="✅")
@@ -5299,7 +5319,7 @@ with tab_review:
             value=95, step=1, key="cov_threshold_slider",
         )
         try:
-            from gemini_connector.tools import get_coverage
+            from connector.tools import get_coverage
             _cov_results = [(l, get_coverage(layer=l, threshold=float(cov_threshold))) for l in _review_layers]
             _cov_results_ok = [(l, c) for l, c in _cov_results if c.get("status") == "ok"]
 
@@ -5415,7 +5435,7 @@ with tab_jira:
     st.caption("Tickets assigned to you in the configured Jira project — update status or attach a validation result.")
 
     try:
-        from gemini_connector.jira_client import (
+        from connector.jira_client import (
             is_configured, get_my_tickets, get_ticket,
             transition_ticket, add_comment, JiraError, JiraNotConfiguredError,
         )
@@ -5811,7 +5831,7 @@ with tab_guide:
 
         st.warning(
             "**Security invariant:** The string `gemini_ai` is always rejected as an actor on write tools. "
-            "Gemini can never self-approve — a human with the correct role must confirm.",
+            "The AI agent can never self-approve — a human with the correct role must confirm.",
             icon="🛡️",
         )
 

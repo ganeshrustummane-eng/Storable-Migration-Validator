@@ -36,4 +36,4 @@ COPY . .
 ENV PORT=8001
 EXPOSE 8001
 
-CMD ["sh", "-c", "uvicorn src.gemini_connector.api:app --host 0.0.0.0 --port ${PORT}"]
+CMD ["sh", "-c", "uvicorn src.connector.api:app --host 0.0.0.0 --port ${PORT}"]

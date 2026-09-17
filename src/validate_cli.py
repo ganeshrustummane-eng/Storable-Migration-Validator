@@ -948,7 +948,7 @@ def cmd_generate(args):
     try:
         _src_ext = _make_source_extractor(rec) if rec is not None else None
         pipeline = ValidationPipeline(model=current_model, source_extractor=_src_ext)
-        result   = pipeline.run(
+        result, _plan = pipeline.run_with_plan(
             pg_schema=pg_schema,
             pg_table=pg_table,
             sf_schema=sf_schema,
@@ -2693,7 +2693,7 @@ def _run_parameterized_tables(args, current_model: str, exclude_cols: list) -> N
         print(f"  {_C.DIM}→ {src_table}  ↔  {sf_table}{_C.RESET}")
 
         try:
-            result = pipeline.run(
+            result, _plan = pipeline.run_with_plan(
                 pg_schema=pg_schema,
                 pg_table=src_table,
                 sf_schema=sf_schema,
@@ -3209,7 +3209,7 @@ def cmd_multi_db(args):
         _sep("═")
 
         try:
-            result = pipeline.run(
+            result, _plan = pipeline.run_with_plan(
                 pg_schema=schema,
                 pg_table=src_table,
                 sf_schema=sf_schema,

@@ -1,7 +1,8 @@
 """
 Migration Intelligence Connector — Enterprise REST API
 ======================================================
-FastAPI server exposing governed migration-validation tools to Gemini Enterprise.
+FastAPI server exposing governed migration-validation tools for agentic/API access
+(chat backend: EPAM DIAL — see agent.py).
 
 Security architecture:
   1. Authentication (auth.py)  — JWT or static bearer token
@@ -12,9 +13,9 @@ Security architecture:
 
 Endpoint groups:
   GET  /health                     — service health
-  GET  /tools                      — tool declarations for Gemini registration
+  GET  /tools                      — tool declarations for agent registration
   POST /tools/{tool_name}          — dispatch any tool
-  POST /chat                       — Gemini agent chat
+  POST /chat                       — Migration Intelligence agent chat
   GET  /pending                    — pending human reviews
   GET  /summary/{layer}            — portfolio summary
   GET  /table/{source_table}       — plan + mappings + failures
@@ -32,7 +33,7 @@ Endpoint groups:
   GET  /me                         — return caller's resolved identity and permissions
 
 Run:
-    uvicorn src.gemini_connector.api:app --reload --port 8001
+    uvicorn src.connector.api:app --reload --port 8001
 """
 
 from __future__ import annotations
@@ -61,14 +62,14 @@ except ImportError:
         "FastAPI is required. Install: pip install fastapi uvicorn"
     )
 
-from gemini_connector.tools import dispatch_tool, TOOL_FUNCTIONS
-from gemini_connector.gemini_agent import TOOL_DECLARATIONS as _DECLS
-from gemini_connector.a2a import load_agent_card, handle_a2a_request
-from gemini_connector.audit import audit_logger, AuditRecord
-from gemini_connector.approval_store import approval_store
-from gemini_connector.version_store import version_store, VersionConflictError
-from gemini_connector.auth import verify_bearer, AuthenticationError, AuthResult
-from gemini_connector.authz import (
+from connector.tools import dispatch_tool, TOOL_FUNCTIONS
+from connector.agent import TOOL_DECLARATIONS as _DECLS
+from connector.a2a import load_agent_card, handle_a2a_request
+from connector.audit import audit_logger, AuditRecord
+from connector.approval_store import approval_store
+from connector.version_store import version_store, VersionConflictError
+from connector.auth import verify_bearer, AuthenticationError, AuthResult
+from connector.authz import (
     require_permission, effective_permissions,
     Permission, AuthorizationError,
 )
@@ -247,21 +248,21 @@ _agent_cache: Dict[str, Any] = {}
 @app.post("/chat")
 def chat(request: ChatRequest, req: Request):
     """
-    Conversational Gemini agent.
+    Conversational Migration Intelligence agent (EPAM DIAL backend).
     Read-only operations are open; write actions still require the actor to
     have appropriate permissions when the tool routes through /tools.
     """
-    from gemini_connector.gemini_agent import GeminiAgent, is_gemini_configured
+    from connector.agent import create_agent
 
     session_key = request.actor or "default"
     if session_key not in _agent_cache or request.reset:
-        _agent_cache[session_key] = GeminiAgent()
+        _agent_cache[session_key] = create_agent()
 
-    agent: GeminiAgent = _agent_cache[session_key]
+    agent = _agent_cache[session_key]
 
     result = (
         agent.chat(request.message, actor=request.actor)
-        if is_gemini_configured()
+        if agent.is_configured()
         else agent.chat_offline(request.message)
     )
     return {
@@ -292,8 +293,8 @@ async def a2a_entrypoint(request: Request):
         return {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}
 
     # Session key per A2A contextId, not a single shared constant — a hardcoded key here
-    # meant every Gemini Enterprise conversation (from any user, any thread) accumulated
-    # into the SAME GeminiAgent history forever, including stale tool-call errors from
+    # would mean every A2A conversation (from any user, any thread) accumulated into
+    # the SAME agent history forever, including stale tool-call errors from
     # long-past turns bleeding into unrelated new questions.
     context_id = None
     if isinstance(body, dict):
@@ -301,12 +302,12 @@ async def a2a_entrypoint(request: Request):
     session_key = f"a2a:{context_id}" if context_id else f"a2a:oneoff:{uuid.uuid4()}"
 
     def _run_chat(text: str) -> Dict[str, Any]:
-        from gemini_connector.gemini_agent import GeminiAgent, is_gemini_configured
+        from connector.agent import create_agent
 
         if session_key not in _agent_cache:
-            _agent_cache[session_key] = GeminiAgent()
-        agent: GeminiAgent = _agent_cache[session_key]
-        return agent.chat(text, actor="") if is_gemini_configured() else agent.chat_offline(text)
+            _agent_cache[session_key] = create_agent()
+        agent = _agent_cache[session_key]
+        return agent.chat(text, actor="") if agent.is_configured() else agent.chat_offline(text)
 
     return handle_a2a_request(body, _run_chat)
 

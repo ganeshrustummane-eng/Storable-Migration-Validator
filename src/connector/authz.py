@@ -38,7 +38,7 @@ import os
 from enum import Enum
 from typing import Any, Dict, FrozenSet, List, Optional, Set
 
-from gemini_connector.auth import AuthResult
+from connector.auth import AuthResult
 
 
 # ---------------------------------------------------------------------------

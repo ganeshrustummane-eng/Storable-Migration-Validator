@@ -1,35 +1,20 @@
 """
-Gemini Migration Intelligence Agent
-=====================================
-Wraps the google-genai SDK with all Migration Validator tools
-registered as Gemini function declarations.
+Migration Intelligence Agent
+==============================
+Conversational AI agent wired to all Migration Validator tools as
+function-calling declarations, dispatched through tools.dispatch_tool().
 
-The agent handles the full function-calling loop:
-  1. Send user message + system prompt to Gemini
-  2. Gemini decides which tool(s) to call
-  3. Dispatch calls through tools.dispatch_tool()
-  4. Return results to Gemini
-  5. Gemini synthesizes a business-oriented answer
+Backend: EPAM DIAL (OpenAI-compatible proxy) — see DIALAgent below.
+Once a direct Claude API key is available, this can be pointed at the
+Anthropic API directly the same way ai/rule_planner.py and
+ai_transformation/ai_rule_mapper.py already support a DIAL-vs-Claude-direct
+switch; this module only has one backend today because DIAL is the current
+build/test setup.
 
 Usage:
-    agent = GeminiAgent(model="gemini-2.5-flash")
+    agent = create_agent()
     response = agent.chat("Validate the customer migration from PostgreSQL to Snowflake.")
-    print(response.text)
-
-Or streaming:
-    for chunk in agent.stream("Show me tables needing attention"):
-        print(chunk, end="", flush=True)
-
-Environment variables (one auth path required for online mode):
-    GOOGLE_API_KEY or GEMINI_API_KEY — Gemini Developer API (Google AI Studio) key.
-        Some corporate-governed GCP projects disable personal API key creation by
-        org policy — use the Vertex AI path below instead in that case.
-    GOOGLE_GENAI_USE_VERTEXAI=true, plus GOOGLE_CLOUD_PROJECT and
-        GOOGLE_CLOUD_LOCATION — Vertex AI's Gemini API instead of the Developer
-        API. Authenticates via Application Default Credentials (ADC) — no API
-        key needed. Locally: `gcloud auth application-default login`. On Cloud
-        Run: the service's own runtime service account is used automatically.
-    GEMINI_MODEL                      — default model (gemini-2.5-flash)
+    print(response["text"])
 """
 
 from __future__ import annotations
@@ -37,6 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -49,26 +35,11 @@ for _p in (str(_SRC), str(_ROOT)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from gemini_connector.tools import dispatch_tool
-
-
-def _vertexai_configured() -> bool:
-    """True if Vertex AI mode is selected via env vars (ADC-based auth, no
-    API key). This is the standard workaround when a corporate-governed GCP
-    project disables personal Gemini Developer API key creation by policy."""
-    return os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "").strip().lower() in ("true", "1", "yes")
-
-
-def is_gemini_configured() -> bool:
-    """True if either a Gemini Developer API key or Vertex AI mode is
-    configured — the single source of truth for "is online AI available",
-    used by create_agent(), the REST API, and the webapp status display so
-    they can never disagree about which mode is active."""
-    return bool(os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")) or _vertexai_configured()
+from connector.tools import dispatch_tool
 
 
 # ---------------------------------------------------------------------------
-# Tool declarations for Gemini function-calling
+# Tool declarations for AI function-calling
 # ---------------------------------------------------------------------------
 
 TOOL_DECLARATIONS = [
@@ -480,150 +451,19 @@ YOU recommend. HUMANS approve high-risk decisions.
 """
 
 # ---------------------------------------------------------------------------
-# Agent class
+# Offline formatters — shared by DIALAgent.chat_offline() below
 # ---------------------------------------------------------------------------
 
-class GeminiAgent:
-    """
-    Gemini function-calling agent for Migration Intelligence.
+class _OfflineFormatters:
+    """Mixin: render dispatch_tool() results as plain-English text without
+    calling any AI model. Used when no AI backend is configured at all."""
 
-    Requires: google-genai>=0.8.0
-    Install:  pip install google-genai
-    """
-
-    def __init__(
-        self,
-        model: Optional[str] = None,
-        api_key: Optional[str] = None,
-        max_tool_rounds: int = 10,
-    ):
-        self._model_name = model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-        self._api_key = api_key or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY", "")
-        self._use_vertexai = _vertexai_configured()
-        self._vertex_project = os.getenv("GOOGLE_CLOUD_PROJECT", "")
-        self._vertex_location = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
-        self._max_rounds = max_tool_rounds
-        self._history: List[Dict[str, Any]] = []
-        self._client = None
-
-    def _get_client(self):
-        if self._client is not None:
-            return self._client
-        try:
-            from google import genai
-            from google.genai import types as genai_types
-            self._genai_types = genai_types
-            if self._use_vertexai:
-                # ADC-based auth (no API key) — gcloud auth application-default
-                # login locally, or the Cloud Run service's own runtime
-                # identity in production.
-                self._client = genai.Client(
-                    vertexai=True, project=self._vertex_project, location=self._vertex_location,
-                )
-            else:
-                self._client = genai.Client(api_key=self._api_key)
-            return self._client
-        except ImportError:
-            raise RuntimeError(
-                "google-genai is not installed. Run: pip install google-genai"
-            )
-
-    def chat(self, user_message: str, actor: str = "") -> Dict[str, Any]:
-        """
-        Send a message and return the final response after all tool calls complete.
-
-        Returns:
-            {
-                "text": "<Gemini's final response>",
-                "tool_calls": [{"name": ..., "args": ..., "result": ...}],
-                "rounds": <int>,
-            }
-        """
-        from google.genai import types as genai_types
-
-        client = self._get_client()
-
-        message = user_message
-        if actor:
-            message += f"\n\n[Session context: actor={actor}]"
-
-        tools = genai_types.Tool(function_declarations=TOOL_DECLARATIONS)
-        config = genai_types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
-            tools=[tools],
-        )
-
-        chat_session = client.chats.create(
-            model=self._model_name,
-            config=config,
-            history=self._history,
-        )
-
-        tool_calls_log = []
-        rounds = 0
-
-        response = chat_session.send_message(message)
-
-        while rounds < self._max_rounds:
-            rounds += 1
-            fn_calls = []
-            for part in response.candidates[0].content.parts:
-                if part.function_call and part.function_call.name:
-                    fn_calls.append(part.function_call)
-
-            if not fn_calls:
-                break
-
-            tool_results = []
-            for fc in fn_calls:
-                args = dict(fc.args) if fc.args else {}
-                if actor and "actor" in args:
-                    args["actor"] = args["actor"] or actor
-
-                result = dispatch_tool(fc.name, args)
-                tool_calls_log.append({
-                    "name":   fc.name,
-                    "args":   args,
-                    "result": result,
-                })
-                tool_results.append(
-                    genai_types.Part(
-                        function_response=genai_types.FunctionResponse(
-                            name=fc.name,
-                            response=result,
-                        )
-                    )
-                )
-                logger.info(f"[GeminiAgent] Tool: {fc.name} | Status: {result.get('status', 'unknown')}")
-
-            response = chat_session.send_message(tool_results)
-
-        final_text = ""
-        for part in response.candidates[0].content.parts:
-            if hasattr(part, "text") and part.text:
-                final_text += part.text
-
-        self._history = chat_session.get_history()
-
-        return {
-            "text":       final_text,
-            "tool_calls": tool_calls_log,
-            "rounds":     rounds,
-        }
-
-    def reset(self) -> None:
-        """Clear conversation history."""
-        self._history = []
-
-    @property
-    def model_name(self) -> str:
-        return self._model_name
-
-    # Fallback mode when Gemini API is not available
+    # Fallback mode when no AI backend is configured
     def chat_offline(self, user_message: str) -> Dict[str, Any]:
         """
-        Offline mode: parse intent from the message and call tools directly.
-        Used when Gemini API key is not configured (demo / hackathon fallback).
+        Offline mode: parse intent from the message and call tools directly,
+        with no AI model in the loop at all. Used when neither DIAL_API_KEY
+        nor CLAUDE_API_KEY is set.
         """
         msg_lower = user_message.lower()
 
@@ -653,7 +493,6 @@ class GeminiAgent:
             }
         if "coverage" in msg_lower or "below" in msg_lower or "threshold" in msg_lower:
             # Extract threshold if mentioned (e.g. "below 90%")
-            import re
             m = re.search(r"(\d+(?:\.\d+)?)\s*%", user_message)
             threshold = float(m.group(1)) if m else 95.0
             args = {"threshold": threshold}
@@ -689,9 +528,10 @@ class GeminiAgent:
 
         return {
             "text": (
-                "I'm running in offline mode (Gemini API key not configured). "
+                "I'm running in offline mode (no DIAL_API_KEY or CLAUDE_API_KEY configured). "
                 "I can still help with: migration summary, pending reviews, business metrics, "
-                "and connection discovery. Please configure GOOGLE_API_KEY for full conversational AI."
+                "and connection discovery. Configure DIAL_API_KEY (or CLAUDE_API_KEY once issued) "
+                "for full conversational AI."
             ),
             "tool_calls": [],
             "rounds": 0,
@@ -826,16 +666,17 @@ _OPENAI_TOOLS = [
 ]
 
 
-class DIALAgent:
+class DIALAgent(_OfflineFormatters):
     """
-    Migration Intelligence Agent backed by EPAM DIAL (OpenAI-compatible proxy).
+    Migration Intelligence Agent backed by EPAM DIAL (OpenAI-compatible proxy) —
+    the current build/test backend. Once a direct Claude API key is issued,
+    this can grow a Claude-direct branch the same way ai/rule_planner.py and
+    ai_transformation/ai_rule_mapper.py already do (DIAL first, Claude direct
+    if DIAL_API_KEY is absent but CLAUDE_API_KEY is set).
 
-    Uses the same 24 tool declarations and dispatch_tool() as GeminiAgent.
-    Requires: openai>=1.0 (already a project dependency via ai_sql_generator).
-
-    Priority over GeminiAgent when DIAL_API_KEY is set — DIAL has no daily
-    quota limits for EPAM employees, making it far more reliable for demos
-    and production use than the Gemini free tier (20 req/day).
+    Uses the 24 tool declarations and dispatch_tool() shared across the
+    connector. Requires: openai>=1.0 (already a project dependency via
+    ai_sql_generator).
 
     Environment variables:
         DIAL_API_KEY      — required
@@ -878,8 +719,7 @@ class DIALAgent:
         """
         Send a message and run the full function-calling loop via DIAL.
 
-        Returns the same dict shape as GeminiAgent.chat() so the webapp
-        needs no changes:
+        Returns:
             {"text": str, "tool_calls": list, "rounds": int}
         """
         client = self._get_client()
@@ -956,40 +796,25 @@ class DIALAgent:
     def reset(self) -> None:
         self._history = []
 
-    # Re-use the same offline formatters from GeminiAgent for consistency.
-    def chat_offline(self, user_message: str) -> Dict[str, Any]:
-        _fallback = GeminiAgent()
-        return _fallback.chat_offline(user_message)
+    def is_configured(self) -> bool:
+        """True if DIAL_API_KEY is set — i.e. .chat() can make real AI calls.
+        When False, callers should use .chat_offline() instead."""
+        return bool(self._api_key)
 
 
 # ---------------------------------------------------------------------------
-# Factory — resolves the right backend automatically
+# Factory
 # ---------------------------------------------------------------------------
 
 def create_agent(max_tool_rounds: int = 10):
     """
-    Return the best available agent backend in priority order:
+    Return the Migration Intelligence Agent.
 
-        1. DIALAgent  — if DIAL_API_KEY is set (EPAM DIAL, no rate limit)
-        2. GeminiAgent — if GOOGLE_API_KEY / GEMINI_API_KEY is set (Developer
-           API, 20 req/day free tier), OR GOOGLE_GENAI_USE_VERTEXAI=true is
-           set (Vertex AI via ADC — no personal API key needed; the path for
-           corporate-governed projects that disable API key creation)
-        3. GeminiAgent — configured for offline mode (no API calls)
-
-    The returned object always exposes .chat(), .chat_offline(), and .reset()
-    so callers need no conditional logic.
+    Backend is EPAM DIAL (the current build/test setup). Call
+    agent.is_configured() to check whether DIAL_API_KEY is actually set
+    before calling .chat() — if not, use .chat_offline() instead, which
+    answers common questions with zero AI calls.
     """
-    dial_key = os.getenv("DIAL_API_KEY", "")
-
-    if dial_key:
-        logger.info("[create_agent] Using DIALAgent (EPAM DIAL / GPT-4o)")
-        return DIALAgent(max_tool_rounds=max_tool_rounds)
-
-    if is_gemini_configured():
-        mode = "Vertex AI / ADC" if _vertexai_configured() else "Developer API key"
-        logger.info(f"[create_agent] Using GeminiAgent ({mode})")
-        return GeminiAgent(max_tool_rounds=max_tool_rounds)
-
-    logger.warning("[create_agent] No API key found — using offline mode")
-    return GeminiAgent(max_tool_rounds=max_tool_rounds)
+    if not os.getenv("DIAL_API_KEY", ""):
+        logger.warning("[create_agent] No DIAL_API_KEY found — chat() will be unavailable, use chat_offline()")
+    return DIALAgent(max_tool_rounds=max_tool_rounds)

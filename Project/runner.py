@@ -28,12 +28,14 @@ def list_configured_tables(layer: str) -> dict:
 
     Returns {"count_validation": [...], "data_validation": [...]}, each sorted.
     """
-    count_path = PROJECT_DIR / "config" / layer / "count_validation" / f"{layer}.yaml"
-    count_tables = []
-    if count_path.exists():
-        with open(count_path) as f:
-            cfg = yaml.safe_load(f) or {}
-        count_tables = sorted((cfg.get("tables") or {}).keys())
+    cv_dir = PROJECT_DIR / "config" / layer / "count_validation"
+    count_tables_set = set()
+    if cv_dir.exists():
+        for cv_path in sorted(cv_dir.glob("*.yaml")):
+            with open(cv_path) as f:
+                cfg = yaml.safe_load(f) or {}
+            count_tables_set.update((cfg.get("tables") or {}).keys())
+    count_tables = sorted(count_tables_set)
 
     config_root = PROJECT_DIR / "config" / layer
     report_root = PROJECT_DIR / "config" / "report"
@@ -41,7 +43,7 @@ def list_configured_tables(layer: str) -> dict:
     search_roots = [config_root] + ([report_root] if report_root.exists() else [])
     data_tables = sorted(
         p.stem for root in search_roots for p in root.rglob("*.yaml")
-        if p.parent.name == "data_validation"
+        if "data_validation" in p.parts
     )
 
     return {"count_validation": count_tables, "data_validation": data_tables}

@@ -3,7 +3,7 @@ Validation Pipeline — End-to-End Orchestrator
 ===============================================
 Wires all modules together into a single callable pipeline.
 
-New pipeline (run_with_plan — preferred):
+Pipeline (run_with_plan):
   ┌─────────────────────────────────────────────────────────────────────┐
   │  1. Extract schemas       (PostgreSQL + Snowflake)                  │
   │  2. Exact matching        (case-insensitive + normalized name)      │
@@ -14,13 +14,9 @@ New pipeline (run_with_plan — preferred):
   │  7. SQL + YAML generation (deterministic from plan)                 │
   └─────────────────────────────────────────────────────────────────────┘
 
-Legacy pipeline (run — backward-compatible, still works):
-  ┌─────────────────────────────────────────────────────────────────────┐
-  │  1. sql_extractor      → Extract live schema from PG + Snowflake    │
-  │  2. ai_transformation  → Map columns + assign validation rules      │
-  │     └── model selector → User picks AI model or static fallback     │
-  │  3. generated_queries  → Build SQL + YAML output files              │
-  └─────────────────────────────────────────────────────────────────────┘
+(The older run() method — a 100%-AI, no-fallback mapping path used only by
+the unused validate_cli.py CLI — has been removed. run_with_plan() is the
+only pipeline now; it is what the Streamlit webapp calls.)
 
 PK-Free Design
 --------------
@@ -30,12 +26,14 @@ duplicate checks, or missing-row checks.
 
 AI Model Selection
 ------------------
-Pass model= to ValidationPipeline() to select which AI model to use:
-  - "gpt-4o"           (default — best accuracy)
-  - "gpt-4o-mini"      (faster, lower cost)
-  - "gpt-4-turbo"
-  - "claude-3-5-sonnet"
-  - "gemini-pro"
+Pass model= to ValidationPipeline() to select which AI model to use.
+Backend is chosen automatically: EPAM DIAL if DIAL_API_KEY is set (current
+setup — proxies to GPT/Claude/etc. for building/testing), else direct
+Anthropic Claude if CLAUDE_API_KEY is set (the intended path once a Claude
+API key is issued — no DIAL needed). Examples:
+  - "gpt-4o"                          (DIAL, default)
+  - "gpt-4o-mini"                     (DIAL, faster/cheaper)
+  - "claude-3-5-sonnet-20241022"      (Claude direct)
   - Any model on your DIAL endpoint
 
 Usage (Python API)
@@ -87,7 +85,7 @@ except ImportError:
 
 from sql_extractor import PostgresExtractor, SnowflakeExtractor, ExtractorFactory
 from sql_extractor.extractors import FIVETRAN_ACTIVE_COLUMN
-from ai_transformation import RuleMapperOrchestrator, AVAILABLE_MODELS
+from ai_transformation.ai_rule_mapper import AVAILABLE_MODELS
 from generated_queries import QueryOutputManager, GenerationResult
 from generated_queries.yaml_config_writer import YAMLConfigWriter
 
@@ -137,137 +135,9 @@ class ValidationPipeline:
             src_type = os.getenv("SOURCE_TYPE", "postgresql")
             self._src_extractor = ExtractorFactory.create(src_type)
         self._sf_extractor   = SnowflakeExtractor()
-        self._rule_mapper    = RuleMapperOrchestrator(model=model)
+        self._model          = model
         self._output_mgr     = QueryOutputManager()
         self._yaml_writer    = YAMLConfigWriter()
-
-    def set_model(self, model: str) -> None:
-        """
-        Switch the AI model at runtime without recreating the pipeline.
-
-        Args:
-            model: Model name (e.g. 'gpt-4o-mini', 'claude-3-5-sonnet')
-        """
-        self._rule_mapper.set_model(model)
-        print(f"  [Pipeline] AI model switched to '{model}'.")
-
-    @property
-    def active_model(self) -> str:
-        """Return the currently active AI model name."""
-        return self._rule_mapper.active_model
-
-    @property
-    def is_ai_active(self) -> bool:
-        """Return True if AI mapping is configured (DIAL_API_KEY set)."""
-        return self._rule_mapper.is_ai_active
-
-    @staticmethod
-    def list_available_models() -> List[str]:
-        """Return all models available for selection."""
-        return list(AVAILABLE_MODELS)
-
-    def run(
-        self,
-        pg_schema: str,
-        pg_table: str,
-        sf_schema: str,
-        sf_table: str,
-        sf_database: Optional[str] = None,
-        pg_database: Optional[str] = None,
-        exclude_columns: Optional[List[str]] = None,
-        source_db_type: Optional[str] = None,
-        output_dir: Optional[Path] = None,
-    ) -> GenerationResult:
-        """
-        Run the complete validation pipeline for one table pair.
-
-        Args:
-            pg_schema       : PostgreSQL schema (e.g. 'public')
-            pg_table        : PostgreSQL table name
-            sf_schema       : Snowflake schema name
-            sf_table        : Snowflake table name (UPPER recommended)
-            sf_database     : Snowflake database name
-                              (default: SNOWFLAKE_DATABASE env var)
-            pg_database     : PostgreSQL database name
-                              (default: SOURCE_DATABASE env var)
-            exclude_columns : Column names to skip entirely (source side).
-                              Case-insensitive. Excluded columns are removed
-                              before rule mapping and SQL generation.
-            source_db_type  : Source database type (e.g. 'postgresql', 'mssql')
-                              (default: SOURCE_TYPE env var)
-
-        Returns:
-            GenerationResult with:
-              .yaml_path       — path to generated data validation .yaml file
-              .count_yaml_path — path to count validation .yaml file
-              .summary()       — human-readable result summary
-        """
-        _sf_db = sf_database or os.getenv("SNOWFLAKE_DATABASE", "")
-        _pg_db = pg_database or os.getenv("SOURCE_DATABASE", "")
-        _src_db_type = source_db_type or os.getenv("SOURCE_TYPE", "postgresql")
-        _print_header(pg_schema, pg_table, _sf_db, sf_schema, sf_table, self, _pg_db)
-
-        # ── Step 1: Extract schemas ──────────────────────────────────────────
-        print("\n[1/3] Extracting column schemas from source and target databases...")
-        src_columns = self._extract_source(pg_schema, pg_table, _pg_db)
-        tgt_columns = self._extract_target(sf_schema, sf_table, _sf_db)
-
-        # ── Column exclusion ─────────────────────────────────────────────────
-        if exclude_columns:
-            excl_upper = {c.upper() for c in exclude_columns}
-            before = len(src_columns)
-            src_columns = [c for c in src_columns if c.column_name.upper() not in excl_upper]
-            dropped = before - len(src_columns)
-            if dropped:
-                print(f"  ℹ  Column exclusion: removed {dropped} column(s) — {', '.join(exclude_columns)}")
-
-        # Detect Fivetran _FIVETRAN_ACTIVE on Snowflake side
-        has_fivetran_active = SnowflakeExtractor.has_fivetran_active(tgt_columns)
-        if has_fivetran_active:
-            print(
-                f"  ℹ  '{FIVETRAN_ACTIVE_COLUMN}' detected — "
-                f"Snowflake queries will include WHERE _FIVETRAN_ACTIVE = TRUE."
-            )
-
-        src_type_label = os.getenv("SOURCE_TYPE", "source").upper()
-        print(f"\n  Schema Summary:")
-        print(f"    {src_type_label:<10} columns : {len(src_columns)}")
-        print(f"    Snowflake  columns : {len(tgt_columns)}")
-
-        # ── Step 2: Map columns + assign rules ───────────────────────────────
-        print("\n[2/3] Mapping columns and assigning transformation rules...")
-        mappings, explanation = self._rule_mapper.map_columns(
-            source_columns=src_columns,
-            target_columns=tgt_columns,
-            table_name=pg_table,
-        )
-
-        if explanation:
-            # Show first 400 chars of the AI reasoning in the terminal
-            preview = explanation[:400].replace("\n", " ")
-            print(f"\n  Rule mapping explanation:\n  {preview}...")
-
-        # ── Step 3: Generate SQL + YAML ──────────────────────────────────────
-        print("\n[3/3] Generating SQL validation queries and YAML config file...")
-        generated_by = "AI" if self._rule_mapper.is_ai_active else "static"
-        model_used   = self._rule_mapper.active_model if self._rule_mapper.is_ai_active else "N/A"
-
-        result = self._output_mgr.generate(
-            table_name=pg_table,
-            pg_schema=pg_schema,
-            pg_table=pg_table,
-            sf_database=_sf_db,
-            sf_schema=sf_schema,
-            sf_table=sf_table,
-            mappings=mappings,
-            has_fivetran_active=has_fivetran_active,
-            generated_by=generated_by,
-            model_used=model_used,
-            source_db_type=_src_db_type,
-            output_dir=output_dir,
-        )
-
-        return result
 
     def run_with_plan(
         self,
@@ -316,7 +186,16 @@ class ValidationPipeline:
         _pg_db = pg_database or os.getenv("SOURCE_DATABASE", "")
         _src_db_type = source_db_type or os.getenv("SOURCE_TYPE", "postgresql")
 
-        _print_header_v2(pg_schema, pg_table, _sf_db, sf_schema, sf_table, self, _pg_db)
+        # Cheap probe (no API call) — resolves backend/model the same way
+        # RulePlanner will when ambiguous columns actually need AI, so the
+        # header and the plan metadata below always agree with what
+        # _match_columns() does.
+        _ai_probe = RulePlanner(model=self._model)
+
+        _print_header_v2(
+            pg_schema, pg_table, _sf_db, sf_schema, sf_table,
+            _ai_probe.model, _ai_probe._ai_active, _pg_db,
+        )
 
         (
             src_columns, tgt_columns, final_decisions, has_fivetran_active,
@@ -462,8 +341,8 @@ class ValidationPipeline:
             warnings=plan_warnings,
             unmatched_source_columns=unmatched_src,
             ai_calls_made=ai_calls_made,
-            model_used=self._rule_mapper.active_model if self._rule_mapper.is_ai_active else "N/A",
-            generated_by="ai" if self._rule_mapper.is_ai_active else "fuzzy",
+            model_used=_ai_probe.model if ai_calls_made else "N/A",
+            generated_by="ai" if ai_calls_made else "fuzzy",
             source_filter=source_filter,
             target_filter=target_filter or source_filter,  # mirror source when target not set
         )
@@ -622,12 +501,10 @@ class ValidationPipeline:
         ai_calls_made    = 0
         ai_decision_map  = {}
 
-        if ai_needed and self._rule_mapper.is_ai_active:
+        planner = RulePlanner(model=self._model) if ai_needed else None
+
+        if ai_needed and planner._ai_active:
             print(f"\n[{ai_step_label}] Sending {len(ai_needed)} ambiguous column(s) to AI...")
-            planner = RulePlanner(
-                api_key=os.getenv("DIAL_API_KEY", ""),
-                model=self._rule_mapper.active_model,
-            )
             planner_result = planner.resolve(
                 ai_needed_decisions=ai_needed,
                 table_name=pg_table,
@@ -644,7 +521,7 @@ class ValidationPipeline:
             ai_decision_map = planner_result.ai_decisions
             print(f"  AI calls made: {ai_calls_made}")
         elif ai_needed:
-            print(f"\n[{ai_step_label}] No DIAL_API_KEY — accepting best fuzzy for {len(ai_needed)} ambiguous column(s).")
+            print(f"\n[{ai_step_label}] No DIAL_API_KEY / CLAUDE_API_KEY — accepting best fuzzy for {len(ai_needed)} ambiguous column(s).")
             final_decisions = decisions
         else:
             print(f"\n[{ai_step_label}] No ambiguous columns — AI not needed.")
@@ -689,14 +566,15 @@ def _print_header_v2(
     sf_db: str,
     sf_schema: str,
     sf_table: str,
-    pipeline: ValidationPipeline,
+    active_model: str,
+    is_ai_active: bool,
     pg_db: str = "",
 ) -> None:
     sep = "=" * 65
     ai_line = (
-        f"AI ({pipeline.active_model})"
-        if pipeline.is_ai_active
-        else "Static + Fuzzy (no DIAL_API_KEY)"
+        f"AI ({active_model})"
+        if is_ai_active
+        else "Static + Fuzzy (no DIAL_API_KEY / CLAUDE_API_KEY)"
     )
     pg_label = f"{pg_db}.{pg_schema}.{pg_table}" if pg_db else f"{pg_schema}.{pg_table}"
     print(f"\n{sep}")
@@ -705,30 +583,6 @@ def _print_header_v2(
     print(f"  Target  : Snowflake   → {sf_db}.{sf_schema}.{sf_table}")
     print(f"  Mode    : {ai_line}")
     print(f"  Steps   : Extract → Exact → Fuzzy → Score → AI(ambiguous only) → Validate → Generate")
-    print(sep)
-
-
-def _print_header(
-    pg_schema: str,
-    pg_table: str,
-    sf_db: str,
-    sf_schema: str,
-    sf_table: str,
-    pipeline: ValidationPipeline,
-    pg_db: str = "",
-) -> None:
-    sep = "=" * 65
-    ai_line = (
-        f"AI ({pipeline.active_model})"
-        if pipeline.is_ai_active
-        else "Static (no DIAL_API_KEY)"
-    )
-    pg_label = f"{pg_db}.{pg_schema}.{pg_table}" if pg_db else f"{pg_schema}.{pg_table}"
-    print(f"\n{sep}")
-    print(f"  MIGRATION VALIDATOR — Validation Pipeline")
-    print(f"  Source  : {pg_label}")
-    print(f"  Target  : Snowflake   → {sf_db}.{sf_schema}.{sf_table}")
-    print(f"  Mode    : {ai_line}")
     print(sep)
 
 
@@ -804,7 +658,7 @@ if __name__ == "__main__":
 
     pipeline = ValidationPipeline(model=args.model)
     try:
-        pipeline.run(
+        pipeline.run_with_plan(
             pg_schema=args.pg_schema,
             pg_table=args.pg_table,
             sf_schema=args.sf_schema,

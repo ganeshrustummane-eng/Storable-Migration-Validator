@@ -14,8 +14,8 @@ AI-only by design:
   mapping raises AIRuleMappingError.
 
 Backend Selection (automatic — priority order):
-  1. EPAM DIAL  — if DIAL_API_KEY is set in .env
-       Uses AzureOpenAI client → proxies to GPT, Claude, Gemini, Llama, Mistral
+  1. EPAM DIAL  — if DIAL_API_KEY is set in .env (current build/test backend)
+       Uses AzureOpenAI client → proxies to GPT, Claude, Llama, Mistral, etc.
        via https://ai-proxy.lab.epam.com  (requires EPAM VPN)
 
   2. Claude Direct — if DIAL_API_KEY is NOT set but CLAUDE_API_KEY IS set
@@ -67,7 +67,7 @@ _BACKEND_CLAUDE = "claude"  # Anthropic direct API
 def _is_claude_model(model_name: str) -> bool:
     """
     Return True if a model name belongs to the Anthropic Claude direct API.
-    Used to prevent DIAL model names (gpt-4o, gemini-*, etc.) from being
+    Used to prevent DIAL model names (gpt-4o, etc.) from being
     sent to the Anthropic API when Claude backend is active.
     """
     name = model_name.lower()
@@ -110,11 +110,6 @@ AVAILABLE_MODELS = [
     "anthropic.claude-haiku-4-5",
     "claude-3-5-sonnet",
     "claude-3-7-sonnet",
-    # ── Google Gemini (via DIAL bridge) ─────────────────────────────────────
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-thinking",
-    "gemini-2.5-pro",
-    "gemini-pro",
     # ── Meta Llama (via DIAL bridge) ────────────────────────────────────────
     "meta-llama-3-70b-instruct",
     "meta-llama-3-1-405b-instruct",
@@ -160,11 +155,6 @@ MODEL_DESCRIPTIONS = {
     "anthropic.claude-haiku-4-5":   ("Anthropic", "Claude Haiku 4.5",          "Fastest Claude — simple rule assignment"),
     "claude-3-5-sonnet":            ("Anthropic", "Claude 3.5 Sonnet",         "Claude 3.5 via DIAL bridge"),
     "claude-3-7-sonnet":            ("Anthropic", "Claude 3.7 Sonnet",         "Claude 3.7 extended thinking"),
-    # Google Gemini
-    "gemini-2.0-flash":             ("Google",    "Gemini 2.0 Flash",          "Fast multimodal model"),
-    "gemini-2.0-flash-thinking":    ("Google",    "Gemini 2.0 Flash Thinking", "Flash with extended reasoning"),
-    "gemini-2.5-pro":               ("Google",    "Gemini 2.5 Pro",            "Google flagship — very large context"),
-    "gemini-pro":                   ("Google",    "Gemini Pro",                "Standard Gemini via DIAL bridge"),
     # Meta Llama
     "meta-llama-3-70b-instruct":    ("Meta",      "Llama 3 70B",               "Open-weight — good for offline/on-prem"),
     "meta-llama-3-1-405b-instruct": ("Meta",      "Llama 3.1 405B",            "Largest Llama — near-frontier quality"),
@@ -274,7 +264,7 @@ class AIRuleMapper:
             raise AIRuleMappingError(
                 f"No AI API key configured — cannot map columns for '{table_name}'.\n"
                 "  Set one of the following in .env:\n"
-                "    DIAL_API_KEY=...    (EPAM DIAL — access to GPT/Claude/Gemini)\n"
+                "    DIAL_API_KEY=...    (EPAM DIAL — current build/test backend)\n"
                 "    CLAUDE_API_KEY=...  (Anthropic direct — no VPN needed)\n"
                 "  Or run: python validate_cli.py  →  choose [8] Configure API key"
             )

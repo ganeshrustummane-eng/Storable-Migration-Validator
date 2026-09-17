@@ -54,19 +54,20 @@ def get_config_output_paths(run_id,layer_type,base_dir,config_path,validation_di
                 output_dir,
                 layer_type[0],
                 f"validation_{run_id}",
-                f"{validation}_{run_id}" 
+                f"{validation}_{run_id}"
             )
 
-            yamlpath = os.path.join(
-                config_path,
-                layer_type[0],
-                validation,
-                f"{layer_type[0]}.yaml"
-            )
-            
+            cv_dir = Path(config_path) / layer_type[0] / validation
+            yaml_files = sorted(cv_dir.glob("*.yaml")) if cv_dir.exists() else []
+            # Fall back to legacy {layer}.yaml name if no source-segregated files exist yet
+            if not yaml_files:
+                legacy = cv_dir / f"{layer_type[0]}.yaml"
+                yaml_files = [legacy] if legacy.exists() else []
+            yamlpaths = [str(p) for p in yaml_files]
+
             os.makedirs(path, exist_ok=True)
             outputpaths[validation] = path
-            configpaths[validation] = [yamlpath]
+            configpaths[validation] = yamlpaths
 
         if validation == 'data_validation':
             path = os.path.join(
@@ -80,12 +81,15 @@ def get_config_output_paths(run_id,layer_type,base_dir,config_path,validation_di
             config_root = Path(base_dir) / "config" / layer_type[0]
             report_root = Path(base_dir) / "config" / "report"
             search_roots = [config_root] + ([report_root] if report_root.exists() else [])
+            # Match both flat (data_validation/table.yaml) and subdir (data_validation/mssql/table.yaml)
+            def _is_dv_yaml(p):
+                return validation in (part for part in p.parts)
             if 'all' in table_list:
                 yaml_paths = [str(p) for root in search_roots
-                              for p in root.rglob("*.yaml") if p.parent.name == validation]
+                              for p in root.rglob("*.yaml") if _is_dv_yaml(p)]
             else:
                 all_valid_yamls = {p.stem: str(p) for root in search_roots
-                                   for p in root.rglob("*.yaml") if p.parent.name == validation}
+                                   for p in root.rglob("*.yaml") if _is_dv_yaml(p)}
                 for table in table_list:
                     if table in all_valid_yamls:
                         yaml_paths.append(all_valid_yamls[table])

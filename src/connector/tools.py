@@ -50,12 +50,12 @@ for _p in (str(_SRC), str(_ROOT)):
 from dotenv import load_dotenv
 load_dotenv(_ROOT / ".env")
 
-from gemini_connector.audit import audit_logger, AuditRecord
-from gemini_connector.approval_store import (
+from connector.audit import audit_logger, AuditRecord
+from connector.approval_store import (
     approval_store, ApprovalRecord, ApprovalStatus,
     AUTO_ACCEPT_THRESHOLD, REVIEW_THRESHOLD,
 )
-from gemini_connector.metrics import metrics_tracker
+from connector.metrics import metrics_tracker
 
 
 # ---------------------------------------------------------------------------
@@ -1289,7 +1289,7 @@ def reject_mapping(
 
         # Optionally create JIRA ticket for rejected mapping
         if create_jira_ticket:
-            from gemini_connector import jira_client
+            from connector import jira_client
             if jira_client.is_configured():
                 try:
                     table_name = record_id.split(".")[0] if "." in record_id else record_id
@@ -1641,7 +1641,7 @@ def create_jira_ticket(
         priority: Ticket priority (Low, Medium, High, Highest)
     """
     try:
-        from gemini_connector import jira_client
+        from connector import jira_client
 
         if not jira_client.is_configured():
             return _ok(
@@ -1703,7 +1703,7 @@ def get_jira_ticket_status(
         ticket_key: JIRA ticket key (e.g., "MIG-123")
     """
     try:
-        from gemini_connector import jira_client
+        from connector import jira_client
 
         if not jira_client.is_configured():
             return _err("JIRA is not configured.")

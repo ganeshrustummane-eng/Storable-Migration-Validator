@@ -52,9 +52,13 @@ except ImportError:
 # Constants — reuse the same DIAL defaults as AIRuleMapper
 # ---------------------------------------------------------------------------
 
-_DEFAULT_API_BASE    = "https://ai-proxy.lab.epam.com"
-_DEFAULT_API_VERSION = "2025-04-01-preview"
-_DEFAULT_MODEL       = "gpt-4o"
+_DEFAULT_API_BASE     = "https://ai-proxy.lab.epam.com"
+_DEFAULT_API_VERSION  = "2025-04-01-preview"
+_DEFAULT_MODEL        = "gpt-4o"
+_DEFAULT_CLAUDE_MODEL = "claude-3-5-sonnet-20241022"
+
+_BACKEND_DIAL   = "dial"
+_BACKEND_CLAUDE = "claude"
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +91,16 @@ class PlannerResult:
 
 class RulePlanner:
     """
-    Resolves ambiguous column mappings using the DIAL AI backend.
+    Resolves ambiguous column mappings using an AI backend.
+
+    Backend is selected automatically, same priority as AIRuleMapper:
+      1. EPAM DIAL     — if DIAL_API_KEY is set (proxies to GPT, Claude, etc.)
+      2. Claude Direct — if DIAL_API_KEY is NOT set but CLAUDE_API_KEY is set
+                         (calls api.anthropic.com directly, no DIAL needed —
+                         this is the path once a direct Claude API key is
+                         issued and DIAL is retired)
+      3. Neither set   — falls back to the best fuzzy candidate for every
+                         ambiguous column (no AI calls)
 
     Sends ONLY ambiguous columns to the AI — one focused call per column.
     Falls back to the best fuzzy candidate when AI is unavailable or fails.
@@ -115,16 +128,35 @@ class RulePlanner:
     ):
         """
         Args:
-            api_key     : DIAL API key (default: DIAL_API_KEY env var)
-            api_base    : DIAL base URL
-            api_version : Azure OpenAI API version
-            model       : Model deployment name
+            api_key     : DIAL or Claude direct API key
+                          (default: DIAL_API_KEY, else CLAUDE_API_KEY env var)
+            api_base    : DIAL base URL (DIAL backend only)
+            api_version : Azure OpenAI API version (DIAL backend only)
+            model       : Model deployment name (DIAL model or Claude model)
             top_n       : Max candidates to include per AI prompt
         """
-        self.api_key     = api_key     or os.getenv("DIAL_API_KEY", "")
-        self.api_base    = api_base    or os.getenv("DIAL_API_BASE",    _DEFAULT_API_BASE)
-        self.api_version = api_version or os.getenv("DIAL_API_VERSION", _DEFAULT_API_VERSION)
-        self.model       = model       or os.getenv("DIAL_MODEL",       _DEFAULT_MODEL)
+        dial_key   = api_key or os.getenv("DIAL_API_KEY", "")
+        claude_key = os.getenv("CLAUDE_API_KEY", "") if not dial_key else ""
+
+        if dial_key:
+            self._backend    = _BACKEND_DIAL
+            self.api_key     = dial_key
+            self.api_base    = api_base    or os.getenv("DIAL_API_BASE",    _DEFAULT_API_BASE)
+            self.api_version = api_version or os.getenv("DIAL_API_VERSION", _DEFAULT_API_VERSION)
+            self.model       = model       or os.getenv("DIAL_MODEL",       _DEFAULT_MODEL)
+        elif claude_key:
+            self._backend    = _BACKEND_CLAUDE
+            self.api_key     = claude_key
+            self.api_base    = ""
+            self.api_version = ""
+            self.model       = model or os.getenv("CLAUDE_MODEL", _DEFAULT_CLAUDE_MODEL)
+        else:
+            self._backend    = _BACKEND_DIAL  # placeholder — inactive either way
+            self.api_key     = ""
+            self.api_base    = api_base    or _DEFAULT_API_BASE
+            self.api_version = api_version or _DEFAULT_API_VERSION
+            self.model       = model       or _DEFAULT_MODEL
+
         self.top_n       = top_n
         self._ai_active  = bool(self.api_key)
         self._builder    = PromptBuilder()
@@ -166,26 +198,38 @@ class RulePlanner:
 
         if not self._ai_active:
             print(
-                f"  [RulePlanner] No DIAL_API_KEY — falling back to best fuzzy for "
-                f"{len(ai_needed_decisions)} ambiguous column(s).",
+                f"  [RulePlanner] No DIAL_API_KEY / CLAUDE_API_KEY — falling back to "
+                f"best fuzzy for {len(ai_needed_decisions)} ambiguous column(s).",
                 file=sys.stderr,
             )
             return self._fallback_all(ai_needed_decisions)
 
-        try:
-            from openai import AzureOpenAI  # type: ignore
-        except ImportError:
-            print(
-                "  [RulePlanner] 'openai' not installed — falling back to fuzzy.",
-                file=sys.stderr,
-            )
-            return self._fallback_all(ai_needed_decisions)
-
-        client = AzureOpenAI(
-            api_key=self.api_key,
-            api_version=self.api_version,
-            azure_endpoint=self.api_base,
-        )
+        client = None
+        if self._backend == _BACKEND_CLAUDE:
+            try:
+                import anthropic  # type: ignore
+                client = anthropic.Anthropic(api_key=self.api_key)
+            except ImportError:
+                print(
+                    "  [RulePlanner] 'anthropic' not installed — falling back to fuzzy. "
+                    "Install with: pip install anthropic",
+                    file=sys.stderr,
+                )
+                return self._fallback_all(ai_needed_decisions)
+        else:
+            try:
+                from openai import AzureOpenAI  # type: ignore
+                client = AzureOpenAI(
+                    api_key=self.api_key,
+                    api_version=self.api_version,
+                    azure_endpoint=self.api_base,
+                )
+            except ImportError:
+                print(
+                    "  [RulePlanner] 'openai' not installed — falling back to fuzzy.",
+                    file=sys.stderr,
+                )
+                return self._fallback_all(ai_needed_decisions)
 
         system_prompt = self._builder.build_system_prompt()
 
@@ -209,29 +253,58 @@ class RulePlanner:
             )
 
             try:
-                response = client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user",   "content": user_prompt},
-                    ],
-                    temperature=0,
-                    response_format={"type": "json_object"},
-                    extra_headers={"Api-Key": self.api_key},
-                )
-                raw = response.choices[0].message.content
-                ai_calls_made += 1
+                if self._backend == _BACKEND_CLAUDE:
+                    response = client.messages.create(
+                        model=self.model,
+                        max_tokens=1024,
+                        system=system_prompt,
+                        messages=[{"role": "user", "content": user_prompt}],
+                    )
+                    raw = "".join(
+                        block.text for block in response.content if hasattr(block, "text")
+                    ).strip()
+                    if raw.startswith("```"):
+                        raw = "\n".join(
+                            line for line in raw.splitlines()
+                            if not line.strip().startswith("```")
+                        ).strip()
+                    ai_calls_made += 1
 
-                usage = extract_openai_usage(response)
-                log_usage(
-                    backend="dial",
-                    model=self.model,
-                    call_type="column_mapping",
-                    context=f"{table_name}.{src_col.column_name}" if table_name else src_col.column_name,
-                    prompt_tokens=usage["prompt_tokens"],
-                    completion_tokens=usage["completion_tokens"],
-                    total_tokens=usage["total_tokens"],
-                )
+                    usage_obj = getattr(response, "usage", None)
+                    log_usage(
+                        backend="claude",
+                        model=self.model,
+                        call_type="column_mapping",
+                        context=f"{table_name}.{src_col.column_name}" if table_name else src_col.column_name,
+                        prompt_tokens=getattr(usage_obj, "input_tokens", 0) or 0,
+                        completion_tokens=getattr(usage_obj, "output_tokens", 0) or 0,
+                        total_tokens=(getattr(usage_obj, "input_tokens", 0) or 0)
+                        + (getattr(usage_obj, "output_tokens", 0) or 0),
+                    )
+                else:
+                    response = client.chat.completions.create(
+                        model=self.model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user",   "content": user_prompt},
+                        ],
+                        temperature=0,
+                        response_format={"type": "json_object"},
+                        extra_headers={"Api-Key": self.api_key},
+                    )
+                    raw = response.choices[0].message.content
+                    ai_calls_made += 1
+
+                    usage = extract_openai_usage(response)
+                    log_usage(
+                        backend="dial",
+                        model=self.model,
+                        call_type="column_mapping",
+                        context=f"{table_name}.{src_col.column_name}" if table_name else src_col.column_name,
+                        prompt_tokens=usage["prompt_tokens"],
+                        completion_tokens=usage["completion_tokens"],
+                        total_tokens=usage["total_tokens"],
+                    )
 
                 ai_dec = self._parser.parse(
                     raw_json=raw,
@@ -288,7 +361,8 @@ class RulePlanner:
                         )
 
             except Exception as exc:
-                err_msg = f"[{src_col.column_name}] DIAL API error: {exc}"
+                backend_label = "Claude" if self._backend == _BACKEND_CLAUDE else "DIAL"
+                err_msg = f"[{src_col.column_name}] {backend_label} API error: {exc}"
                 errors.append(err_msg)
                 print(f"  [RulePlanner] ✗ {err_msg} — using best fuzzy", file=sys.stderr)
                 resolved_decisions.append(_accept_best_fuzzy(dec, reason=str(exc)))

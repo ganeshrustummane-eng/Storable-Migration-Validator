@@ -144,7 +144,8 @@ class YAMLConfigWriter:
         Returns:
             Path to the written YAML file.
         """
-        out_dir = (output_dir or _BRONZE_CONFIG_DIR) / "data_validation"
+        _src_subdir = (source_db_type or "unknown").lower().replace("postgresql", "postgres")
+        out_dir = (output_dir or _BRONZE_CONFIG_DIR) / "data_validation" / _src_subdir
         out_dir.mkdir(parents=True, exist_ok=True)
 
         active = [m for m in mappings if not m.skip_validation]
@@ -249,7 +250,8 @@ class YAMLConfigWriter:
         out_dir = (output_dir or _BRONZE_CONFIG_DIR) / "count_validation"
         out_dir.mkdir(parents=True, exist_ok=True)
         layer = out_dir.parent.name or "bronze"
-        yaml_path = out_dir / f"{layer}.yaml"
+        _source_file = (source_db_type or "unknown").lower().replace("postgresql", "postgres")
+        yaml_path = out_dir / f"{_source_file}.yaml"
 
         block = {
             "validations": {
@@ -275,8 +277,8 @@ class YAMLConfigWriter:
 
         header = [
             "# ============================================================",
-            f"# Migration Validator — {layer.capitalize()} Count Validation",
-            f"# Contains   : row count checks for all {layer.capitalize()} tables.",
+            f"# Migration Validator — {layer.capitalize()} Count Validation ({_source_file.upper()})",
+            f"# Contains   : row count checks for all {_source_file.upper()} tables in the {layer.capitalize()} layer.",
             "#",
             "# GENERATED FILE — do not hand-edit.",
             "# Rendered from the canonical validation plans in output/plans/.",
