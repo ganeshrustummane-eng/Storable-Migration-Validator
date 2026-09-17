@@ -1,9 +1,12 @@
 """
 Rules Package — Source → Snowflake Validation Transformation Rules
 ===================================================================
-All rule logic lives in postgres_base_rules.py (the canonical implementation).
-DB-specific files (mssql_rules, athena_rules, snowflake_rules, redshift_rules)
-re-export from there — their extractors normalize types to PG-compatible names first.
+All rule logic lives in base_rules.py (the canonical implementation).
+Every source system's extractor (MSSQL, Athena, Redshift, ...) normalizes its
+native type names to this shared vocabulary before rule lookup — there is no
+per-database rule file. (Earlier per-DB files — mssql_rules.py, athena_rules.py,
+snowflake_rules.py, redshift_rules.py — were never wired up and were moved to
+trash/src/rules/; see CLAUDE.md for why.)
 
 Usage:
     from rules import get_rule_for_type, RuleRegistry
@@ -12,7 +15,7 @@ Usage:
     sf_expr  = rule.apply_snowflake("IS_ACTIVE")
 """
 
-from .postgres_base_rules import (
+from .base_rules import (
     BaseValidationRule, RuleRegistry, NULL_PLACEHOLDER,
     BooleanRule, NumericRule, TimestampTZRule, TimestampNTZRule,
     DateRule, TextRule, UUIDRule, IntegerRule, JSONRule,

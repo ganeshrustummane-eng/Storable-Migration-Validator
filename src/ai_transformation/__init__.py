@@ -34,18 +34,16 @@ Available Models (DIAL)
 
 Usage
 -----
-    from ai_transformation import AIRuleMapper, AVAILABLE_MODELS
+  AIRuleMapper no longer has a map_columns() entry point — that, plus its
+  prompt builders, were removed once the only caller (RuleMapperOrchestrator)
+  was gone. What's left is used two ways:
 
-    # List models user can choose from:
-    print(AVAILABLE_MODELS)
+    from ai_transformation import AVAILABLE_MODELS
+    print(AVAILABLE_MODELS)   # webapp model picker
 
-    # Use a specific model directly:
-    mapper = AIRuleMapper(model="gpt-4o-mini")
-    mappings, explanation = mapper.map_columns(
-        source_columns=pg_columns,
-        target_columns=sf_columns,
-        table_name="events",
-    )
+    # rule_prompt_parser.py calls AIRuleMapper's low-level transport directly
+    # (_call_dial / _call_claude) with its own prompt, for the "paste a rule"
+    # feature in the Rule Book UI tab.
 """
 
 from ai_transformation.column_mapping import ColumnRuleMapping

@@ -4099,7 +4099,7 @@ with tab_rules:
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;font-size:0.82rem;color:#334155;">
         <div style="background:white;border-radius:8px;padding:10px 12px;border:1px solid #E0E7FF;">
             <div style="font-weight:700;color:#059669;margin-bottom:4px;">🔒 Base rule</div>
-            Built into <code>postgres_base_rules.py</code>. Always runs first for a type pair.
+            Built into <code>base_rules.py</code>. Always runs first for a type pair.
             <b>Nothing can shadow or override it.</b>
         </div>
         <div style="background:white;border-radius:8px;padding:10px 12px;border:1px solid #E0E7FF;">
@@ -5742,7 +5742,7 @@ with tab_guide:
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:20px;">
             <div style="background:#ECFDF5;border:1px solid #86EFAC;border-radius:10px;padding:14px;">
                 <div style="font-weight:700;color:#065F46;margin-bottom:5px;">🔒 Base rules</div>
-                <div style="font-size:0.82rem;color:#166534;">In <code>postgres_base_rules.py</code>. Always run first. Cannot be overridden.</div>
+                <div style="font-size:0.82rem;color:#166534;">In <code>base_rules.py</code>. Always run first. Cannot be overridden.</div>
             </div>
             <div style="background:#EEF2FF;border:1px solid #C7D2FE;border-radius:10px;padding:14px;">
                 <div style="font-weight:700;color:#3730A3;margin-bottom:5px;">📝 Draft rules</div>

@@ -171,6 +171,7 @@ class RulePlanner:
         ai_needed_decisions: List[MatchDecision],
         table_name:          str = "unknown",
         learned_examples:    Optional[List[dict]] = None,
+        source_label:        str = "PostgreSQL",
     ) -> PlannerResult:
         """
         Resolve all ai_needed decisions.
@@ -189,6 +190,11 @@ class RulePlanner:
             ai_needed_decisions: Decisions with status="ai_needed"
             table_name          : Table name for AI context and logging
             learned_examples    : Optional learned correction examples
+            source_label        : Source system name ("PostgreSQL", "MSSQL",
+                                   "Athena", "Redshift") — passed through to
+                                   the rule book so the system prompt's rules
+                                   block is labeled correctly and filtered to
+                                   the type pairs actually seen in this batch.
 
         Returns:
             PlannerResult with all decisions resolved.
@@ -231,7 +237,19 @@ class RulePlanner:
                 )
                 return self._fallback_all(ai_needed_decisions)
 
-        system_prompt = self._builder.build_system_prompt()
+        # Only send the rule book entries relevant to the type pairs actually
+        # present in this batch (source type → each candidate's target type,
+        # capped to the same top_n candidates the user prompt shows) — keeps
+        # the system prompt small instead of dumping the full rule catalog.
+        type_pairs = sorted({
+            (dec.source_col.data_type, cand.target_col.data_type)
+            for dec in ai_needed_decisions
+            for cand in dec.candidates[: self.top_n]
+        })
+        system_prompt = self._builder.build_system_prompt(
+            type_pairs=type_pairs or None,
+            source_label=source_label,
+        )
 
         resolved_decisions: List[MatchDecision] = []
         ai_decisions:       Dict[str, AIColumnDecision] = {}

@@ -50,7 +50,7 @@ Every validation run should be assessed against these dimensions, not just
   reasonable for the validation window; validation shouldn't flag legitimately
   in-flight syncs as failures.
 - **Validity** — migrated values conform to the expected type/format per the
-  rule book (`src/rule_book.py`, `src/rules_catalog.json`) for that source→target
+  rule book (`src/rule_book.py`, `src/rules/rules_catalog.json`) for that source→target
   type pair.
 - **Consistency** — the same logical filter/exclusion is applied identically on
   both sides (source query and Snowflake query) — an asymmetric filter produces

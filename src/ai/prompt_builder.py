@@ -26,42 +26,32 @@ System prompt enforces:
 """
 
 import json
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from sql_extractor.extractors import ColumnMetadata
 from matching.candidate_matcher import MatchDecision
 from matching.fuzzy_matcher import FuzzyCandidate
 from matching.normalizer import normalize_column_name
-
+from rule_book import rule_book
 
 # ---------------------------------------------------------------------------
-# Transformation rules summary — sent to AI for ambiguous columns only
-# The FULL rule book is NOT sent for every column.
+# Transformation rules summary — sent to AI for ambiguous columns only.
+#
+# This used to be a hand-typed markdown table here, kept in sync by hand with
+# rules_catalog.json and the AI-SQL-generation prompt in
+# generated_queries/ai_sql_generator.py. It drifted (it was missing hstore for
+# a while) and never reflected learned rules from the Rule Book UI tab. Now it
+# reads from rule_book.build_prompt_block() instead — same base+learned rules
+# your SQL generation already trusts, filtered to only the type pairs this
+# specific table actually has (see build_system_prompt below), so adding a
+# rule to rules_catalog.json or activating a learned rule is picked up here
+# automatically, with nothing to hand-edit.
 # ---------------------------------------------------------------------------
 
-_CORE_RULES_SUMMARY = """
-## Transformation Rules (Source → Snowflake)
-Apply the MOST SPECIFIC matching rule. Use "text" as the default fallback.
-
-| Rule ID         | Source Type(s)                      | SF Type(s)         | What it does                        |
-|-----------------|--------------------------------------|--------------------|-------------------------------------|
-| boolean         | boolean, bool                        | BOOLEAN, BOOL      | TRUE/FALSE → '1'/'0'               |
-| numeric         | numeric, decimal, float, real, money | NUMBER, FLOAT      | ROUND to 2dp → text                |
-| timestamp_ntz   | timestamp, timestamp without tz      | TIMESTAMP_NTZ      | TO_CHAR 'YYYY-MM-DD HH24:MI:SS'    |
-| timestamp_tz    | timestamp with time zone, timestamptz| TIMESTAMP_TZ       | Convert to UTC → format            |
-| date            | date                                 | DATE               | TO_CHAR 'YYYY-MM-DD'               |
-| text            | character varying, varchar, text, *  | TEXT, VARCHAR, *   | TRIM() — DEFAULT FALLBACK          |
-| uuid            | uuid                                 | TEXT, VARCHAR      | UPPER(TRIM())                      |
-| integer         | integer, bigint, smallint, serial    | NUMBER, INTEGER    | CAST to text                       |
-| json            | json, jsonb                          | VARIANT, VARCHAR   | Raw text; canonicalized in Python  |
-| bytea           | bytea, binary                        | BINARY, VARCHAR    | Hex encoding                       |
-| hstore          | hstore                               | TEXT, VARCHAR, VARIANT | Raw JSON text; canon. in Python |
-
-IMPORTANT: timestamp → VARCHAR is a VALID migration transformation, not an error.
-Use rule "text" for timestamp→VARCHAR (Fivetran may convert timestamps to strings).
-
-NULL rule: COALESCE(CAST(expr AS TEXT/STRING), '<<NULL>>') — applied to ALL columns.
-"""
+_TIMESTAMP_NOTE = (
+    "\nIMPORTANT: timestamp → VARCHAR is a VALID migration transformation, not an error.\n"
+    "Use rule \"text\" for timestamp→VARCHAR (Fivetran may convert timestamps to strings).\n"
+)
 
 
 class PromptBuilder:
@@ -80,7 +70,11 @@ class PromptBuilder:
         )
     """
 
-    def build_system_prompt(self) -> str:
+    def build_system_prompt(
+        self,
+        type_pairs: Optional[List[Tuple[str, str]]] = None,
+        source_label: str = "PostgreSQL",
+    ) -> str:
         """
         Build the system prompt that enforces all AI constraints.
 
@@ -89,7 +83,19 @@ class PromptBuilder:
           - Structured JSON output contract
           - No invented columns or transformations
           - Evidence-based decision making
+
+        Args:
+            type_pairs   : (source_type, target_type) pairs actually present
+                           among this batch's ambiguous columns/candidates.
+                           Passed to rule_book.build_prompt_block() so the
+                           rules block stays small and relevant instead of
+                           dumping the whole catalog. None = full catalog.
+            source_label : Which source system these types came from, for
+                           the rules block's header (e.g. "MSSQL", "Athena").
         """
+        rules_block = rule_book.build_prompt_block(
+            type_pairs=type_pairs, source_label=source_label
+        )
         return (
             "You are a Senior Data Migration QA Engineer specialising in "
             "data migration validation.\n\n"
@@ -97,7 +103,8 @@ class PromptBuilder:
             "You will receive one source column and a ranked list of candidate "
             "target columns. Choose the BEST match or return 'ambiguous' if "
             "the evidence is insufficient.\n\n"
-            f"{_CORE_RULES_SUMMARY}\n\n"
+            f"{rules_block}\n"
+            f"{_TIMESTAMP_NOTE}\n"
             "## STRICT CONSTRAINTS (enforce all):\n"
             "1. CHOOSE from the provided candidates only — never invent column names.\n"
             "2. Return ONLY valid JSON — no markdown, no explanation outside the JSON.\n"

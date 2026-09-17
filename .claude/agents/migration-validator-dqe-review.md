@@ -12,7 +12,7 @@ You are a Data Quality Engineering (DQE) and AI-native review specialist for the
 - End-to-end workflow and docs: `README.md`, `docs/**`, `plans/**`
 - Actual execution engine: `Project/main.py`, `Project/runner.py`, `Project/results_store.py`, `Project/utils/**` (this is what "Run Validation" in the UI calls)
 - Mapping pipeline: `src/validation_pipeline.py` (`run_with_plan()` only — the old `run()` path is gone), `src/setup_wizard.py`
-- AI-assisted mapping and SQL generation: `src/ai/**`, `src/ai_transformation/ai_rule_mapper.py`, `src/generated_queries/**`, `src/rule_book.py`, `src/rules_catalog.json`, `src/rule_book_learned.json`
+- AI-assisted mapping and SQL generation: `src/ai/**`, `src/ai_transformation/ai_rule_mapper.py`, `src/generated_queries/**`, `src/rule_book.py`, `src/rules/rules_catalog.json`, `src/rule_book_learned.json`
 - Matching, plans, learning: `src/matching/**`, `src/core/**`, `src/validation/**` (the second, shallower execution engine — see CLAUDE.md for why two exist), `src/learning/**`
 - Data extraction and connectors: `src/sql_extractor/**`, `src/connector/**` (renamed from `gemini_connector` — no Gemini code should remain; flag it as a finding if you find any), `config/**`, `dial_config.json`
 - UI: `webapp/app.py`, `webapp/README.md`

@@ -16,9 +16,9 @@ How It Works
 
 Rule Sources
 -------------
-  src/rules/          ← Strongly-typed Python rule classes (used for SQL generation)
-  src/rules_catalog.json  ← AI prompt descriptions for base rules
-  src/rule_book_learned.json ← YOUR learned rules (auto-created, safe to commit)
+  src/rules/                    ← Strongly-typed Python rule classes (used for SQL generation)
+  src/rules/rules_catalog.json  ← AI prompt descriptions for base rules
+  src/rule_book_learned.json    ← YOUR learned rules (auto-created, safe to commit)
 
 Design Principles
 -----------------
@@ -52,7 +52,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from rules import (
     get_rule_for_type as _registry_lookup,
@@ -60,14 +60,14 @@ from rules import (
     get_rule_by_name as _registry_get_by_name,
     BaseValidationRule,
 )
-from rules.postgres_base_rules import _normalize_type, _type_matches
+from rules.base_rules import _normalize_type, _type_matches
 
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 
 _SRC_DIR      = Path(__file__).parent
-_CATALOG_PATH = _SRC_DIR / "rules_catalog.json"
+_CATALOG_PATH = _SRC_DIR / "rules" / "rules_catalog.json"
 _LEARNED_PATH = _SRC_DIR / "rule_book_learned.json"
 
 
@@ -507,13 +507,50 @@ class RuleBook:
     # Public API — AI Prompt Block
     # ──────────────────────────────────────────────────────────────────────
 
-    def build_prompt_block(self) -> str:
+    def _rule_matches_pairs(
+        self,
+        rule: "RuleEntry",
+        type_pairs: List[Tuple[str, str]],
+    ) -> bool:
+        """True if `rule` applies to at least one (source_type, target_type)
+        pair in `type_pairs`. Base rules check every pair in pg_type_pairs
+        (a rule can cover several source spellings of the same concept);
+        learned rules check their single source_type/target_type."""
+        candidates = rule.pg_type_pairs or [
+            {"source": rule.source_type, "target": rule.target_type}
+        ]
+        for wanted_src, wanted_tgt in type_pairs:
+            src_norm = _normalize_type(wanted_src)
+            tgt_norm = _normalize_type(wanted_tgt)
+            for pair in candidates:
+                if _type_matches(src_norm, _normalize_type(pair.get("source", "*"))) and \
+                   _type_matches(tgt_norm, _normalize_type(pair.get("target", "*"))):
+                    return True
+        return False
+
+    def build_prompt_block(
+        self,
+        type_pairs: Optional[List[Tuple[str, str]]] = None,
+        source_label: str = "PostgreSQL",
+    ) -> str:
         """
-        Build a formatted text block of ALL rules (base + learned) for injection
+        Build a formatted text block of rules (base + learned) for injection
         into an AI prompt (system prompt or user prompt).
 
+        Args:
+            type_pairs: Optional list of (source_type, target_type) pairs
+                actually present in the table/columns being processed. When
+                given, only rules relevant to at least one of those pairs are
+                included — keeps the prompt cheap for per-column AI calls
+                (see ai/prompt_builder.py). When None (default), every base +
+                learned rule is included — appropriate for a once-per-table
+                call (see generated_queries/ai_sql_generator.py) or CLI display.
+            source_label: Source system name for the header text (this catalog
+                is source-agnostic — types are normalized before lookup — but
+                the header still names one system for readability).
+
         The block includes:
-          - Complete rule catalog with SQL templates for each rule
+          - Rule catalog with SQL templates for each included rule
           - Type-pair trigger conditions
           - Rule chaining order
           - NULL placeholder specification
@@ -522,10 +559,16 @@ class RuleBook:
         Returns:
             Multi-line string ready to inject into any LLM prompt.
         """
+        base_rules    = self._base_rules
+        learned_rules = self._learned_rules
+        if type_pairs:
+            base_rules    = [r for r in base_rules    if self._rule_matches_pairs(r, type_pairs)]
+            learned_rules = [r for r in learned_rules if self._rule_matches_pairs(r, type_pairs)]
+
         sep = "=" * 65
         lines = [
             sep,
-            "  TRANSFORMATION RULES CATALOG (PostgreSQL → Snowflake)",
+            f"  TRANSFORMATION RULES CATALOG ({source_label} → Snowflake)",
             "  These rules MUST be applied when generating validation SQL.",
             sep,
             "",
@@ -550,15 +593,15 @@ class RuleBook:
         lines.append(f"  {'─' * 62}")
         lines.append("  BASE RULES (Built-In)")
         lines.append(f"  {'─' * 62}")
-        for r in self._base_rules:
+        for r in base_rules:
             lines.append(r.to_prompt_line())
             lines.append("")
 
-        if self._learned_rules:
+        if learned_rules:
             lines.append(f"  {'─' * 62}")
             lines.append("  LEARNED RULES (Your Custom Rules — Always Applied)")
             lines.append(f"  {'─' * 62}")
-            for r in self._learned_rules:
+            for r in learned_rules:
                 lines.append(r.to_prompt_line())
                 lines.append("")
 

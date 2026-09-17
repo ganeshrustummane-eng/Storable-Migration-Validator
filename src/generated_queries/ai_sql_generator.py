@@ -40,6 +40,7 @@ from typing import List, Optional, Tuple
 from dataclasses import dataclass
 
 from ai_transformation.column_mapping import ColumnRuleMapping
+from rule_book import rule_book
 
 try:
     from token_usage_analysis.token_logger import (
@@ -890,8 +891,32 @@ Generate the {db_type.upper()} query now:
     # Prompt builders
     # -----------------------------------------------------------------------
 
+    def _build_learned_rules_section(self) -> str:
+        """
+        Render any user-taught rules (Rule Book UI tab → rule_book_learned.json)
+        as an extra system-prompt section. These are additive to the hardcoded
+        dialect-syntax rules above, not a replacement — the base rules here
+        cover MSSQL/PostgreSQL/Snowflake/Athena syntax differences and the
+        JSON/hstore historical reasoning, which rule_book's generic SQL
+        templates don't capture per-dialect. Only the LEARNED rules (things
+        the user corrected/added later) are injected, so a new learned rule
+        is picked up automatically without touching this file again.
+        """
+        learned = rule_book.learned_rules()
+        if not learned:
+            return ""
+        lines = [
+            "\n## Your Custom Rules (Learned — apply these in addition to the rules above "
+            "when a column's source_type/target_type matches):",
+        ]
+        for r in learned:
+            lines.append(r.to_prompt_line())
+            lines.append("")
+        return "\n".join(lines)
+
     def _build_system_prompt(self, source_db: str, target_db: str) -> str:
         """Build the system prompt with database-specific instructions."""
+        learned_section = self._build_learned_rules_section()
         return f"""You are an expert SQL Query Generator specializing in data migration validation.
 
 Your task: Generate database-specific SQL queries for validation between {source_db.upper()} (source) and {target_db.upper()} (target).
@@ -976,7 +1001,7 @@ string in SQL was tried and does not work, because the two engines disagree:
 Therefore: NEVER use LATERAL FLATTEN, LISTAGG, WITH RECURSIVE, string_agg,
 jsonb_each, jsonb_array_elements, hstore_to_jsonb or PARSE_JSON-with-sorting for
 these columns. Emit exactly the expressions above.
-
+{learned_section}
 ## Critical Requirements:
 1. ALWAYS use database-specific syntax — never mix dialects.
 2. For UUID columns: ALWAYS apply UPPER(TRIM(...)) — never bare CAST.

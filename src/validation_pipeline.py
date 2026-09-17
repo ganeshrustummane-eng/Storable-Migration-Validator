@@ -509,6 +509,7 @@ class ValidationPipeline:
                 ai_needed_decisions=ai_needed,
                 table_name=pg_table,
                 learned_examples=learned_dicts,
+                source_label=src_type_lbl,
             )
             ai_resolved_map = {d.source_col.column_name: d for d in planner_result.decisions}
 

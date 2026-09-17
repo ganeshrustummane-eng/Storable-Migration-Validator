@@ -203,7 +203,7 @@ python validate_cli.py rules
 python validate_cli.py add-rule
 
 # Rules are stored in:
-#   src/rules_catalog.json          ← base rules (do not edit manually)
+#   src/rules/rules_catalog.json          ← base rules (do not edit manually)
 #   src/rule_book_learned.json      ← your custom rules (auto-created)
 ```
 
@@ -273,14 +273,14 @@ validation_sql/
 
 ## 🧩 Adding a New Rule (Developer Guide)
 
-1. **Add the class** to `src/rules/postgres_base_rules.py` (this is the one
+1. **Add the class** to `src/rules/base_rules.py` (this is the one
    canonical file for all rule logic — see the note at the top of that file
    for why `mssql_rules.py`/`athena_rules.py`/`snowflake_rules.py` are only
    re-export shims, not separate rule implementations).
 2. **Register** it in `src/rules/__init__.py` — import the class, then
    `_registry.register(MyRule())` **before** `_registry.register(TextRule())`
    (the wildcard `("*", "*")` fallback must always be registered last).
-3. **Optionally** add it to `src/rules_catalog.json` so it shows up in
+3. **Optionally** add it to `src/rules/rules_catalog.json` so it shows up in
    `validate_cli.py rules` and in AI prompt context.
 4. **Done** — `get_rule_for_type()` picks it up automatically for every
    future `generate`/`batch` run.
@@ -293,7 +293,7 @@ immediately rather than silently reusing PostgreSQL syntax somewhere it
 isn't valid (e.g. MSSQL/Athena don't support `TO_CHAR`/`::jsonb`/`AS TEXT`).
 
 ```python
-# in src/rules/postgres_base_rules.py
+# in src/rules/base_rules.py
 class MyRule(BaseValidationRule):
     @property
     def rule_name(self) -> str: return "my_rule"
