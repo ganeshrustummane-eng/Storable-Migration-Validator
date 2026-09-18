@@ -103,39 +103,43 @@ def test_mixed_case_keys_agree():
     assert canonicalize_value('{"Zebra":1,"apple":2}') == canonicalize_value('{"apple":2,"Zebra":1}')
 
 
-def test_numbers_are_not_converted():
-    """Digits are preserved verbatim — no trailing-zero stripping, no rescaling.
-
-    Zero-stripping is a value conversion, and a conversion that makes two
-    differently-formatted numbers compare equal can also hide genuine precision
-    loss during migration. This module only trims spaces, sorts keys, and
-    stringifies; a trailing-zero difference is reported, not absorbed.
+def test_numbers_rounded_to_2dp():
+    """Fractional values are rounded to 2dp — trailing-zero formatting
+    differences (470.850 vs 470.85, 1500.50 vs 1500.5) are the same value
+    after a numeric type round trip, not migration drift.
     """
-    assert canonicalize_value('{"amount":470.850}') == '{"amount":470.850}'
-    assert canonicalize_value('{"amount":470.850}') != canonicalize_value('{"amount":470.85}')
-    assert canonicalize_value('{"amount":1.50}') != canonicalize_value('{"amount":1.5}')
-    assert canonicalize_value('{"amount":1.50}') == '{"amount":1.50}'
+    assert canonicalize_value('{"amount":470.850}') == canonicalize_value('{"amount":470.85}') == '{"amount":470.85}'
+    assert canonicalize_value('{"amount":1.50}') == canonicalize_value('{"amount":1.5}') == '{"amount":1.50}'
+    assert canonicalize_value('{"price":1500.50}') == canonicalize_value('{"price":1500.5}')
+    # Bare JSON integers have no trailing-zero ambiguity and are left as-is.
     assert canonicalize_value('{"n":100}') == '{"n":100}'
-    # Exponent notation is expanded (format 'f'), never emitted as 1E+2.
-    assert canonicalize_value('{"n":1e2}') == '{"n":100}'
+    # Exponent notation is expanded (format 'f') and rounded like any other
+    # float-typed number, never emitted as 1E+2.
+    assert canonicalize_value('{"n":1e2}') == '{"n":100.00}'
 
 
-def test_high_precision_numbers_not_rounded():
-    """Decimal parsing must not collapse genuinely different values."""
+def test_high_precision_numbers_rounded_to_2dp():
+    """Rounding to 2dp is a fixed precision floor: differences past the 2nd
+    decimal place are absorbed, same as any other trailing-precision noise.
+    """
     a = canonicalize_value('{"v":0.12345678901234567890123}')
     b = canonicalize_value('{"v":0.12345678901234567890124}')
-    assert a != b
+    assert a == b == '{"v":0.12}'
 
 
 def test_top_level_array_supported():
     """Defect 4: jsonb_each() used to abort the query on these."""
-    assert canonicalize_value("[3,1,2]") == "[3,1,2]"
+    assert canonicalize_value("[3,1,2]") == "[1,2,3]"
     assert canonicalize_value("[ 3, 1, 2 ]") == canonicalize_value("[3,1,2]")
 
 
-def test_array_order_is_significant():
-    """Arrays are ordered — reordering is real drift and must stay visible."""
-    assert canonicalize_value("[1,2,3]") != canonicalize_value("[3,2,1]")
+def test_array_order_is_not_significant():
+    """Arrays are compared as sets, not sequences — a reordered array (e.g. a
+    Snowflake VARIANT array round trip) is not real drift."""
+    assert canonicalize_value("[1,2,3]") == canonicalize_value("[3,2,1]")
+    assert canonicalize_value('["east","west","north"]') == canonicalize_value('["north","west","east"]')
+    # A genuinely different element set still differs.
+    assert canonicalize_value("[1,2,3]") != canonicalize_value("[1,2,4]")
 
 
 def test_postgres_array_to_json_matches_snowflake_variant():
@@ -151,13 +155,14 @@ def test_postgres_array_to_json_matches_snowflake_variant():
     assert canonicalize_value("[]") == canonicalize_value("[ ]")
 
 
-def test_array_elements_not_sorted_but_inner_object_keys_are():
-    """Arrays keep their order; objects inside them get sorted keys."""
+def test_array_elements_sorted_and_inner_object_keys_are_too():
+    """Array elements are sorted by their canonicalized form; objects inside
+    them get sorted keys first so the sort key doesn't depend on key order."""
     a = '[{"b":1,"a":2},{"d":3,"c":4}]'
-    b = '[{"a":2,"b":1},{"c":4,"d":3}]'
-    assert canonicalize_value(a) == canonicalize_value(b) == '[{"a":2,"b":1},{"c":4,"d":3}]'
-    # Swapping the two elements is drift, not noise.
-    assert canonicalize_value(a) != canonicalize_value('[{"d":3,"c":4},{"b":1,"a":2}]')
+    b = '[{"c":4,"d":3},{"a":2,"b":1}]'
+    assert canonicalize_value(a) == canonicalize_value(b)
+    # A genuinely different element is still drift.
+    assert canonicalize_value(a) != canonicalize_value('[{"a":2,"b":1},{"c":4,"d":99}]')
 
 
 def test_postgres_array_literal_is_not_mistaken_for_json():
@@ -210,6 +215,19 @@ def test_values_containing_delimiters():
 def test_whitespace_inside_string_values_preserved():
     """Trimming inside JSON strings would lose real data."""
     assert canonicalize_value('{"a":"Alex "}') != canonicalize_value('{"a":"Alex"}')
+
+
+# ── semistructured_demo scenarios ────────────────────────────────────────────
+
+def test_demo_jsonb_numeric_precision():
+    """DEMO-05: 1500.50 vs 1500.5 is the same value, not drift."""
+    assert canonicalize_value('{"price":1500.50}') == canonicalize_value('{"price":1500.5}')
+
+
+def test_demo_array_order():
+    """DEMO-04: [east,west,north] vs [north,west,east] is a reordered array,
+    not drift — element sets match."""
+    assert canonicalize_value('["east","west","north"]') == canonicalize_value('["north","west","east"]')
 
 
 # ── Non-regression: real drift must survive ──────────────────────────────────

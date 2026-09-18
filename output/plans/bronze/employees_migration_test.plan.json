@@ -1,0 +1,192 @@
+{
+  "schema_version": 2,
+  "source": {
+    "database": "DevT5000",
+    "db_type": "mssql",
+    "schema": "dbo",
+    "table": "employees_migration_test"
+  },
+  "target": {
+    "database": "DEV_SITELINK_BRONZE",
+    "db_type": "snowflake",
+    "schema": "AWSDEV_DEVT5000_DBO",
+    "table": "EMPLOYEES_MIGRATION_TEST"
+  },
+  "source_table": "DevT5000.dbo.employees_migration_test",
+  "target_table": "DEV_SITELINK_BRONZE.AWSDEV_DEVT5000_DBO.EMPLOYEES_MIGRATION_TEST",
+  "status": "complete",
+  "generated_at": "2026-09-18T12:06:47.151511",
+  "generated_by": "fuzzy",
+  "model_used": "N/A",
+  "ai_calls_made": 0,
+  "has_fivetran_active": true,
+  "source_filter": "",
+  "target_filter": "",
+  "population_scope": {},
+  "relationships": [],
+  "identity": {
+    "type": "primary_key",
+    "source_primary_keys": [
+      "employee_id"
+    ],
+    "target_primary_keys": [
+      "EMPLOYEE_ID"
+    ],
+    "candidate_keys": []
+  },
+  "row_hash": null,
+  "transformations": [],
+  "validations": [],
+  "requires_review": false,
+  "review_reasons": [],
+  "primary_keys": {
+    "source": [
+      "employee_id"
+    ],
+    "target": [
+      "EMPLOYEE_ID"
+    ],
+    "mismatch": false,
+    "mismatch_reason": ""
+  },
+  "stats": {
+    "total_source_columns": 9,
+    "active_mappings": 9,
+    "skipped_mappings": 0,
+    "exact_matches": 9,
+    "fuzzy_matches": 0,
+    "ai_resolved": 0,
+    "unmatched_source": 0
+  },
+  "exclusions": {
+    "total_source_columns": 9,
+    "validated": 9,
+    "excluded": [],
+    "excluded_count": 0,
+    "coverage_pct": 100.0
+  },
+  "warnings": [],
+  "ambiguities": [],
+  "unmatched_source_columns": [],
+  "unmatched_target_columns": [],
+  "mappings": [
+    {
+      "source_column": "employee_id",
+      "source_type": "integer",
+      "source_normalized": "employeeid",
+      "target_column": "EMPLOYEE_ID",
+      "target_type": "NUMBER",
+      "target_normalized": "employeeid",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)",
+      "is_primary_key": true
+    },
+    {
+      "source_column": "full_name",
+      "source_type": "character varying",
+      "source_normalized": "fullname",
+      "target_column": "FULL_NAME",
+      "target_type": "TEXT",
+      "target_normalized": "fullname",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "bio",
+      "source_type": "character varying",
+      "source_normalized": "bio",
+      "target_column": "BIO",
+      "target_type": "TEXT",
+      "target_normalized": "bio",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "is_active",
+      "source_type": "boolean",
+      "source_normalized": "isactive",
+      "target_column": "IS_ACTIVE",
+      "target_type": "BOOLEAN",
+      "target_normalized": "isactive",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "hire_date",
+      "source_type": "timestamp without time zone",
+      "source_normalized": "hiredate",
+      "target_column": "HIRE_DATE",
+      "target_type": "TIMESTAMP_NTZ",
+      "target_normalized": "hiredate",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "employee_guid",
+      "source_type": "uuid",
+      "source_normalized": "employeeguid",
+      "target_column": "EMPLOYEE_GUID",
+      "target_type": "TEXT",
+      "target_normalized": "employeeguid",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "salary",
+      "source_type": "numeric",
+      "source_normalized": "salary",
+      "target_column": "SALARY",
+      "target_type": "NUMBER",
+      "target_normalized": "salary",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "bonus_rate",
+      "source_type": "numeric",
+      "source_normalized": "bonusrate",
+      "target_column": "BONUS_RATE",
+      "target_type": "NUMBER",
+      "target_normalized": "bonusrate",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "notes",
+      "source_type": "character varying",
+      "source_normalized": "notes",
+      "target_column": "NOTES",
+      "target_type": "TEXT",
+      "target_normalized": "notes",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    }
+  ]
+}

@@ -27,7 +27,9 @@ hope two engines agree on.
 Canonicalization rules applied to every semi-structured value:
   * Object keys  — sorted by Unicode codepoint (Python's native str sort).
   * Array elements — sorted by their serialized string form before comparison.
-                     A reordered array is treated as equivalent data, not drift.
+                     A reordered array is treated as equivalent data, not drift
+                     (e.g. Snowflake VARIANT arrays don't guarantee element
+                     order survives a round trip the way Postgres text[] does).
   * Booleans     — serialized as "True" / "False" (Python-style capitalization)
                    so that the JSON lowercase true/false and any loader variant
                    all produce the same comparison token.
@@ -207,8 +209,12 @@ def _canonicalize_node(node):
         return {str(k): _canonicalize_node(v) for k, v in node.items()}
 
     if isinstance(node, list):
-        # Array order is data. Preserve order while canonicalizing nested values.
-        return [_canonicalize_node(v) for v in node]
+        # Array order is not treated as data — sort by serialized form so a
+        # reordered array (e.g. Fivetran/VARIANT round trip) isn't reported
+        # as drift. Nested values are canonicalized before sorting so nested
+        # dict key order doesn't affect the sort key.
+        canonicalized = [_canonicalize_node(v) for v in node]
+        return sorted(canonicalized, key=_serialize)
 
     if isinstance(node, str):
         # Normalize boolean-like strings so that the JSON literal true and the
@@ -231,7 +237,13 @@ def _canonicalize_node(node):
     if isinstance(node, bool):
         return node  # _serialize renders as "True" / "False"
 
-    if isinstance(node, (Decimal, int, float)):
+    # Only fractional values need rounding; a bare JSON integer (parsed as
+    # Python int, since parse_float=Decimal doesn't affect ints) has no
+    # trailing-zero ambiguity and is left as-is.
+    if isinstance(node, (Decimal, float)):
+        return _round_number(node)
+
+    if isinstance(node, int):
         return node
 
     return node

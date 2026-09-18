@@ -1,0 +1,162 @@
+{
+  "schema_version": 2,
+  "source": {
+    "database": "migration_demo",
+    "db_type": "postgresql",
+    "schema": "public",
+    "table": "semistructured_demo"
+  },
+  "target": {
+    "database": "MIGRATION_DEMO",
+    "db_type": "snowflake",
+    "schema": "PUBLIC",
+    "table": "SEMISTRUCTURED_DEMO"
+  },
+  "source_table": "migration_demo.public.semistructured_demo",
+  "target_table": "MIGRATION_DEMO.PUBLIC.SEMISTRUCTURED_DEMO",
+  "status": "complete",
+  "generated_at": "2026-09-18T12:17:42.114835",
+  "generated_by": "fuzzy",
+  "model_used": "N/A",
+  "ai_calls_made": 0,
+  "has_fivetran_active": true,
+  "source_filter": "",
+  "target_filter": "",
+  "population_scope": {},
+  "relationships": [],
+  "identity": {
+    "type": "primary_key",
+    "source_primary_keys": [
+      "test_id"
+    ],
+    "target_primary_keys": [],
+    "candidate_keys": []
+  },
+  "row_hash": null,
+  "transformations": [],
+  "validations": [],
+  "requires_review": false,
+  "review_reasons": [],
+  "primary_keys": {
+    "source": [
+      "test_id"
+    ],
+    "target": [],
+    "mismatch": false,
+    "mismatch_reason": ""
+  },
+  "stats": {
+    "total_source_columns": 7,
+    "active_mappings": 7,
+    "skipped_mappings": 0,
+    "exact_matches": 7,
+    "fuzzy_matches": 0,
+    "ai_resolved": 0,
+    "unmatched_source": 0
+  },
+  "exclusions": {
+    "total_source_columns": 7,
+    "validated": 7,
+    "excluded": [],
+    "excluded_count": 0,
+    "coverage_pct": 100.0
+  },
+  "warnings": [],
+  "ambiguities": [],
+  "unmatched_source_columns": [],
+  "unmatched_target_columns": [],
+  "mappings": [
+    {
+      "source_column": "test_id",
+      "source_type": "character varying",
+      "source_normalized": "testid",
+      "target_column": "TEST_ID",
+      "target_type": "TEXT",
+      "target_normalized": "testid",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)",
+      "is_primary_key": true
+    },
+    {
+      "source_column": "scenario",
+      "source_type": "character varying",
+      "source_normalized": "scenario",
+      "target_column": "SCENARIO",
+      "target_type": "TEXT",
+      "target_normalized": "scenario",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "expected_result",
+      "source_type": "character varying",
+      "source_normalized": "expectedresult",
+      "target_column": "EXPECTED_RESULT",
+      "target_type": "TEXT",
+      "target_normalized": "expectedresult",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "col_json",
+      "source_type": "json",
+      "source_normalized": "coljson",
+      "target_column": "COL_JSON",
+      "target_type": "VARIANT",
+      "target_normalized": "coljson",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "col_jsonb",
+      "source_type": "jsonb",
+      "source_normalized": "coljsonb",
+      "target_column": "COL_JSONB",
+      "target_type": "VARIANT",
+      "target_normalized": "coljsonb",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "col_hstore",
+      "source_type": "hstore",
+      "source_normalized": "colhstore",
+      "target_column": "COL_HSTORE",
+      "target_type": "VARIANT",
+      "target_normalized": "colhstore",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    },
+    {
+      "source_column": "col_array",
+      "source_type": "ARRAY",
+      "source_normalized": "colarray",
+      "target_column": "COL_ARRAY",
+      "target_type": "VARIANT",
+      "target_normalized": "colarray",
+      "match_method": "exact",
+      "confidence": 1.0,
+      "transformation_rule": "text",
+      "validation_rules": [],
+      "reason": "Matched by exact (confidence=1.00)"
+    }
+  ]
+}

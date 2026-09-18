@@ -1,6 +1,6 @@
 ---
 name: normalization-and-exclusions
-description: Use when a column's source and target types don't match structurally (hstore vs VARIANT, JSONB vs VARIANT, arrays, timestamps, booleans) and need canonical comparison, or when deciding what should never be compared at all (Fivetran metadata columns, global/system/table-specific exclusions). Files: Project/utils/semantic_normalize.py, Project/utils/quality_checks.py, config/*_exclusions.yaml, src/core/skip_classifier.py.
+description: "Use when a column's source and target types don't match structurally (hstore vs VARIANT, JSONB vs VARIANT, arrays, timestamps, booleans) and need canonical comparison, or when deciding what should never be compared at all (Fivetran metadata columns, global/system/table-specific exclusions). Files: Project/utils/semantic_normalize.py, Project/utils/quality_checks.py, config/*_exclusions.yaml, src/core/skip_classifier.py."
 ---
 
 # Semantic normalization and exclusions
