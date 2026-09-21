@@ -8,7 +8,7 @@ tool has to hit — so agents and skills don't each re-derive (or contradict) it
 
 Storable is migrating data from several operational systems into Snowflake.
 Migration itself (extraction + load) is done by another team using Fivetran and
-similar CDC tools. **This repo's job is to validate that migration** — confirm it
+similar coalesce tools. **This repo's job is to validate that migration** — confirm it
 completed correctly, not to perform it.
 
 ## Source systems → Snowflake
@@ -63,6 +63,13 @@ failed-only CSV. Don't build a path that only reports failures — passed rows
 must be visible too, since "no failures reported" and "validation didn't run"
 must never look the same.
 
+Report/output formats are **CSV and YAML only**, verified — there is no XML
+report generation anywhere in this codebase, and no `.xlsx` *writer* either
+(`.xlsx` is read-only, used for uploaded mapping sheets via
+`src/excel_batch_loader.py`; the webapp's Output Files tab lists `.xlsx` as a
+display filter, but nothing produces one today). Don't assume either format
+exists without checking first — see the `data-comparison-report` skill.
+
 Transformations and filtrations applied during migration (currency conversion,
 renamed columns, exclusion lists, Fivetran-active filtering) are **in scope**
 for validation, not something to work around — the validator's job is to know
@@ -96,6 +103,31 @@ values and ignore the difference.
 - **Exclusions**: `config/exclusions.yaml` (global) + `config/*_exclusions.yaml`
   (per-source-DB) + table-specific exclusions set at runtime in the UI. The 5
   YAML files are ~90% duplicate content — a known cleanup candidate.
+- **Base rule catalog (static/immutable)**: `src/rules/rules_catalog.json` (10
+  rule entries, metadata only) + `src/rules/base_rules.py` (the Python classes
+  that actually execute — the JSON file's embedded SQL templates for
+  `json`/`hstore` are stale relative to these classes; don't trust them as the
+  executing logic).
+- **Learned rules (mutable, human-gated feedback loop)**: `src/rule_book.py`
+  (gap-filler rules — `draft`/`active` status, `reuses_rule` anti-hallucination
+  guard: an active learned rule only ever replays an existing base rule's
+  template, never its own SQL) + `src/learning/feedback.py` (records human
+  corrections to AI/fuzzy column-mapping decisions) + `src/learning/retrieval.py`
+  (reads corrections back for future confidence scoring). Both writers persist
+  into the same `rule_book_learned.json` under different top-level keys
+  (`learned_rules` vs `learned_corrections`) — each does a read-merge-write to
+  avoid clobbering the other's key. `docs/rules/rule-book.md`'s described
+  lifecycle (approval roles, version store) does not match this code — treat
+  that doc as stale/aspirational.
+- **Webapp's own YAML-writing paths**: `webapp/app.py` contains three direct
+  `yaml.dump()` call sites (the "prompt" single-table tab, the reference/
+  filter/join "RPJ" tab, and the custom-YAML manual editor), and
+  `src/excel_batch_loader.py` has its own `write_yaml()` for the Excel-upload
+  batch flow. None of these four call into
+  `src/generated_queries/yaml_config_writer.py` (the backend generator used by
+  `src/validation_pipeline.py`) — they're independent, real, intentional-for-now
+  duplication, same treatment as the 5 exclusion YAMLs above. Don't consolidate
+  without the user asking. See the `webapp-yaml-generation` skill.
 - **Agentic/chat layer**: `src/connector/` (renamed from `gemini_connector` —
   Gemini is gone, EPAM DIAL/Claude only). JIRA integration, approval store,
   audit log all live here and are real, in-use features.
@@ -117,3 +149,21 @@ values and ignore the difference.
    session (`sql_query_generator.py` looked redundant but wraps a needed step).
 4. **`py_compile` (or `ast.parse`) every touched `.py` file before calling a
    change done.**
+
+## Skills index (`.claude/skills/`)
+
+`.claude/` is the authoritative tree for agents/skills in this repo — `.github/`
+has mirrored copies in Copilot's format that can drift out of sync (confirmed
+divergence found once already); don't treat `.github/` as ground truth.
+
+- `normalization-and-exclusions` — semantic type normalization + 3-tier exclusions.
+- `reference-filter-joins` — NL condition → `CanonicalValidationPlan` → backend SQL/YAML.
+- `base-rules-datatypes` — the static 10-rule catalog (`rules_catalog.json` + `base_rules.py`).
+- `learned-rules` — the mutable gap-filler/correction feedback loop.
+- `webapp-yaml-generation` — the webapp's own independent YAML-writing paths.
+- `excel-batch-ai-review-planned` — **not yet built**; design notes only for a
+  future AI-preview step on Excel-upload batch generation.
+- `data-comparison-report` — the two comparison engines and CSV report format.
+- `connector-postgresql`, `connector-mssql-sitelink`, `connector-athena`,
+  `connector-redshift-tradeshift`, `connector-snowflake-target` — per-source/target
+  connection, schema-extraction, and type-mapping specifics.
