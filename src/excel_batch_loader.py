@@ -71,6 +71,8 @@ class ReportSpec:
     source_tables: list = field(default_factory=list)   # tables identified from grain/summary
     sf_database: str = ""
     sf_schema: str = ""
+    filter_condition: str = ""
+    transformation_note: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -116,8 +118,28 @@ def _normalize_col(name: str) -> str:
     return name.strip().lower()
 
 
-def load_excel(path: str, sheet: Optional[str] = None) -> List[ReportSpec]:
-    """Parse the Excel file and return one ReportSpec per data row."""
+def load_excel(
+    path: str,
+    sheet: Optional[str] = None,
+    unrecognized_out: Optional[List[str]] = None,
+    ai_generator=None,
+) -> List[ReportSpec]:
+    """Parse the Excel file and return one ReportSpec per data row.
+
+    Args:
+        path: path to the .xlsx file.
+        sheet: sheet name (defaults to the first sheet).
+        unrecognized_out: optional list the caller passes in to receive any
+            header names that neither the regex fast-path nor the AI
+            classifier fallback could confidently place (role "unknown").
+            Additive — default None preserves today's behavior exactly (no
+            AI call, no unrecognized-column tracking).
+        ai_generator: optional AISQLQueryGenerator instance to reuse for the
+            header-classification AI fallback (avoids re-instantiating a
+            client per sheet when the caller already has one). Created
+            lazily only when needed (i.e. only when there are unmatched
+            headers) if not supplied.
+    """
     try:
         import pandas as pd
     except ImportError as exc:
@@ -141,6 +163,8 @@ def load_excel(path: str, sheet: Optional[str] = None) -> List[ReportSpec]:
     col_summary      = _find(r"^summary$")
     col_grain        = _find(r"^grain$")
     col_sf           = _find(r"snowflake\s*query|target\s*query")
+    col_filter       = _find(r"^filter$|^condition$")
+    col_transform    = _find(r"transformation")
 
     # Find legacy query column(s) — pick the first matching one
     col_legacy = None
@@ -153,6 +177,64 @@ def load_excel(path: str, sheet: Optional[str] = None) -> List[ReportSpec]:
 
     if not col_yaml:
         raise ValueError("Could not find a 'Yaml-File-name' column in the sheet.")
+
+    # --- AI fallback for headers the regex fast-path couldn't place --------
+    _matched_cols = {
+        c for c in (
+            col_no, col_pack, col_yaml, col_report_name, col_summary,
+            col_grain, col_sf, col_filter, col_transform, col_legacy,
+        ) if c
+    }
+    unmatched_cols = [c for c in df.columns if c not in _matched_cols]
+    if unmatched_cols:
+        try:
+            if ai_generator is None:
+                from generated_queries.ai_sql_generator import AISQLQueryGenerator
+                ai_generator = AISQLQueryGenerator()
+            sample_values = {
+                c: [v for v in df[c].dropna().astype(str).head(3).tolist()]
+                for c in unmatched_cols
+            }
+            roles = ai_generator.classify_headers(unmatched_cols, sample_values)
+        except Exception as exc:
+            print(f"  ⚠ header classification AI fallback failed: {exc}", file=sys.stderr)
+            roles = {c: "unknown" for c in unmatched_cols}
+
+        _role_to_var = {
+            "report_pack": "col_pack", "yaml_file_name": "col_yaml",
+            "report_name": "col_report_name", "summary": "col_summary",
+            "grain": "col_grain", "filter": "col_filter",
+            "transformation": "col_transform", "target_query": "col_sf",
+        }
+        for header, role in roles.items():
+            if role == "ignore":
+                continue
+            if role == "legacy_query" and not col_legacy:
+                col_legacy = header
+                detected_source = _detect_source_type(header)
+                continue
+            if role == "unknown":
+                if unrecognized_out is not None:
+                    unrecognized_out.append(header)
+                continue
+            var_name = _role_to_var.get(role)
+            if var_name and locals().get(var_name) is None:
+                if var_name == "col_pack":
+                    col_pack = header
+                elif var_name == "col_yaml":
+                    col_yaml = header
+                elif var_name == "col_report_name":
+                    col_report_name = header
+                elif var_name == "col_summary":
+                    col_summary = header
+                elif var_name == "col_grain":
+                    col_grain = header
+                elif var_name == "col_filter":
+                    col_filter = header
+                elif var_name == "col_transform":
+                    col_transform = header
+                elif var_name == "col_sf":
+                    col_sf = header
 
     specs: List[ReportSpec] = []
     for idx, row in df.iterrows():
@@ -169,12 +251,18 @@ def load_excel(path: str, sheet: Optional[str] = None) -> List[ReportSpec]:
         grain       = str(row[col_grain]).strip()      if col_grain       else ""
         legacy_q    = str(row[col_legacy]).strip()     if col_legacy      else ""
         sf_q        = str(row[col_sf]).strip()         if col_sf          else ""
+        filter_cond = str(row[col_filter]).strip()     if col_filter      else ""
+        transform_note = str(row[col_transform]).strip() if col_transform else ""
         row_num     = int(float(row[col_no])) if col_no and not _is_empty(row.get(col_no, "")) else idx + 2
 
         if _is_empty(legacy_q):
             legacy_q = ""
         if _is_empty(sf_q):
             sf_q = ""
+        if _is_empty(filter_cond):
+            filter_cond = ""
+        if _is_empty(transform_note):
+            transform_note = ""
 
         specs.append(ReportSpec(
             row_num=row_num,
@@ -186,6 +274,8 @@ def load_excel(path: str, sheet: Optional[str] = None) -> List[ReportSpec]:
             source_type=detected_source,
             legacy_query=legacy_q,
             snowflake_query=sf_q,
+            filter_condition=filter_cond,
+            transformation_note=transform_note,
         ))
 
     return specs
@@ -392,6 +482,116 @@ def _generate_queries(
 
 
 # ---------------------------------------------------------------------------
+# Row-level plan derivation (AI-preview)
+# ---------------------------------------------------------------------------
+
+_SQL_LOOKING_RE = re.compile(
+    r"\b(AND|OR)\b|[=<>]|\bIN\s*\(|\bLIKE\b|\bIS\s+NULL\b|\bIS\s+NOT\s+NULL\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_sql(text: str) -> bool:
+    """Cheap heuristic: does this already read like a SQL boolean predicate?
+
+    ponytail: naive regex heuristic, not a parser — false negatives just cost
+    one extra (cheap, single) AI call; false positives are rare because a
+    prose sentence rarely contains '=' or ' AND ' by accident. Upgrade to a
+    real predicate parser only if this misfires in practice.
+    """
+    return bool(text) and bool(_SQL_LOOKING_RE.search(text))
+
+
+def derive_row_plan(
+    spec: ReportSpec,
+    source_extractor=None,
+    ai_generator=None,
+    model: Optional[str] = None,
+) -> dict:
+    """
+    Derive a per-row validation plan preview for one ReportSpec: which
+    table(s) it touches, its grain (candidate composite key), and its filter
+    condition as both SQL and plain English — without generating the actual
+    comparison SQL (that happens later, at YAML-generation time, via either
+    run_with_plan() for single-table rows or _generate_queries() for joins).
+
+    Single-table vs multi-table/join is decided the same way _generate_queries
+    already does: spec.source_tables (set by the UI) determines the table
+    list; more than one table means a join is needed. Join rows are NOT
+    routed through CanonicalValidationPlan/run_with_plan() — that path stays
+    scoped to what generate_schema_aware_query() already handles unchanged.
+
+    Args:
+        spec: the parsed ReportSpec (row_num, grain, filter_condition, ...).
+        source_extractor: optional BaseExtractor, used only to confirm the
+            grain columns are real columns on the source table(s) (best
+            effort — falls back to the raw grain string on any failure).
+        ai_generator: optional AISQLQueryGenerator to reuse (avoids creating
+            a new AI client per row); created lazily if not supplied.
+        model: AI model override, only used if ai_generator is created here.
+
+    Returns:
+        {
+            "tables": List[str],
+            "grain_columns": List[str],
+            "filter_english": str,
+            "filter_sql": str,
+            "join_needed": bool,
+            "warnings": List[str],
+        }
+    """
+    warnings: List[str] = []
+    grain_cols = [g.strip() for g in re.split(r"[+,]", spec.grain) if g.strip()]
+    tables = spec.source_tables or ([spec.yaml_file_name] if spec.yaml_file_name else [])
+    join_needed = len(tables) > 1
+
+    if source_extractor and tables:
+        try:
+            _build_schema_context(
+                source_extractor, spec.source_type, spec.source_database,
+                spec.source_schema or "dbo", tables, grain_cols,
+            )
+        except Exception as exc:
+            warnings.append(f"Could not verify grain columns against schema: {exc}")
+
+    filter_condition = (spec.filter_condition or "").strip()
+    filter_sql = ""
+    filter_english = ""
+
+    if not filter_condition:
+        pass  # no filter on this row — leave both fields empty
+    elif _looks_like_sql(filter_condition):
+        filter_sql = filter_condition
+        filter_english = filter_condition
+    else:
+        if ai_generator is None:
+            from generated_queries.ai_sql_generator import AISQLQueryGenerator
+            ai_generator = AISQLQueryGenerator(model=model)
+        derived = ai_generator.explain_and_derive_filter(filter_condition)
+        filter_sql = derived["filter_sql"]
+        filter_english = derived["filter_english"]
+        warnings.extend(derived["warnings"])
+
+    if join_needed:
+        # ponytail: no eager SQL generation here — the real join query is
+        # built at generate-time by _generate_queries()/generate_schema_aware_query().
+        # Re-deriving it here too would double the AI calls for a preview grid.
+        warnings.append(
+            "Multi-table row — full JOIN SQL is generated at YAML-write time "
+            "via the existing generate_schema_aware_query() path, unchanged."
+        )
+
+    return {
+        "tables": tables,
+        "grain_columns": grain_cols,
+        "filter_english": filter_english,
+        "filter_sql": filter_sql,
+        "join_needed": join_needed,
+        "warnings": warnings,
+    }
+
+
+# ---------------------------------------------------------------------------
 # YAML writer
 # ---------------------------------------------------------------------------
 
@@ -506,4 +706,46 @@ if __name__ == "__main__":
     assert _detect_source_type("Legacy Query (Redshift)") == "redshift"
     assert _detect_source_type("Legacy Query (PostgreSQL)") == "postgresql"
     assert _pack_slug("Management Report") == "management_report"
+
+    # New ReportSpec fields default to "" (backward compatibility)
+    _spec = ReportSpec(
+        row_num=1, report_pack="p", yaml_file_name="y", report_name="r",
+        summary="s", grain="g", source_type="redshift", legacy_query="",
+        snowflake_query="",
+    )
+    assert _spec.filter_condition == ""
+    assert _spec.transformation_note == ""
+
+    # Regex fast-path still works unchanged: all headers regex-matchable,
+    # so load_excel must not trigger any AI classification call.
+    import tempfile
+    import pandas as pd
+    _df = pd.DataFrame([{
+        "No.": 1, "Report Pack": "Mgmt", "Yaml-File-name": "Test_001",
+        "Report Name": "Count check", "Summary": "row count check",
+        "Grain": "facility_key", "Filter": "status = 'ACTIVE'",
+        "Transformation": "", "Legacy Query (Redshift)": "SELECT 1",
+        "Snowflake Query": "SELECT 1",
+    }])
+    with tempfile.TemporaryDirectory() as _tmpdir:
+        _xlsx_path = str(Path(_tmpdir) / "mapping.xlsx")
+        _df.to_excel(_xlsx_path, index=False)
+        _unrecognized: list = []
+        _specs = load_excel(_xlsx_path, unrecognized_out=_unrecognized)
+        assert len(_specs) == 1, _specs
+        _s = _specs[0]
+        assert _s.yaml_file_name == "Test_001"
+        assert _s.grain == "facility_key"
+        assert _s.filter_condition == "status = 'ACTIVE'"
+        assert _s.legacy_query == "SELECT 1"
+        assert _unrecognized == [], f"unexpected unrecognized columns (AI fallback should not fire): {_unrecognized}"
+
+    # derive_row_plan: SQL-looking filter takes the no-AI-call fast path.
+    assert _looks_like_sql("status = 'ACTIVE'")
+    assert not _looks_like_sql("only active facilities")
+    _plan = derive_row_plan(_s)
+    assert _plan["filter_sql"] == "status = 'ACTIVE'"
+    assert _plan["join_needed"] is False
+    assert _plan["grain_columns"] == ["facility_key"]
+
     print("Self-check passed.")

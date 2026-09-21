@@ -154,6 +154,7 @@ class ValidationPipeline:
         layer: str = "bronze",
         source_filter: str = "",
         target_filter: str = "",
+        candidate_keys: Optional[List[List[str]]] = None,
     ) -> "tuple[GenerationResult, CanonicalValidationPlan]":
         """
         Run the full new pipeline using the CanonicalValidationPlan architecture.
@@ -178,6 +179,12 @@ class ValidationPipeline:
             exclude_columns  : Column names to skip (case-insensitive)
             source_db_type   : Source database type (e.g. 'postgresql', 'mssql')
                                (default: SOURCE_TYPE env var)
+            candidate_keys   : Optional list of candidate composite-key column
+                               lists (e.g. [["facility_key", "report_date"]]),
+                               passed straight through to
+                               CanonicalValidationPlan.candidate_keys. Additive —
+                               default None produces the exact same plan as
+                               before this parameter existed.
 
         Returns:
             (GenerationResult, CanonicalValidationPlan) tuple
@@ -345,6 +352,7 @@ class ValidationPipeline:
             generated_by="ai" if ai_calls_made else "fuzzy",
             source_filter=source_filter,
             target_filter=target_filter or source_filter,  # mirror source when target not set
+            candidate_keys=candidate_keys or [],
         )
 
         # ── Step 6: Validate plan ─────────────────────────────────────────────

@@ -1364,7 +1364,8 @@ with tab_batch:
         ["📋 Standard (table mapping)", "📊 Report Pack (Excel)"],
         horizontal=True,
         key="batch_mode_radio",
-        help="Standard creates one validation YAML per source table. Report Pack creates configs from an Excel report.",
+        help="Standard creates one validation YAML per source table. Report Pack parses an uploaded Excel "
+             "report and shows an editable AI-derived plan (tables/grain/filter) per row before generating.",
     )
 
     registry = load_registry()
@@ -2012,396 +2013,305 @@ with tab_batch:
 
     elif rec and _batch_mode == "📊 Report Pack (Excel)":
         # =====================================================================
-        # REPORT PACK MODE — uses same source/target connection as Standard,
-        # but takes table list + filters from an uploaded Excel mapping sheet.
-        # AI generates SQL via generate_schema_aware_query with real PK/FK info.
+        # REPORT PACK MODE — Excel mapping sheet input; each row is
+        # run through derive_row_plan() first (tables/grain/filter, AI-derived)
+        # so the user reviews/edits the plan *before* any YAML is generated.
+        # Single-table rows generate via run_with_plan() (base/learned rules +
+        # AI only for ambiguous columns); join rows keep the existing
+        # write_yaml()/_generate_queries() path unchanged — no new yaml.dump().
         # =====================================================================
-        import pandas as _pd_excel
-        import tempfile
-        from excel_batch_loader import load_excel, _generate_queries, write_yaml
+        import hashlib as _aip_hashlib
+        import pandas as _aip_pd
+        import tempfile as _aip_tempfile
+        from excel_batch_loader import load_excel as _aip_load_excel, derive_row_plan as _aip_derive_row_plan
+        from excel_batch_loader import _generate_queries as _aip_generate_queries, write_yaml as _aip_write_yaml
 
         _override_source_env(rec)
         src_db_type = rec["db_type"]
 
         with st.container(border=True):
             st.markdown("**① Source location** (same connection selected above)")
-            _rp_database, _rp_schema, _ = pick_source_location(rec, "rp")
+            _aip_database, _aip_schema, _ = pick_source_location(rec, "aip")
 
         with st.container(border=True):
             st.markdown("**② Target (Snowflake)**")
-            _rp_sf_database, _rp_sf_schema, _ = pick_snowflake_target("", "rp", include_table=False)
+            _aip_sf_database, _aip_sf_schema, _ = pick_snowflake_target("", "aip", include_table=False)
 
         st.markdown("**③ Upload mapping sheet**")
-        st.caption("Expected columns: **Report Pack · Yaml-File-name · Report Name · Summary · Grain · Legacy Query (Redshift/Postgres/…) · Snowflake Query**")
+        st.caption(
+            "Expected columns: Report Pack · Yaml-File-name · Report Name · Summary · Grain · "
+            "Legacy Query (Redshift/Postgres/…) · Snowflake Query. Headers that don't match the "
+            "expected names (e.g. 'Description' instead of 'Summary') are classified by AI on "
+            "upload; anything AI can't place is surfaced as an unrecognized column below."
+        )
 
-        _rp_c1, _rp_c2, _rp_c3 = st.columns([2, 2, 3])
-        with _rp_c1:
-            _rp_env = st.text_input("Environment", placeholder="dev / prod / uat …", key="rp_env",
-                                    help="Replaces {env} tokens in SQL. Leave blank to keep as placeholder.")
-        with _rp_c2:
-            _rp_sheet = st.text_input("Sheet name (optional)", placeholder="First sheet if blank", key="rp_sheet")
-        with _rp_c3:
-            _rp_model = st.selectbox("AI model for empty cells",
-                                     options=["(use default from .env)"] + list(AVAILABLE_MODELS),
-                                     key="rp_model")
-        _rp_dry = st.checkbox("Dry run — preview only, no files written", key="rp_dry")
+        _aip_c1, _aip_c2, _aip_c3 = st.columns([2, 2, 3])
+        with _aip_c1:
+            _aip_env = st.text_input("Environment", placeholder="dev / prod / uat …", key="aip_env",
+                                      help="Replaces {env} tokens in SQL. Leave blank to keep as placeholder.")
+        with _aip_c2:
+            _aip_sheet = st.text_input("Sheet name (optional)", placeholder="First sheet if blank", key="aip_sheet")
+        with _aip_c3:
+            _aip_model = select_or_type(
+                "AI model", available_models_for_ui(), os.getenv("DIAL_MODEL", "gpt-4o"),
+                "aip_model", format_func=_model_label,
+            )
+        _aip_dry = st.checkbox("Dry run — preview only, no files written", key="aip_dry")
 
-        _rp_file = st.file_uploader("Upload Excel mapping sheet (.xlsx)", type=["xlsx", "xls"], key="rp_excel_upload")
+        _aip_file = st.file_uploader("Upload Excel mapping sheet (.xlsx)", type=["xlsx", "xls"], key="aip_excel_upload")
 
-        if _rp_file and _rp_database and _rp_schema:
-            _rp_bytes = _rp_file.read()
-            with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as _rp_tmp:
-                _rp_tmp.write(_rp_bytes)
-                _rp_tmp_path = _rp_tmp.name
+        if _aip_file and _aip_database and _aip_schema:
+            _aip_bytes = _aip_file.read()
+            # Stable per-upload cache key derived from file content (not a
+            # freshly-generated temp path, which changes every rerun and would
+            # defeat the plan/extractor caching below).
+            _aip_file_key = _aip_hashlib.md5(_aip_bytes).hexdigest()
 
+            _aip_tmp_path_key = f"aip_tmp_path_{_aip_file_key}"
+            if _aip_tmp_path_key not in st.session_state:
+                with _aip_tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as _aip_tmp:
+                    _aip_tmp.write(_aip_bytes)
+                    st.session_state[_aip_tmp_path_key] = _aip_tmp.name
+            _aip_tmp_path = st.session_state[_aip_tmp_path_key]
+
+            _aip_unrecognized: list = []
             try:
-                _rp_specs = load_excel(_rp_tmp_path, sheet=_rp_sheet.strip() or None)
-            except Exception as _rp_exc:
-                st.error(f"Could not parse sheet: {_rp_exc}")
-                _rp_specs = []
+                _aip_gen = AISQLQueryGenerator(model=_aip_model)
+                _aip_specs = _aip_load_excel(
+                    _aip_tmp_path, sheet=_aip_sheet.strip() or None,
+                    unrecognized_out=_aip_unrecognized, ai_generator=_aip_gen,
+                )
+            except Exception as _aip_exc:
+                st.error(f"Could not parse sheet: {_aip_exc}")
+                _aip_specs = []
+                _aip_gen = None
 
-            if _rp_specs:
-                st.success(f"Parsed **{len(_rp_specs)}** row(s). Review below, then confirm.")
-
-                _rp_preview = [
-                    {
-                        "Row": s.row_num,
-                        "Report Pack": s.report_pack,
-                        "YAML File": s.yaml_file_name,
-                        "Report Name": s.report_name[:60] + ("…" if len(s.report_name) > 60 else ""),
-                        "Grain": s.grain,
-                        "Source SQL": "✅ provided" if s.legacy_query else "🤖 AI will generate",
-                        "Target SQL": "✅ provided" if s.snowflake_query else "🤖 AI will generate",
-                    }
-                    for s in _rp_specs
-                ]
-                st.dataframe(_pd_excel.DataFrame(_rp_preview), use_container_width=True, hide_index=True)
-
-                _rp_needs_ai = sum(1 for s in _rp_specs if not s.legacy_query or not s.snowflake_query)
-                if _rp_needs_ai:
-                    st.info(
-                        f"**{_rp_needs_ai}** row(s) have empty SQL — AI will generate queries "
-                        f"from the live DB schema (PK/FK relationships detected), with fully-qualified "
-                        f"db.schema.table.column references. Row-hash used when no PK is found."
-                    )
-
-                _rp_confirmed = st.checkbox(
-                    "✅ I have reviewed the preview above and confirm generating YAMLs",
-                    key="rp_confirmed",
+            if _aip_unrecognized:
+                st.warning(
+                    f"Unrecognized column(s) — neither regex nor AI could place them, ignored: "
+                    f"{', '.join(_aip_unrecognized)}"
                 )
 
-                if st.button("▶️ Generate Report YAMLs", type="primary", key="rp_generate",
-                             disabled=not _rp_confirmed):
-                    _rp_model_val = None if _rp_model == "(use default from .env)" else _rp_model
-                    _rp_env_val   = _rp_env.strip() or None
-                    _rp_out_dir   = _ROOT_DIR / "Project" / "config" / "report"
+            if _aip_specs:
+                # Populate connection context on every spec (same as Report Pack)
+                # and derive each row's plan once per upload, cached in session
+                # state keyed by a hash of the uploaded file's bytes (stable
+                # across reruns) so grid edits/checkbox toggles don't re-trigger
+                # a fresh AI call or a fresh source DB connection.
+                for _s in _aip_specs:
+                    _s.source_database = _aip_database
+                    _s.source_schema = _aip_schema
+                    _s.source_tables = [_s.yaml_file_name]
+                    _s.sf_database = _aip_sf_database or ""
+                    _s.sf_schema = _aip_sf_schema or ""
 
-                    # Build extractors once — reused across all rows
-                    _rp_src_extractor = ExtractorFactory.create(
+                _aip_extractor_key = f"aip_extractor_{_aip_file_key}"
+                if _aip_extractor_key not in st.session_state:
+                    st.session_state[_aip_extractor_key] = ExtractorFactory.create(
                         src_db_type, host=rec["host"], port=int(rec.get("port") or 0),
-                        database=_rp_database, username=rec["username"],
+                        database=_aip_database, username=rec["username"],
                         password=source_password(rec),
                         auth=rec.get("auth", ""), s3_output=rec.get("s3_output", ""),
                     )
-                    _rp_sf_creds = snowflake_creds()
-                    _rp_sf_extractor = SnowflakeExtractor(
-                        account=_rp_sf_creds["account"],
-                        database=_rp_sf_database,
-                        schema=_rp_sf_schema,
-                        username=_rp_sf_creds["username"],
-                        password=_rp_sf_creds["password"],
-                    ) if _rp_sf_creds["account"] and _rp_sf_database else None
+                _aip_extractor = st.session_state[_aip_extractor_key]
 
-                    _rp_progress = st.progress(0.0, text="Starting…")
-                    _rp_results  = []
-                    _rp_errors   = []
-
-                    for _rp_i, _rp_spec in enumerate(_rp_specs, 1):
-                        _rp_progress.progress(
-                            _rp_i / len(_rp_specs),
-                            text=f"Processing {_rp_spec.yaml_file_name}  ({_rp_i}/{len(_rp_specs)})",
-                        )
-                        try:
-                            # Derive table names from grain columns + yaml_file_name
-                            _rp_grain_cols = [g.strip() for g in __import__("re").split(r"[+,]", _rp_spec.grain) if g.strip()]
-                            _rp_spec.source_database = _rp_database
-                            _rp_spec.source_schema   = _rp_schema
-                            _rp_spec.source_tables   = [_rp_spec.yaml_file_name]
-                            _rp_spec.sf_database     = _rp_sf_database or ""
-                            _rp_spec.sf_schema       = _rp_sf_schema or ""
-
-                            _rp_src_q, _rp_tgt_q = _generate_queries(
-                                _rp_spec, _rp_model_val,
-                                source_extractor=_rp_src_extractor,
-                                sf_extractor=_rp_sf_extractor,
-                            ) if (not _rp_spec.legacy_query or not _rp_spec.snowflake_query) \
-                              else (_rp_spec.legacy_query, _rp_spec.snowflake_query)
-
-                            _rp_out = write_yaml(
-                                _rp_spec, _rp_src_q, _rp_tgt_q, _rp_env_val, _rp_out_dir,
-                                dry_run=_rp_dry,
-                            )
-                            _rp_results.append(str(_rp_out))
-                        except Exception as _rp_exc2:
-                            _rp_errors.append(f"Row {_rp_spec.row_num} ({_rp_spec.yaml_file_name}): {_rp_exc2}")
-
-                    _rp_progress.progress(1.0, text="Done.")
-
-                    if _rp_results:
-                        st.success(f"✅ {'Would write' if _rp_dry else 'Written'} **{len(_rp_results)}** YAML file(s).")
-                        with st.expander("Output files"):
-                            for _rp_p in _rp_results:
-                                st.code(_rp_p, language=None)
-                    for _rp_e in _rp_errors:
-                        st.error(_rp_e)
-        elif _rp_file and not (_rp_database and _rp_schema):
-            st.warning("Select a source database and schema above before uploading.")
-
-        # ── Multi-schema JOIN batch (Report Pack) ─────────────────────────────
-        # Moved here from Standard batch mode. Uses the same connection as Report
-        # Pack but sources tables from N schemas. One prompt → one YAML.
-        st.divider()
-        st.markdown("### Multi-schema JOIN batch")
-        st.caption(
-            "Select tables from **multiple schemas** on the same connection, then supply "
-            "one or more JOIN prompts. Each prompt → one YAML. "
-            "AI uses live PK/FK schema for fully-qualified `db.schema.table.column` SQL."
-        )
-        with st.expander("➕ Configure multi-schema JOIN batch", expanded=False):
-            # A. Table pool
-            st.markdown("**A. Table pool**")
-            _rpj_all_schemas = cached_source_schemas(
-                src_db_type, rec["host"], int(rec.get("port") or 0),
-                _rp_database or "", rec["username"], source_password(rec), rec.get("auth", ""),
-            ) or []
-            _rpj_sel_schemas = st.multiselect(
-                "Schemas to draw tables from",
-                options=_rpj_all_schemas,
-                default=[_rp_schema] if _rp_schema in _rpj_all_schemas else [],
-                key="rpj_schemas",
-            )
-            _rpj_pool: dict = {}
-            for _rpj_sch in _rpj_sel_schemas:
-                try:
-                    _rpj_sch_tables = cached_source_tables(
-                        src_db_type, rec["host"], int(rec.get("port") or 0),
-                        _rp_database or "", rec["username"], source_password(rec),
-                        rec.get("auth", ""), rec.get("s3_output", ""), _rpj_sch,
-                    )
-                except Exception:
-                    _rpj_sch_tables = []
-                _rpj_pool[_rpj_sch] = st.multiselect(
-                    f"Tables from `{_rpj_sch}`",
-                    options=_rpj_sch_tables,
-                    key=f"rpj_tables_{_rpj_sch}",
-                )
-            _rpj_all_tables_flat = [t for ts in _rpj_pool.values() for t in ts]
-            _rpj_table_options   = [f"{sch}.{tbl}" for sch, tbls in _rpj_pool.items() for tbl in tbls]
-
-            if _rpj_table_options:
-                st.markdown("**B. Join rules**")
-                _rpj_base = st.selectbox(
-                    "Driving table (left side)",
-                    options=_rpj_table_options,
-                    key="rpj_base_table",
-                )
-                _rpj_join_count = st.number_input(
-                    "Number of LEFT JOINs", min_value=0,
-                    max_value=max(0, len(_rpj_table_options) - 1),
-                    value=0, step=1, key="rpj_join_count",
-                )
-                _rpj_join_rules: list = []
-                for _rpj_ji in range(int(_rpj_join_count)):
-                    _rpjc1, _rpjc2 = st.columns(2)
-                    with _rpjc1:
-                        _rpj_right = st.selectbox(
-                            f"LEFT JOIN {_rpj_ji + 1} table",
-                            options=_rpj_table_options,
-                            key=f"rpj_join_right_{_rpj_ji}",
-                        )
-                    with _rpjc2:
-                        _rpj_on = st.text_input(
-                            f"LEFT JOIN {_rpj_ji + 1} ON condition",
-                            placeholder="orders.customer_id = customers.customer_id",
-                            key=f"rpj_join_on_{_rpj_ji}",
-                        )
-                    if _rpj_on.strip():
-                        _rpj_join_rules.append({"right": _rpj_right, "on": _rpj_on.strip()})
-
-                _rpjf1, _rpjf2 = st.columns(2)
-                with _rpjf1:
-                    _rpj_src_filter = st.text_input(
-                        "Source WHERE predicate", key="rpj_src_filter",
-                        placeholder="orders.created_at >= '2024-01-01'",
-                    ).strip()
-                with _rpjf2:
-                    _rpj_tgt_filter = st.text_input(
-                        "Snowflake WHERE predicate", key="rpj_tgt_filter",
-                        placeholder="ORDERS.CREATED_AT >= '2024-01-01'",
-                    ).strip() or _rpj_src_filter
-
-                if int(_rpj_join_count) > len(_rpj_join_rules):
-                    st.warning("Fill in every ON condition before generating.")
-
-                st.markdown("**C. Prompts** — one per line, one YAML per prompt")
-                _rpj_prompts_raw = st.text_area(
-                    "Prompts (one per line)",
-                    placeholder=(
-                        "Validate orders joined to customers, compare row counts and revenue totals\n"
-                        "Validate products joined to inventory, compare SKU coverage"
-                    ),
-                    key="rpj_prompts",
-                    height=120,
-                )
-                _rpj_prompt_list = [p.strip() for p in _rpj_prompts_raw.splitlines() if p.strip()]
-
-                _rpj_model = select_or_type(
-                    "AI model", available_models_for_ui(),
-                    os.getenv("DIAL_MODEL", "gpt-4o"),
-                    "rpj_model", format_func=_model_label,
-                )
-
-                _rpj_sf_creds = snowflake_creds()
-                _rpj_sf_schemas_list = cached_sf_schemas(
-                    _rpj_sf_creds["account"], _rp_sf_database or "", _rpj_sf_creds["username"],
-                    _rpj_sf_creds["password"], _rpj_sf_creds["warehouse"], _rpj_sf_creds["role"],
-                )
-                _rpj_sf_schemas = st.multiselect(
-                    "Snowflake target schemas",
-                    options=_rpj_sf_schemas_list,
-                    default=[_rp_sf_schema] if _rp_sf_schema in _rpj_sf_schemas_list else [],
-                    key="rpj_sf_schemas",
-                )
-                _rpj_sf_sch = _rpj_sf_schemas[0] if _rpj_sf_schemas else _rp_sf_schema
-
-                _rpj_ready = bool(_rpj_all_tables_flat) and bool(_rpj_prompt_list)
-                _rpj_confirmed = st.checkbox(
-                    f"✅ Ready — {len(_rpj_all_tables_flat)} table(s), {len(_rpj_prompt_list)} prompt(s)",
-                    key="rpj_confirmed", disabled=not _rpj_ready,
-                )
-
-                if st.button(
-                    f"✨ Generate {len(_rpj_prompt_list)} JOIN YAML(s)",
-                    key="rpj_generate", type="primary",
-                    disabled=not (_rpj_ready and _rpj_confirmed),
-                ):
-                    from excel_batch_loader import _build_schema_context as _rpj_bsc
-                    _rpj_rule_lines = [f"Driving table: {_rpj_base}"]
-                    _rpj_rule_lines.extend(
-                        f"LEFT JOIN {r['right']} ON {r['on']}" for r in _rpj_join_rules
-                    )
-                    _rpj_join_spec = (
-                        "\n\nSTRUCTURED VALIDATION RULES (mandatory):\n"
-                        + "\n".join(_rpj_rule_lines)
-                        + f"\nSource WHERE predicate: {_rpj_src_filter or '(none)'}"
-                        + f"\nSnowflake WHERE predicate: {_rpj_tgt_filter or '(none)'}"
-                        + "\nUse LEFT JOIN only. Do not use INNER JOIN, RIGHT JOIN, FULL JOIN, CROSS JOIN, or comma joins."
-                        + " Apply source predicate only in source SQL and Snowflake predicate only in Snowflake SQL."
-                    )
-                    with st.spinner("Fetching live schema…"):
-                        try:
-                            _rpj_extractor = ExtractorFactory.create(
-                                src_db_type, host=rec["host"], port=int(rec.get("port") or 0),
-                                database=_rp_database or "", username=rec["username"],
-                                password=source_password(rec),
-                                auth=rec.get("auth", ""), s3_output=rec.get("s3_output", ""),
-                            )
-                            _rpj_src_ctx: dict = {}
-                            for _rpj_sch, _rpj_tbls in _rpj_pool.items():
-                                if _rpj_tbls:
-                                    _rpj_src_ctx.update(
-                                        _rpj_bsc(_rpj_extractor, src_db_type, _rp_database or "",
-                                                 _rpj_sch, _rpj_tbls, grain_cols=[])
-                                    )
-                            _rpj_tgt_ctx: dict = {}
-                            if _rpj_sf_creds.get("account") and _rp_sf_database:
-                                for _rpj_tgt_schema in _rpj_sf_schemas:
-                                    _rpj_sf_ext = SnowflakeExtractor(
-                                        account=_rpj_sf_creds["account"],
-                                        database=_rp_sf_database, schema=_rpj_tgt_schema,
-                                        username=_rpj_sf_creds["username"],
-                                        password=_rpj_sf_creds["password"],
-                                    )
-                                    for _rpj_sch, _rpj_tbls in _rpj_pool.items():
-                                        if _rpj_tbls:
-                                            _rpj_tgt_ctx.update(
-                                                _rpj_bsc(_rpj_sf_ext, "snowflake", _rp_sf_database,
-                                                         _rpj_tgt_schema, [t.upper() for t in _rpj_tbls],
-                                                         grain_cols=[])
-                                            )
-                            _rpj_schema_err = None
-                        except Exception as _rpj_schema_exc:
-                            _rpj_schema_err = _rpj_schema_exc
-
-                    if _rpj_schema_err:
-                        st.error(f"Schema fetch failed: {_rpj_schema_err}")
-                    else:
-                        _rpj_gen    = AISQLQueryGenerator(model=_rpj_model)
-                        _rpj_bar    = st.progress(0, text="Starting…")
-                        _rpj_res    = []
-                        _rpj_out_dir = _ROOT_DIR / "Project" / "config" / "report" / "data_validation"
-                        _rpj_out_dir.mkdir(parents=True, exist_ok=True)
-
-                        for _rpj_pi, _rpj_prompt in enumerate(_rpj_prompt_list):
-                            _rpj_bar.progress(_rpj_pi / len(_rpj_prompt_list),
-                                              text=f"Prompt {_rpj_pi + 1}/{len(_rpj_prompt_list)}")
-                            _rpj_fname = next(
-                                (t for t in _rpj_all_tables_flat if t.lower() in _rpj_prompt.lower()),
-                                f"join_{_rpj_pi + 1}",
-                            )
+                _aip_plans_key = f"aip_plans_{_aip_file_key}"
+                if _aip_plans_key not in st.session_state:
+                    with st.spinner("Deriving AI plan for each row…"):
+                        _aip_plans = {}
+                        for _s in _aip_specs:
                             try:
-                                _rpj_src_sql = _rpj_gen.generate_schema_aware_query(
-                                    user_instruction=_rpj_prompt + _rpj_join_spec,
-                                    schema_context=_rpj_src_ctx,
-                                    db_type=src_db_type,
-                                    default_schema=list(_rpj_pool.keys())[0] if _rpj_pool else _rp_schema,
-                                    normalize=True,
-                                ).query
-                                _rpj_tgt_sql = _rpj_gen.generate_schema_aware_query(
-                                    user_instruction=_rpj_prompt + _rpj_join_spec,
-                                    schema_context=_rpj_tgt_ctx,
-                                    db_type="snowflake",
-                                    default_schema=_rpj_sf_sch,
-                                    normalize=True,
-                                ).query
-                                import yaml as _rpj_yaml
-                                _rpj_sql_oneline = lambda s: " ".join(s.split())
-                                _rpj_path = _rpj_out_dir / f"{_rpj_fname}.yaml"
-                                _rpj_doc = {
-                                    "tables": {
-                                        _rpj_fname: {
-                                            "validations": {
-                                                "data_validation": {
-                                                    "source_table_name": _rpj_fname,
-                                                    "source": src_db_type,
-                                                    "source_database": _rp_database,
-                                                    "source_schema": ", ".join(_rpj_pool.keys()),
-                                                    "pksourcecolumn": "row_hash",
-                                                    "sourcequery": _rpj_sql_oneline(_rpj_src_sql),
-                                                    "target_table_name": _rpj_fname,
-                                                    "target": "snowflake",
-                                                    "target_database": _rp_sf_database,
-                                                    "target_schema": _rpj_sf_sch,
-                                                    "pktargetcolumn": "row_hash",
-                                                    "targetquery": _rpj_sql_oneline(_rpj_tgt_sql),
-                                                    "source_filter": _rpj_src_filter,
-                                                    "target_filter": _rpj_tgt_filter,
-                                                    "joins": _rpj_join_rules,
-                                                }
-                                            }
-                                        }
-                                    }
+                                _aip_plans[_s.row_num] = _aip_derive_row_plan(
+                                    _s, source_extractor=_aip_extractor,
+                                    ai_generator=_aip_gen, model=_aip_model,
+                                )
+                            except Exception as _aip_plan_exc:
+                                _aip_plans[_s.row_num] = {
+                                    "tables": _s.source_tables, "grain_columns": [],
+                                    "filter_english": "", "filter_sql": "",
+                                    "join_needed": len(_s.source_tables) > 1,
+                                    "warnings": [f"Plan derivation failed: {_aip_plan_exc}"],
                                 }
-                                with open(_rpj_path, "w", encoding="utf-8") as _rpj_f:
-                                    _rpj_yaml.dump(_rpj_doc, _rpj_f, allow_unicode=True,
-                                                   sort_keys=False, default_flow_style=False)
-                                _rpj_res.append({"Prompt": _rpj_prompt[:60], "File": str(_rpj_path), "Status": "✅"})
-                            except Exception as _rpj_exc:
-                                _rpj_res.append({"Prompt": _rpj_prompt[:60], "File": "", "Status": f"❌ {_rpj_exc}"})
+                        st.session_state[_aip_plans_key] = _aip_plans
+                _aip_plans = st.session_state[_aip_plans_key]
 
-                        _rpj_bar.progress(1.0, text="Done.")
-                        import pandas as _rpj_pd
-                        st.dataframe(_rpj_pd.DataFrame(_rpj_res), use_container_width=True, hide_index=True)
+                st.success(f"Parsed **{len(_aip_specs)}** row(s). Review the AI-derived plan below, then confirm.")
+
+                _aip_grid_rows = []
+                for _s in _aip_specs:
+                    _p = _aip_plans.get(_s.row_num, {})
+                    _aip_grid_rows.append({
+                        "Row": _s.row_num,
+                        "Report Pack": _s.report_pack,
+                        "YAML File": _s.yaml_file_name,
+                        "Tables (AI)": ", ".join(_p.get("tables", [])),
+                        "Grain (AI)": ", ".join(_p.get("grain_columns", [])),
+                        "Filter (AI)": _p.get("filter_english", ""),
+                        "Status": "🔗 Join" if _p.get("join_needed") else "📄 Single table",
+                    })
+                _aip_edited = st.data_editor(
+                    _aip_pd.DataFrame(_aip_grid_rows),
+                    column_config={
+                        "Row": st.column_config.NumberColumn(disabled=True),
+                        "Report Pack": st.column_config.TextColumn(disabled=True),
+                        "YAML File": st.column_config.TextColumn(disabled=True),
+                        "Tables (AI)": st.column_config.TextColumn(disabled=True),
+                        "Grain (AI)": st.column_config.TextColumn(disabled=True),
+                        "Filter (AI)": st.column_config.TextColumn(
+                            help="Editable plain-English filter — edit here or in the row drill-down below, "
+                                 "then re-derive to update the SQL predicate. NOTE: for 🔗 Join rows this is "
+                                 "preview-only and is NOT applied to the generated SQL (see drill-down).",
+                        ),
+                        "Status": st.column_config.TextColumn(disabled=True),
+                    },
+                    hide_index=True,
+                    width='stretch',
+                    key="aip_batch_grid",
+                )
+                st.caption(
+                    "⚠️ **Filter (AI)** is preview-only for 🔗 Join rows — the join-generation path "
+                    "(`_generate_queries()`) does not read this field, so edits here have no effect on the "
+                    "generated SQL for those rows. It only takes effect for 📄 Single table rows."
+                )
+                # Push any grid edits to the plain-English filter back into each plan
+                for _row in _aip_edited.to_dict("records"):
+                    _p = _aip_plans.get(_row["Row"])
+                    if _p is not None:
+                        _p["filter_english"] = _row["Filter (AI)"]
+
+                st.markdown("#### Row drill-down")
+                _aip_col_overrides: dict = {}
+                _aip_review_pipeline = ValidationPipeline(model=_aip_model, source_extractor=_aip_extractor)
+                for _s in _aip_specs:
+                    _p = _aip_plans.get(_s.row_num, {})
+                    for _w in _p.get("warnings", []):
+                        st.warning(f"Row {_s.row_num} ({_s.yaml_file_name}): {_w}")
+                    with st.expander(f"Row {_s.row_num} — {_s.yaml_file_name}  ({'JOIN' if _p.get('join_needed') else 'single table'})", expanded=False):
+                        if _p.get("join_needed"):
+                            st.warning(
+                                "This filter is preview-only for join rows — it is NOT applied to the "
+                                "generated SQL. Join SQL comes entirely from the existing schema-aware "
+                                "generator (`_generate_queries()`), which does not read this description."
+                            )
+                        _aip_desc = st.text_area(
+                            "Plan description (plain English)",
+                            value=_p.get("filter_english", ""),
+                            key=f"aip_desc_{_s.row_num}",
+                            height=80,
+                            disabled=_p.get("join_needed", False),
+                        )
+                        if st.button("🔄 Re-derive from this description", key=f"aip_rederive_{_s.row_num}"):
+                            _s.filter_condition = _aip_desc
+                            with st.spinner("Re-deriving…"):
+                                try:
+                                    _aip_plans[_s.row_num] = _aip_derive_row_plan(
+                                        _s, source_extractor=_aip_extractor,
+                                        ai_generator=_aip_gen, model=_aip_model,
+                                    )
+                                    st.session_state[_aip_plans_key] = _aip_plans
+                                    st.rerun()
+                                except Exception as _aip_rd_exc:
+                                    st.error(f"Re-derive failed: {_aip_rd_exc}")
+
+                        if _p.get("join_needed"):
+                            st.caption(
+                                "Multi-table row — full JOIN SQL is generated at YAML-write time via the "
+                                "existing schema-aware generator (unchanged). Column-mapping review does "
+                                "not apply to a raw multi-table query."
+                            )
+                            st.code(
+                                f"Tables: {', '.join(_p.get('tables', []))}\n"
+                                f"Grain: {', '.join(_p.get('grain_columns', []))}\n"
+                                f"Filter: {_p.get('filter_sql') or '(none)'}\n"
+                                f"Summary: {_s.summary}",
+                                language="sql",
+                            )
+                        else:
+                            _aip_col_overrides[_s.row_num] = render_mapping_review(
+                                _aip_review_pipeline, _aip_schema, _s.yaml_file_name,
+                                _aip_sf_schema, _s.yaml_file_name,
+                                _aip_sf_database, _aip_database,
+                                [], key_prefix=f"aip_{_s.row_num}",
+                            )
+
+                _aip_confirmed = st.checkbox(
+                    "✅ I have reviewed the AI-derived plan above and confirm generating YAMLs",
+                    key="aip_confirmed",
+                )
+
+                if st.button("▶️ Generate Report YAMLs", type="primary", key="aip_generate",
+                             disabled=not _aip_confirmed):
+                    _aip_env_val = _aip_env.strip() or None
+                    _aip_out_dir = _ROOT_DIR / "Project" / "config" / "report"
+                    _aip_sf_creds = snowflake_creds()
+                    _aip_sf_extractor = SnowflakeExtractor(
+                        account=_aip_sf_creds["account"],
+                        database=_aip_sf_database,
+                        schema=_aip_sf_schema,
+                        username=_aip_sf_creds["username"],
+                        password=_aip_sf_creds["password"],
+                    ) if _aip_sf_creds["account"] and _aip_sf_database else None
+
+                    _aip_progress = st.progress(0.0, text="Starting…")
+                    _aip_results: list = []
+                    _aip_errors: list = []
+
+                    for _aip_i, _s in enumerate(_aip_specs, 1):
+                        _aip_progress.progress(
+                            _aip_i / len(_aip_specs),
+                            text=f"Processing {_s.yaml_file_name}  ({_aip_i}/{len(_aip_specs)})",
+                        )
+                        _p = _aip_plans.get(_s.row_num, {})
+                        try:
+                            if _p.get("join_needed"):
+                                # ── Join rows: existing AI-SQL + write_yaml() path, unchanged ──
+                                _s.filter_condition = _p.get("filter_sql") or _s.filter_condition
+                                _aip_src_q, _aip_tgt_q = _aip_generate_queries(
+                                    _s, _aip_model,
+                                    source_extractor=_aip_extractor,
+                                    sf_extractor=_aip_sf_extractor,
+                                ) if (not _s.legacy_query or not _s.snowflake_query) \
+                                  else (_s.legacy_query, _s.snowflake_query)
+                                _aip_out = _aip_write_yaml(
+                                    _s, _aip_src_q, _aip_tgt_q, _aip_env_val, _aip_out_dir,
+                                    dry_run=_aip_dry,
+                                )
+                                _aip_results.append(str(_aip_out))
+                            else:
+                                # ── Single-table rows: run_with_plan() (base/learned rules) ──
+                                _aip_pipeline = ValidationPipeline(model=_aip_model, source_extractor=_aip_extractor)
+                                _aip_filter = _p.get("filter_sql") or ""
+                                _aip_grain = _p.get("grain_columns") or []
+                                _aip_result, _aip_plan = _aip_pipeline.run_with_plan(
+                                    pg_schema=_aip_schema,
+                                    pg_table=_s.yaml_file_name,
+                                    sf_schema=_aip_sf_schema,
+                                    sf_table=_s.yaml_file_name,
+                                    sf_database=_aip_sf_database,
+                                    pg_database=_aip_database,
+                                    explicit_mappings=_aip_col_overrides.get(_s.row_num) or None,
+                                    exclude_columns=None,
+                                    source_db_type=src_db_type,
+                                    output_dir=_aip_out_dir,
+                                    source_filter=_aip_filter,
+                                    target_filter=_aip_filter,
+                                    candidate_keys=[_aip_grain] if _aip_grain else None,
+                                )
+                                _aip_results.append(str(_aip_result.yaml_path))
+                        except Exception as _aip_row_exc:
+                            _aip_errors.append(f"Row {_s.row_num} ({_s.yaml_file_name}): {_aip_row_exc}")
+
+                    _aip_progress.progress(1.0, text="Done.")
+
+                    if _aip_results:
+                        st.success(f"✅ {'Would write' if _aip_dry else 'Written'} **{len(_aip_results)}** YAML file(s).")
+                        with st.expander("Output files"):
+                            for _aip_p in _aip_results:
+                                st.code(_aip_p, language=None)
+                    for _aip_e in _aip_errors:
+                        st.error(_aip_e)
+        elif _aip_file and not (_aip_database and _aip_schema):
+            st.warning("Select a source database and schema above before uploading.")
 
 # =============================================================================
 # Row-hash SQL builder — used by Custom SQL tab when a table has no PK.

@@ -576,6 +576,178 @@ Generate the query now:
             + "\n".join(f"  {a}" for a in attempts)
         )
 
+    _HEADER_ROLES = (
+        "report_pack", "yaml_file_name", "report_name", "summary", "grain",
+        "filter", "transformation", "legacy_query", "target_query", "ignore",
+    )
+
+    def classify_headers(
+        self,
+        unmatched_columns: List[str],
+        sample_values: Optional[dict] = None,
+    ) -> dict:
+        """
+        Classify Excel column headers the regex fast-path couldn't place.
+
+        One AI call for the whole sheet (not per-column). Given each unmatched
+        header name plus a few sample cell values, returns a mapping of
+        header -> role, where role is one of _HEADER_ROLES. Anything the model
+        can't confidently place is mapped to "unknown" (never silently dropped
+        by the caller — see excel_batch_loader.load_excel's unrecognized_columns).
+
+        Args:
+            unmatched_columns: header names the regex fast-path didn't match.
+            sample_values: optional {header: [sample cell values]} for context.
+
+        Returns:
+            {header_name: role} for every header in unmatched_columns. Falls
+            back to "unknown" for every header if AI is unavailable (no key
+            configured) rather than raising — this is a best-effort
+            classification aid, not a hard validation gate.
+        """
+        if not unmatched_columns:
+            return {}
+        if not self._ai_active:
+            return {c: "unknown" for c in unmatched_columns}
+
+        sample_values = sample_values or {}
+        headers_json = [
+            {"header": c, "sample_values": [str(v) for v in sample_values.get(c, [])][:3]}
+            for c in unmatched_columns
+        ]
+        roles_list = ", ".join(self._HEADER_ROLES)
+        system_prompt = (
+            "You are classifying spreadsheet column headers for a data-migration "
+            "validation tool. Return ONLY a JSON object mapping each header name "
+            "to exactly one role."
+        )
+        user_prompt = f"""Classify each header below into exactly one of these roles:
+{roles_list}
+
+"unknown" means you cannot confidently place it into any other role — never guess.
+
+Headers (with sample cell values for context):
+{json.dumps(headers_json, indent=2)}
+
+Return ONLY a JSON object like {{"Header Name": "role", ...}} — no markdown, no explanation.
+"""
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        try:
+            raw = self._call_ai(messages, "header_classify", 1)
+        except AISQLGenerationError:
+            return {c: "unknown" for c in unmatched_columns}
+
+        cleaned = raw.strip()
+        if cleaned.startswith("```"):
+            lines = cleaned.splitlines()
+            cleaned = "\n".join(
+                line for line in lines if not line.strip().startswith("```")
+            ).strip()
+
+        try:
+            parsed = json.loads(cleaned)
+        except (json.JSONDecodeError, ValueError):
+            return {c: "unknown" for c in unmatched_columns}
+
+        result = {}
+        for c in unmatched_columns:
+            role = str(parsed.get(c, "unknown")).strip().lower()
+            result[c] = role if role in self._HEADER_ROLES else "unknown"
+        return result
+
+    def explain_and_derive_filter(self, filter_description: str) -> dict:
+        """
+        Turn a prose (or already-SQL-looking) filter description into a safe
+        SQL WHERE-predicate string plus a plain-English restatement for a UI
+        preview.
+
+        Args:
+            filter_description: free-text filter condition from an Excel row,
+                e.g. "only active facilities" or "status = 'ACTIVE' AND region = 'US'".
+
+        Returns:
+            {"filter_sql": str, "filter_english": str, "warnings": List[str]}
+            filter_sql is "" when the description is empty or AI is unavailable
+            (caller should treat "" as "no filter" and fall back to using the
+            raw description verbatim if it already looks like SQL).
+
+        Raises:
+            Never raises — this powers a UI preview, so failures degrade to
+            an empty filter_sql with a warning rather than blocking generation.
+        """
+        text = (filter_description or "").strip()
+        if not text:
+            return {"filter_sql": "", "filter_english": "", "warnings": []}
+
+        try:
+            self._check_instruction_safety(text)
+        except AISQLGenerationError as exc:
+            return {"filter_sql": "", "filter_english": text, "warnings": [str(exc)]}
+
+        if not self._ai_active:
+            return {
+                "filter_sql": "",
+                "filter_english": text,
+                "warnings": ["No AI API key configured — could not derive SQL predicate."],
+            }
+
+        system_prompt = (
+            "You translate plain-English or partially-SQL filter descriptions into "
+            "a single safe SQL WHERE-predicate (boolean expression, no leading "
+            "WHERE keyword, no SELECT/DML/DDL) plus a short plain-English "
+            "restatement of what it does."
+        )
+        user_prompt = f"""Filter description:
+\"\"\"{text}\"\"\"
+
+Return ONLY a JSON object:
+{{"filter_sql": "<boolean SQL predicate, no leading WHERE>", "filter_english": "<one-sentence plain-English restatement>"}}
+
+If the description is already a valid SQL predicate, use it (or a lightly
+cleaned-up version of it) as filter_sql verbatim. Never include SELECT,
+INSERT, UPDATE, DELETE, DROP, or any statement other than a boolean expression.
+"""
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        try:
+            raw = self._call_ai(messages, "filter_explain", 1)
+        except AISQLGenerationError as exc:
+            return {"filter_sql": "", "filter_english": text, "warnings": [str(exc)]}
+
+        cleaned = raw.strip()
+        if cleaned.startswith("```"):
+            lines = cleaned.splitlines()
+            cleaned = "\n".join(
+                line for line in lines if not line.strip().startswith("```")
+            ).strip()
+
+        try:
+            parsed = json.loads(cleaned)
+            filter_sql = str(parsed.get("filter_sql", "")).strip()
+            filter_english = str(parsed.get("filter_english", "")).strip() or text
+        except (json.JSONDecodeError, ValueError):
+            return {
+                "filter_sql": "",
+                "filter_english": text,
+                "warnings": ["AI response was not valid JSON — filter_sql left empty."],
+            }
+
+        warnings: List[str] = []
+        if filter_sql:
+            if self._DESTRUCTIVE_INSTRUCTION_RE.search(filter_sql) or ";" in filter_sql:
+                warnings.append(
+                    "AI-derived filter_sql contained a forbidden keyword/statement "
+                    "separator — discarded for safety."
+                )
+                filter_sql = ""
+
+        return {"filter_sql": filter_sql, "filter_english": filter_english, "warnings": warnings}
+
     _INJECTION_MARKERS = (
         "ignore previous instructions",
         "ignore the above",

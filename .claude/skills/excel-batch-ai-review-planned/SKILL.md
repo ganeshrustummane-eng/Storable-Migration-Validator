@@ -1,54 +1,54 @@
 ---
 name: excel-batch-ai-review-planned
-description: "PLANNED FEATURE, NOT YET IMPLEMENTED. Design notes for a future batch-generation sub-tab: user uploads an Excel mapping sheet, AI proposes a preview (source database, schema, join condition) for review before YAML is generated. Do not assume any of this exists in code -- use webapp-yaml-generation for what actually exists in src/excel_batch_loader.py today. Ask the user for current status before building against this design."
+description: "Backend and UI for the Excel batch AI-preview feature are now implemented. Header-classification and filter-explain AI methods live on AISQLQueryGenerator (src/generated_queries/ai_sql_generator.py); load_excel()/derive_row_plan() in src/excel_batch_loader.py derive a per-row plan (tables, grain, filter SQL + English, join_needed). webapp/app.py:2408-2681 wires these into the 'Report Pack (AI Preview)' radio branch with a batch grid, per-row drill-down, and generate button."
 ---
 
-# Excel-upload batch YAML generation with AI preview -- PLANNED, NOT BUILT
+# Excel-upload batch YAML generation with AI preview
 
-## Status: design intent only
+## Status: backend and UI implemented
 
-This skill captures a feature the user described wanting to build "in detail after
-some days." **Nothing described here exists in code yet.** Do not write code
-assuming this UI, this preview step, or this review/adjust loop is already present.
-Before doing any implementation work referencing this skill, confirm with the user
-that this is still the intended design and check whether it has since been started
-elsewhere.
+The backend pieces are built and self-checked:
 
-For what actually exists today in this area, use the **webapp-yaml-generation**
-skill -- `src/excel_batch_loader.py`'s `load_excel()`/`write_yaml()` already read an
-uploaded `.xlsx` mapping sheet and write a YAML config, but with no AI preview step
-and no review/adjust loop. That's the real, current, simpler flow this planned
-feature would extend.
+- `src/generated_queries/ai_sql_generator.py`: `AISQLQueryGenerator.classify_headers()`
+  (one AI call per sheet, header -> role incl. `unknown`) and
+  `AISQLQueryGenerator.explain_and_derive_filter()` (prose/SQL filter ->
+  `{filter_sql, filter_english, warnings}`). Both reuse the class's existing
+  DIAL/Claude client selection -- no new AI backend.
+- `src/excel_batch_loader.py`: `ReportSpec` gained `filter_condition` and
+  `transformation_note` fields (default `""`). `load_excel()` keeps the regex
+  fast-path unchanged and falls back to `classify_headers()` only for headers
+  regex couldn't place, via new optional `unrecognized_out` and `ai_generator`
+  params (both default `None` -- old callers unaffected). New `derive_row_plan()`
+  returns `{tables, grain_columns, filter_english, filter_sql, join_needed, warnings}`
+  per row without generating the actual comparison SQL.
+- `src/validation_pipeline.py`: `run_with_plan()` gained an additive
+  `candidate_keys: Optional[List[List[str]]] = None` param, threaded into the
+  existing (previously always-empty) `CanonicalValidationPlan.candidate_keys` field.
 
-## The described design
+**UI status**: `webapp/app.py:2408-2681` implements the "AI Preview" radio
+branch, batch grid, per-row drill-down, and generate button described below.
 
-1. User uploads an Excel file in a dedicated sub-tab under batch generation
-   (distinct from the existing "Generate Batch YAML" tab's flow).
-2. AI reads the sheet and proposes a preview: which source database, which schema,
-   what join condition it infers should apply -- before generating anything.
-3. User reviews the AI's preview and can suggest changes / make edits.
-4. Only after the user confirms does actual YAML generation happen.
+For the plain "no AI" flow still used by today's UI, see the
+**webapp-yaml-generation** skill -- `load_excel()`/`write_yaml()` with no
+`unrecognized_out`/`ai_generator` args behave exactly as before this feature
+was added.
 
-## Open questions to resolve before implementation (do not guess these)
+## Resolved design decisions
 
-- Does the AI preview reuse `src/ai/rule_planner.py`'s `RulePlanner`, or is this a
-  new prompt/flow specific to Excel-sheet interpretation?
-- Does generation, once confirmed, go through `src/excel_batch_loader.py`'s
-  existing `write_yaml()` / `AISQLQueryGenerator` path, or the backend
-  `yaml_config_writer.py` path, or a new one? (See webapp-yaml-generation for why
-  this distinction matters -- don't add a fifth independent YAML-writing path
-  without a deliberate decision.)
-- Where does the review/adjust step live in the UI -- inline edit of the AI's
-  proposed plan, or a full custom-YAML-editor handoff (Path 3 in
-  webapp-yaml-generation)?
-- What happens to multi-table Excel sheets -- one preview per table, or one preview
-  for the whole batch?
+1. UI: a third radio option next to "Standard"/"Report Pack (Excel)" --
+   "Report Pack (AI Preview)" -- implemented at `webapp/app.py:2408-2681`.
+2. Single-table rows route through `src/validation_pipeline.py`'s
+   `run_with_plan()` (base rules -> learned rules -> AI-only-for-ambiguous),
+   passing `derive_row_plan()`'s `grain_columns` as `candidate_keys`.
+3. Multi-table/join rows keep using the existing
+   `_generate_queries()` / `AISQLQueryGenerator.generate_schema_aware_query()`
+   path unchanged -- joins are explicitly NOT routed through
+   `CanonicalValidationPlan` (see `reference-filter-joins` skill: join support
+   there is planned, not built).
+4. Review/adjust is a hybrid: one batch grid + a per-row `st.expander`
+   drill-down reusing `render_mapping_review()` for single-table rows.
 
-## Verification checklist (once implementation actually starts)
+## Remaining work
 
-- [ ] Confirm with the user this design is still current before writing code.
-- [ ] Decide and document which YAML-writing path generation will use -- don't
-  silently create a new one.
-- [ ] Update the webapp-yaml-generation skill once this is real, so it no longer
-  says "not yet built."
-- [ ] `py_compile` any touched `.py` file before calling the change done.
+- [ ] Manual UI verification click-through (see the implementation plan for
+  the exact steps).
