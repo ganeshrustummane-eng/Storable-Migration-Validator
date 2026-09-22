@@ -4,6 +4,11 @@ import pyodbc
 
 
 class Mssqlserver(Database):
+    # ponytail: fixed defaults, not per-table configurable; raise on the
+    # instance if one table's validation query genuinely needs longer.
+    CONNECT_TIMEOUT_SECONDS = 10        # login handshake only
+    QUERY_TIMEOUT_SECONDS = 3600        # server-side query ceiling — 30 min
+
     def __init__(self, DRIVER, SERVER, DATABASE, UID, PWD):
         self.DRIVER = DRIVER
         self.SERVER = SERVER
@@ -32,7 +37,12 @@ class Mssqlserver(Database):
                 "Encrypt=yes;"
                 "TrustServerCertificate=yes;"
             )
-        return pyodbc.connect(conn_str)
+        conn = pyodbc.connect(conn_str, timeout=self.CONNECT_TIMEOUT_SECONDS)
+        # Connection.timeout is pyodbc's query-timeout (SQL_ATTR_QUERY_TIMEOUT),
+        # applied to every statement executed through this connection — the
+        # connect() timeout= kwarg above only covers the login handshake.
+        conn.timeout = self.QUERY_TIMEOUT_SECONDS
+        return conn
 
     def execute_query(self, query):
         conn = self.connect()

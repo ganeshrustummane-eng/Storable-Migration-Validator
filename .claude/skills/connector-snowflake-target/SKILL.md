@@ -11,7 +11,28 @@ Class `Snowflake(Database)`. Connector library: **snowflake.connector**.
 Constructor params: `SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, SNOWFLAKE_PASSWORD,
 SNOWFLAKE_DATABASE, SNOWFLAKE_SCHEMA, SNOWFLAKE_WAREHOUSE=""`. `connect()` only
 adds the `warehouse` kwarg if truthy -- Snowflake can run with no explicit
-warehouse if the account has a default. `execute_query()` uses
+warehouse if the account has a default.
+
+`connect()` also always passes `login_timeout` (30s, bounds authentication),
+`network_timeout` (1800s/30min, bounds all post-login network I/O including query
+execution), and `session_parameters={"STATEMENT_TIMEOUT_IN_SECONDS": ...}` (1800s,
+Snowflake's own server-side query ceiling -- aborts the query on Snowflake's side,
+not a client-side guess). All three are class constants
+(`LOGIN_TIMEOUT_SECONDS`/`NETWORK_TIMEOUT_SECONDS`/`STATEMENT_TIMEOUT_SECONDS`) --
+override on an instance if a table's validation query genuinely needs longer.
+These were verified as real accepted kwargs against the installed
+`snowflake-connector-python==4.7.1` (`DEFAULT_CONFIGURATION` in
+`snowflake.connector.connection`) before implementing -- don't assume parameter
+names from older docs without re-checking against whatever version is installed.
+Before this, login and query execution could both hang forever; see
+`Project/db/test_snowflake.py` for the mocked checks (note: that test file must
+strip its own script directory from `sys.path` before importing, since
+`Project/db/snowflake.py`'s filename shadows the real top-level `snowflake`
+package it needs to import -- a `python Project/db/test_snowflake.py`-shaped
+gotcha, not a production issue, since `Project/main.py` never runs with
+`Project/db/` as its own script directory).
+
+`execute_query()` uses
 `with self.connect() as conn: with conn.cursor() as cs:` context managers (unlike
 the other three connectors, which manually close in a `finally`), and explicitly
 runs `USE WAREHOUSE {warehouse};` before the real query if a warehouse is

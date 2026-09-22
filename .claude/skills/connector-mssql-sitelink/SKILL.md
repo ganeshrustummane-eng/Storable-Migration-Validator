@@ -13,8 +13,20 @@ are both set: if so, SQL Server auth (`UID=...;PWD=...;TrustServerCertificate=ye
 otherwise falls back to Windows/Azure AD integrated auth
 (`Trusted_Connection=yes;Encrypt=yes;TrustServerCertificate=yes;`). This dual-auth
 branching is the main thing distinctive about this connector -- don't assume
-username/password is always required. `execute_query()` does a full `cur.fetchall()`,
-no batching, builds a DataFrame from records + `cur.description`.
+username/password is always required.
+
+`connect()` passes `timeout=CONNECT_TIMEOUT_SECONDS` (10s) to `pyodbc.connect()` --
+pyodbc's own login-timeout kwarg -- then sets `conn.timeout = QUERY_TIMEOUT_SECONDS`
+(1800s/30min) on the returned `Connection` object. **Query timeout lives on
+`Connection.timeout`, not `Cursor.timeout`** -- pyodbc's `Cursor` has no `timeout`
+attribute in the installed version (5.3.0); this was verified against the actual
+installed package before implementing, not assumed from memory. Both are class
+constants -- override on an instance if a table's validation query genuinely needs
+longer. Before this, both login and query execution could hang forever; see
+`Project/db/test_mssqlserver.py` for the mocked checks.
+
+`execute_query()` does a full `cur.fetchall()`, no batching, builds a DataFrame
+from records + `cur.description`.
 
 ## Schema extraction -- `MSSQLExtractor`
 

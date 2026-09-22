@@ -9,10 +9,20 @@ description: "Use when working on the PostgreSQL source connector: connection/qu
 
 Class `Postgres(Database)`. Connector library: **psycopg2**. Constructor params:
 `dbname, user, password, host, port, schema=""`. `connect()` sets Postgres's schema
-search path via `options=f"-csearch_path={self.schema}"` when a schema is given.
+search path and a statement timeout via the same `options` startup string (multiple
+`-c` flags, space-separated): `-c statement_timeout=<ms>` always, plus
+`-c search_path=<schema>` when a schema is given. It also passes
+`connect_timeout=CONNECT_TIMEOUT_SECONDS` (libpq's own TCP/auth-handshake timeout).
+Two class constants control both: `CONNECT_TIMEOUT_SECONDS` (10s) and
+`STATEMENT_TIMEOUT_SECONDS` (1800s/30min, server-side query ceiling) — override on
+an instance if one table's validation query genuinely needs longer (e.g. a
+200M+-row full scan). Before this, connect and query could both hang forever; see
+`Project/db/test_postgres.py` for the mocked timeout checks.
 `execute_query()` opens a fresh connection per call, `cur.fetchall()`s the whole
-result set (no chunking/pagination), builds a `pandas.DataFrame` from `cur.description`
-for column names, and always closes cursor+connection in a `finally` block.
+result set (no chunking/pagination — psycopg2's `fetchall()` returns the true full
+result set, unlike Athena's paginated REST API, so no truncation risk here), builds
+a `pandas.DataFrame` from `cur.description` for column names, and always closes
+cursor+connection in a `finally` block.
 
 No explicit type coercion beyond what psycopg2/pandas do implicitly -- if a
 type-mapping problem shows up, it's happening downstream in the rule/normalization
@@ -46,7 +56,9 @@ them here instead, since Redshift inherits this code.
 ## Verification checklist
 
 - [ ] Any fix here should be checked against Redshift too, since `RedshiftExtractor`
-  subclasses `PostgresExtractor` and `factory.py` reuses `Postgres` wholesale.
+  subclasses `PostgresExtractor` and `factory.py` reuses `Postgres` wholesale —
+  the connect/statement timeouts above apply to Redshift automatically since it's
+  the same class, not a separate fix.
 - [ ] Don't assume type coercion happens in this connector -- it doesn't; check
   `Project/utils/semantic_normalize.py` and `src/rules/base_rules.py` instead.
 - [ ] `py_compile` any touched `.py` file before calling the change done.

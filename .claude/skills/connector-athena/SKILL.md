@@ -18,18 +18,29 @@ default boto3 credential chain.
 it's poll-based:
 1. `start_query_execution()` with `QueryExecutionContext={"Database": ...}` and
    `ResultConfiguration={"OutputLocation": ...}`.
-2. Polling loop: `get_query_execution()` every 2 seconds until state is
-   `SUCCEEDED`/`FAILED`/`CANCELLED`.
+2. Polling loop: `get_query_execution()` every `POLL_INTERVAL_SECONDS` (2s) until
+   state is `SUCCEEDED`/`FAILED`/`CANCELLED`, **bounded by `MAX_POLL_SECONDS`**
+   (1800s/30min class constant). On timeout it calls `stop_query_execution()`
+   (actually cancels the query on AWS's side, not just gives up client-side) and
+   raises `TimeoutError`. Before this bound existed, a stuck query blocked the
+   validation run forever -- override `MAX_POLL_SECONDS` on an instance if one
+   table's query genuinely needs longer.
 3. Raises on non-`SUCCEEDED` with the API's `StateChangeReason`.
-4. Fetches via `get_query_results()`, skips the header row, and **every value comes
-   back as a string** (`VarCharValue`) regardless of the column's native type --
-   Athena's connector layer does not preserve numeric/boolean typing. If a
-   comparison looks like a type mismatch when it shouldn't be, check whether this
-   string-coercion is the actual cause before assuming a rule-book/normalization bug.
+4. Fetches via `get_query_results()`, **paginated via `NextToken`** -- each page
+   caps at 1000 rows, so a single unpaginated call silently truncated any result
+   set over ~1000 rows (a real Completeness-dimension bug: wrong row counts/PK
+   sets for large reporting-layer tables). The header row is skipped only once,
+   on the first page. Every value comes back as a string (`VarCharValue`)
+   regardless of the column's native type -- Athena's connector layer does not
+   preserve numeric/boolean typing. If a comparison looks like a type mismatch
+   when it shouldn't be, check whether this string-coercion is the actual cause
+   before assuming a rule-book/normalization bug.
 
 This poll-and-wait model is Athena's real architecture (query execution is
 asynchronous by nature, not a bug or a workaround) -- don't try to make it
-synchronous or remove the polling loop.
+synchronous or remove the polling loop; the fix was bounding it and paginating
+the fetch, not replacing the model. See `Project/db/test_athena.py` for the
+mocked pagination + timeout checks.
 
 ## Schema extraction -- `AthenaExtractor`
 

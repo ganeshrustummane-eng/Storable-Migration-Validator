@@ -3290,6 +3290,27 @@ with tab_execute:
                 else:
                     st.error("Run did not produce a run_id — see raw output below.")
 
+                # Connector timeouts (large Athena/Postgres/MSSQL/Snowflake tables
+                # hitting the connect/statement timeout ceilings) surface as ERROR
+                # rows with no reason column in the summary CSV — the actual message
+                # only lives in the subprocess log tails. Call it out as a distinct
+                # toast so "connection/query timed out" isn't mistaken for a generic
+                # data mismatch on tables in the 100M+ row range.
+                n_error_rows = sum(int((df["status"] == "ERROR").sum()) for df in result["summaries"].values())
+                if n_error_rows:
+                    _log_tail = (result.get("stdout_tail", "") + result.get("stderr_tail", "")).lower()
+                    _timeout_hit = any(s in _log_tail for s in (
+                        "timeouterror", "did not finish within", "timeout expired", "query failed",
+                    ))
+                    if _timeout_hit:
+                        st.toast(
+                            f"⏱️ {n_error_rows} table(s) errored — looks like a connection/query timeout "
+                            f"(large table?). Check the log below or raise the connector's timeout constant.",
+                            icon="⏱️",
+                        )
+                    else:
+                        st.toast(f"⚠️ {n_error_rows} table(s) errored — see log below.", icon="⚠️")
+
                 for vtype, df in result["summaries"].items():
                     with st.container(border=True):
                         st.markdown(f"#### {'🔢' if vtype == 'count_validation' else '🧬'} {vtype.replace('_', ' ').title()} summary")
