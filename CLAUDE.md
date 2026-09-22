@@ -149,6 +149,15 @@ values and ignore the difference.
    session (`sql_query_generator.py` looked redundant but wraps a needed step).
 4. **`py_compile` (or `ast.parse`) every touched `.py` file before calling a
    change done.**
+5. **Disambiguate before grepping.** This repo has several intentional
+   look-alike pairs: the two validation engines (`Project/main.py` row-level
+   vs `src/validation/*.py` table-level, see above), the two YAML-writing
+   paths (`src/generated_queries/yaml_config_writer.py` vs webapp/
+   `excel_batch_loader.py`'s direct `yaml.dump()` calls), and the 5
+   near-duplicate exclusion YAMLs. If a request says "validation" or "YAML"
+   without naming which one, ask the user to name the entry point (e.g. "Run
+   Validation button" vs "chat bubble") instead of reading both sides to
+   guess — cheaper for everyone.
 
 ## Skills index (`.claude/skills/`)
 
