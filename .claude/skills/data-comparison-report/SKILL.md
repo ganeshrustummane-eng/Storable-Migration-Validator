@@ -1,17 +1,27 @@
 ---
 name: data-comparison-report
-description: "Use when working on row-level or table-level data comparison, or on how validation results get written to CSV. Covers the two live comparison engines -- Project/main.py's row-level engine (called by the webapp's Run Validation button via Project/runner.py) and src/validation/*.py's shallower table-level engine (called by the chat agent's execute_validation tool). Files: Project/main.py, Project/runner.py, Project/db/*.py, src/validation/data_validator.py, src/validation/count_validator.py, src/validation/validation_executor.py, src/connector/tools.py."
+description: "Use when working on row-level data comparison, or on how validation results get written to CSV. Project/main.py is the only live comparison engine (called by the webapp's Run Validation button via Project/runner.py). The former second, chat-agent-only engine (src/validation/data_validator.py, count_validator.py, validation_executor.py) was removed with the chatbot and moved to trash/validation/. Files: Project/main.py, Project/runner.py, Project/db/*.py."
 ---
 
-# Data comparison and CSV reporting -- two engines, both live
+# Data comparison and CSV reporting -- one engine
 
-## Why two engines exist (known duplication, not a bug to "fix" silently)
+## History (why you may still see references to a second engine)
 
-Per CLAUDE.md: this duplication is acknowledged, real, and not yet resolved. Don't
-delete or "consolidate" either engine without the user explicitly asking for that --
-they currently serve two different entry points with different depth of output.
+CLAUDE.md and this skill used to describe two live engines. The second one
+existed only to back the chatbot/chat-bubble's `execute_validation` tool
+(`src/connector/tools.py`). That chatbot feature was removed; `tools.py` no
+longer exists, and `src/validation/data_validator.py`,
+`src/validation/count_validator.py`, and `src/validation/validation_executor.py`
+had no other caller anywhere in `webapp/`, `Project/`, or `src/validate_cli.py`
+(verified by repo-wide grep before moving). They now live in
+`trash/validation/` -- check there before assuming this logic no longer
+exists anywhere, per CLAUDE.md's convention for `trash/`.
 
-### Engine 1 -- row-level (`Project/main.py` + `Project/runner.py` + `Project/db/*.py`)
+`src/validation/config_schema.py` and `src/validation/plan_validator.py` are
+unrelated and still live -- imported directly by `webapp/app.py`,
+`src/validate_cli.py`, and `src/validation_pipeline.py`. Don't move those.
+
+## Engine -- row-level (`Project/main.py` + `Project/runner.py` + `Project/db/*.py`)
 
 This is what the webapp's "Run Validation" button calls: `webapp/app.py`'s Run
 Validation tab -> `Project/runner.py`'s `run_validation(layer, environment, tables,
@@ -32,27 +42,20 @@ implementing the same two-method `Database(ABC)` interface -- `connect()` and
 `PASS`, `FAIL`, `SOURCE_ONLY`, or `TARGET_ONLY`. It writes a full results CSV
 (`result_df.to_csv(...)`) AND a separate failed-only CSV (`failed_df.to_csv(...)`).
 
+Comparison is on full row value, not just the PK: for a matched key on both
+sides, every shared (non-excluded) column is sorted and string-compared --
+a row with a corrupted non-PK column correctly reports `FAIL`, not `PASS`.
+When no primary key is configured, `main.py` falls back to a Python-computed
+`row_hash` (MD5/SHA256 over the common or configured columns, NULL-safe) used
+as the join key -- the same value comparison still runs on top of it, and a
+heuristic (`row_hash_fallback_looks_like_column_drift`) warns when
+SOURCE_ONLY/TARGET_ONLY counts look suspiciously balanced (usually one
+un-normalized column desyncing every hash, not real missing rows).
+
 **Both CSVs matter.** CLAUDE.md is explicit: don't build a path that only reports
 failures -- passed rows must be visible too, since "no failures reported" and
 "validation didn't run" must never look the same. If you touch this file, keep
 both CSV outputs intact.
-
-### Engine 2 -- table-level (`src/validation/*.py`)
-
-Called from `src/connector/tools.py`'s `execute_validation()` tool -- the
-chat-agent's tool-callable validation path, separate from the webapp button.
-`execute_validation()` loads a stored plan via `PlanStore`, finds the YAML under
-`Project/config/{layer}/data_validation/`, instantiates
-`ValidationExecutor(base_dir=..., environment="dev")`, and runs it per YAML file.
-
-`src/validation/data_validator.py` (`execute_data_validation()`) and
-`src/validation/count_validator.py` (`execute_count_validation()`) are the shallower
-comparison logic here -- table-level pass/fail (or count match/mismatch), not a
-per-row breakdown. `src/validation/validation_executor.py`'s `ValidationExecutor`
-orchestrates a batch of these (`execute_batch()`) and builds a coverage report
-(`_build_coverage_report()`). This engine does not produce the row-level
-PASS/FAIL/SOURCE_ONLY/TARGET_ONLY CSV that Engine 1 does -- don't assume the two are
-interchangeable outputs.
 
 ## Report format facts (verified, not aspirational)
 
@@ -69,15 +72,11 @@ interchangeable outputs.
 
 ## Verification checklist
 
-- [ ] Identify which engine you're actually changing -- row-level (`Project/main.py`)
-  vs. table-level (`src/validation/*.py`) -- before touching comparison logic; a fix
-  in one does not apply to the other.
 - [ ] If touching `Project/main.py`'s output, confirm both the full-results CSV and
   the failed-only CSV are still written.
 - [ ] Confirm any filter/exclusion applied on the source side is applied identically
-  on the Snowflake side in whichever engine you're touching (asymmetric filters
-  produce false mismatches that look like data-quality bugs but are validator bugs
-  -- CLAUDE.md's Consistency dimension).
+  on the Snowflake side (asymmetric filters produce false mismatches that look like
+  data-quality bugs but are validator bugs -- CLAUDE.md's Consistency dimension).
 - [ ] Don't add XML or XLSX report writing without the user explicitly asking --
   neither exists today.
 - [ ] `py_compile` any touched `.py` file before calling the change done.

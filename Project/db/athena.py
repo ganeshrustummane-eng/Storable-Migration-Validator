@@ -5,6 +5,11 @@ import time
 
 
 class Athena(Database):
+    # ponytail: fixed ceiling, not per-table configurable; add a constructor
+    # param / env var if a table's validation query genuinely needs longer.
+    MAX_POLL_SECONDS = 1800  # 30 min — validation queries should never run longer
+    POLL_INTERVAL_SECONDS = 2
+
     def __init__(self,AWS_REGION,ATHENA_DB,ATHENA_OUTPUT,ACCESS_KEY="",SECRET_KEY=""):
         self.AWS_REGION = AWS_REGION
         self.ATHENA_DB = ATHENA_DB
@@ -32,27 +37,50 @@ class Athena(Database):
 
         query_execution_id = response["QueryExecutionId"]
 
-        # Wait for completion
+        # Wait for completion — bounded, so a stuck/long-running query fails
+        # loudly instead of blocking the validation run forever.
+        elapsed = 0
         while True:
             status = athena.get_query_execution(QueryExecutionId=query_execution_id)
             state = status["QueryExecution"]["Status"]["State"]
             if state in ["SUCCEEDED", "FAILED", "CANCELLED"]:
                 break
-            time.sleep(2)
+            if elapsed >= self.MAX_POLL_SECONDS:
+                athena.stop_query_execution(QueryExecutionId=query_execution_id)
+                raise TimeoutError(
+                    f"Athena query {query_execution_id} did not finish within "
+                    f"{self.MAX_POLL_SECONDS}s — cancelled."
+                )
+            time.sleep(self.POLL_INTERVAL_SECONDS)
+            elapsed += self.POLL_INTERVAL_SECONDS
 
         if state != "SUCCEEDED":
             reason = status["QueryExecution"]["Status"].get("StateChangeReason", "No details")
             raise Exception(f"Query failed: {state} — {reason}")
 
-
-        # Fetch result
-        results = athena.get_query_results(QueryExecutionId=query_execution_id)
-        column_info = results["ResultSet"]["ResultSetMetadata"]["ColumnInfo"]
-        col_names = [col["Name"] for col in column_info]
-
+        # Fetch result — get_query_results caps each page at 1000 rows, so
+        # every page must be walked via NextToken or larger result sets are
+        # silently truncated (wrong row counts / PK sets downstream).
+        col_names = None
         rows = []
-        for row in results["ResultSet"]["Rows"][1:]:  # skip header
-            values = [c.get("VarCharValue", None) for c in row["Data"]]
-            rows.append(values)
+        next_token = None
+        while True:
+            kwargs = {"QueryExecutionId": query_execution_id}
+            if next_token:
+                kwargs["NextToken"] = next_token
+            page = athena.get_query_results(**kwargs)
+
+            page_rows = page["ResultSet"]["Rows"]
+            if col_names is None:
+                column_info = page["ResultSet"]["ResultSetMetadata"]["ColumnInfo"]
+                col_names = [col["Name"] for col in column_info]
+                page_rows = page_rows[1:]  # header row only on the first page
+
+            for row in page_rows:
+                rows.append([c.get("VarCharValue", None) for c in row["Data"]])
+
+            next_token = page.get("NextToken")
+            if not next_token:
+                break
 
         return pd.DataFrame(rows, columns=col_names)

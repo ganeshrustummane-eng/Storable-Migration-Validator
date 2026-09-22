@@ -17,7 +17,7 @@ The framework is general-purpose: any condition a test lead describes (filter, j
 - YAML generation: `src/generated_queries/yaml_config_writer.py` — writes per-table `data_validation` YAML and shared `count_validation` YAML under `config/bronze/**`.
 - Rules: `src/rule_book.py`, `src/rules/rules_catalog.json` (base, immutable) vs `src/rule_book_learned.json` (learned, draft→active). Semantic type normalization (hstore/jsonb→VARIANT, etc.) is a separate concern — see the **normalization-and-exclusions** skill.
 - Multi-source registry: `config/database_registry.yaml` and per-source exclusion configs (`config/*_exclusions.yaml` — these 5 files are ~90% duplicate content; if touching exclusions, prefer consolidating over copy-pasting a 6th).
-- Actual execution engines that consume the generated YAML: `Project/main.py` (row-level pass/fail, the one the webapp's "Run Validation" button calls) and `src/validation/validation_executor.py` (table-level only, used by the chat-agent's `execute_validation` tool). Know which one you're generating for.
+- The only live execution engine that consumes the generated YAML: `Project/main.py` (row-level pass/fail, called via `Project/runner.py` by the webapp's "Run Validation" button). `src/validation/validation_executor.py` was the chat-agent-only engine (used by the now-removed `execute_validation` tool) — it has no caller left and was moved to `trash/validation/`; don't generate for it.
 
 ## Constraints
 

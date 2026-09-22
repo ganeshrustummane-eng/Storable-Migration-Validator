@@ -92,12 +92,18 @@ values and ignore the difference.
   primary path automatically once set, with no code change needed. Gemini
   support was removed entirely — don't add it back.
 - **Actual validation execution (row-level compare)**: `Project/main.py` +
-  `Project/runner.py` + `Project/db/*.py` — this is what the webapp's "Run
-  Validation" button calls. `src/validation/*.py` (`data_validator.py`,
-  `count_validator.py`, `validation_executor.py`) is a second, shallower,
-  table-level-only engine still used by the chat-agent's `execute_validation`
-  tool (`src/connector/tools.py`) — both are currently live for different
-  entry points; this duplication is a known follow-up, not yet resolved.
+  `Project/runner.py` + `Project/db/*.py` — this is the *only* live validation
+  engine, called by the webapp's "Run Validation" button. It already does
+  full value-level row comparison (`PASS`/`FAIL`/`SOURCE_ONLY`/`TARGET_ONLY`),
+  including a Python-computed `row_hash` fallback for tables with no primary
+  key. `data_validator.py`, `count_validator.py`, `validation_executor.py`
+  (table-level-only, PK-set-diff or count-only, no value comparison) were the
+  chat-agent's `execute_validation` tool's engine; the chatbot/chat-bubble
+  feature and `src/connector/tools.py` were removed, so that tool no longer
+  exists and these three files have no live caller. Moved to `trash/validation/`.
+  `src/validation/` still holds `config_schema.py` and `plan_validator.py` —
+  those remain live (imported by `webapp/app.py`, `src/validate_cli.py`,
+  `src/validation_pipeline.py`).
 - **Semantic normalization** (hstore→VARIANT, jsonb→VARIANT, etc.):
   `Project/utils/semantic_normalize.py`. Well-tested, don't casually rewrite.
 - **Exclusions**: `config/exclusions.yaml` (global) + `config/*_exclusions.yaml`
@@ -150,11 +156,12 @@ values and ignore the difference.
 4. **`py_compile` (or `ast.parse`) every touched `.py` file before calling a
    change done.**
 5. **Disambiguate before grepping.** This repo has several intentional
-   look-alike pairs: the two validation engines (`Project/main.py` row-level
-   vs `src/validation/*.py` table-level, see above), the two YAML-writing
-   paths (`src/generated_queries/yaml_config_writer.py` vs webapp/
+   look-alike pairs: the two YAML-writing paths
+   (`src/generated_queries/yaml_config_writer.py` vs webapp/
    `excel_batch_loader.py`'s direct `yaml.dump()` calls), and the 5
-   near-duplicate exclusion YAMLs. If a request says "validation" or "YAML"
+   near-duplicate exclusion YAMLs. (The former second validation engine,
+   `src/validation/*.py` table-level, is gone — see above; `Project/main.py`
+   is the only live one now.) If a request says "validation" or "YAML"
    without naming which one, ask the user to name the entry point (e.g. "Run
    Validation button" vs "chat bubble") instead of reading both sides to
    guess — cheaper for everyone.
