@@ -35,7 +35,7 @@ class Postgres(Database):
         return conn
 
     def execute_query(self, query):
-        
+
         conn = self.connect()
         cur = None
         try:
@@ -44,6 +44,23 @@ class Postgres(Database):
             data = cur.fetchall()
             columns = [desc[0] for desc in cur.description] # type: ignore
             return pd.DataFrame(data, columns=columns)
+        finally:
+            if cur is not None:
+                cur.close()
+            conn.close()
+
+    def execute_query_stream(self, query, chunksize=50_000):
+        conn = self.connect()
+        cur = None
+        try:
+            cur = conn.cursor()
+            cur.execute(query)
+            columns = [desc[0] for desc in cur.description]  # type: ignore
+            while True:
+                batch = cur.fetchmany(chunksize)
+                if not batch:
+                    break
+                yield pd.DataFrame(batch, columns=columns)
         finally:
             if cur is not None:
                 cur.close()

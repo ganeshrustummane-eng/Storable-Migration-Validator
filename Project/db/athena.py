@@ -84,3 +84,65 @@ class Athena(Database):
                 break
 
         return pd.DataFrame(rows, columns=col_names)
+
+    def execute_query_stream(self, query, chunksize=50_000):
+        """Same get_query_results 1000-row/page pagination as execute_query — the
+        1000-row/page ceiling is an AWS API limit this doesn't remove (that needs
+        CTAS-to-S3, a separate change) — but pages are yielded as they arrive
+        instead of accumulating the whole result in `rows` first, so the caller
+        never holds more than ~chunksize rows in memory at once."""
+        athena = self.connect()
+        response = athena.start_query_execution(
+            QueryString=query,
+            QueryExecutionContext={"Database": self.ATHENA_DB},
+            ResultConfiguration={"OutputLocation": self.ATHENA_OUTPUT},
+        )
+        query_execution_id = response["QueryExecutionId"]
+
+        elapsed = 0
+        while True:
+            status = athena.get_query_execution(QueryExecutionId=query_execution_id)
+            state = status["QueryExecution"]["Status"]["State"]
+            if state in ["SUCCEEDED", "FAILED", "CANCELLED"]:
+                break
+            if elapsed >= self.MAX_POLL_SECONDS:
+                athena.stop_query_execution(QueryExecutionId=query_execution_id)
+                raise TimeoutError(
+                    f"Athena query {query_execution_id} did not finish within "
+                    f"{self.MAX_POLL_SECONDS}s — cancelled."
+                )
+            time.sleep(self.POLL_INTERVAL_SECONDS)
+            elapsed += self.POLL_INTERVAL_SECONDS
+
+        if state != "SUCCEEDED":
+            reason = status["QueryExecution"]["Status"].get("StateChangeReason", "No details")
+            raise Exception(f"Query failed: {state} — {reason}")
+
+        col_names = None
+        buffer = []
+        next_token = None
+        while True:
+            kwargs = {"QueryExecutionId": query_execution_id}
+            if next_token:
+                kwargs["NextToken"] = next_token
+            page = athena.get_query_results(**kwargs)
+
+            page_rows = page["ResultSet"]["Rows"]
+            if col_names is None:
+                column_info = page["ResultSet"]["ResultSetMetadata"]["ColumnInfo"]
+                col_names = [col["Name"] for col in column_info]
+                page_rows = page_rows[1:]
+
+            for row in page_rows:
+                buffer.append([c.get("VarCharValue", None) for c in row["Data"]])
+
+            if len(buffer) >= chunksize:
+                yield pd.DataFrame(buffer, columns=col_names)
+                buffer = []
+
+            next_token = page.get("NextToken")
+            if not next_token:
+                break
+
+        if buffer:
+            yield pd.DataFrame(buffer, columns=col_names)

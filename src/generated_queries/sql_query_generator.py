@@ -305,8 +305,18 @@ class SQLQueryGenerator:
         target_values = [m.rule.apply_snowflake(m.target_column) for m in selected]
         source_hash = self._hash_expression(plan.source_db_type, source_values)
         target_hash = self._hash_expression("snowflake", target_values)
-        source_key = ", ".join(plan.source_primary_keys) or "NULL"
-        target_key = ", ".join(plan.target_primary_keys or plan.source_primary_keys) or "NULL"
+        # PK-less table: there's no column to correlate rows by, so the hash
+        # itself has to serve as both the join key and the content check —
+        # otherwise record_key falls back to literal SQL NULL for every row,
+        # which can't identify anything on the other side.
+        if plan.source_primary_keys:
+            source_key = ", ".join(plan.source_primary_keys)
+        else:
+            source_key = source_hash
+        if plan.target_primary_keys or plan.source_primary_keys:
+            target_key = ", ".join(plan.target_primary_keys or plan.source_primary_keys)
+        else:
+            target_key = target_hash
         source_prefix, source_from = self._comparison_source(plan, False)
         target_prefix, target_from = self._comparison_source(plan, True)
         return (

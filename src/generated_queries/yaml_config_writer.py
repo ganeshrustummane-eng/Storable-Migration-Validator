@@ -210,6 +210,8 @@ class YAMLConfigWriter:
             transformation_target_yaml=_prep(query_set.transformation_target),
             aggregate_source_yaml=_prep(query_set.aggregate_source),
             aggregate_target_yaml=_prep(query_set.aggregate_target),
+            row_hash_source_yaml=_prep(query_set.row_hash_source),
+            row_hash_target_yaml=_prep(query_set.row_hash_target),
         )
 
         yaml_path = out_dir / f"{pg_table}.yaml"
@@ -403,6 +405,8 @@ def _build_data_yaml(
     transformation_target_yaml: str = "",
     aggregate_source_yaml: str = "",
     aggregate_target_yaml: str = "",
+    row_hash_source_yaml: str = "",
+    row_hash_target_yaml: str = "",
 ) -> str:
     fivetran_comment = (
         "\n#   - Fivetran  : WHERE _FIVETRAN_ACTIVE = TRUE (Snowflake side — active records only)"
@@ -499,6 +503,26 @@ def _build_data_yaml(
             f"        target_database: {sf_database}",
             f"        target_schema: {sf_schema}",
             "        targetquery: |", aggregate_target_yaml,
+        ])
+
+    # Tier-1 hash query for the large-table hybrid engine (Project/tiered_runner.py)
+    # — only written when the plan configured a row_hash spec (plan.row_hash).
+    # Consumed only when a table's validation_plan.execution_strategy is also
+    # set to hybrid_v1; every other table ignores this block entirely, same as
+    # transformation_validation/aggregate_validation above.
+    if row_hash_source_yaml and row_hash_target_yaml:
+        lines.extend([
+            "      row_hash_validation:",
+            f"        source_table_name: {table_name_source}",
+            f"        source: {source_db_type}",
+            f"        source_database: {source_database}",
+            f"        source_schema: {pg_schema}",
+            "        sourcequery: |", row_hash_source_yaml,
+            f"        target_table_name: {table_name_target}",
+            "        target: snowflake",
+            f"        target_database: {sf_database}",
+            f"        target_schema: {sf_schema}",
+            "        targetquery: |", row_hash_target_yaml,
         ])
 
     return "\n".join(lines)

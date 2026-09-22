@@ -12,9 +12,11 @@ import psycopg2
 from pathlib import Path
 from db.factory import get_database
 from utils.utility import (generate_runid,get_config_output_paths,create_summary,get_logger,add_file_handler,
-                            count_validation_match,row_hash_fallback_looks_like_column_drift)
+                            count_validation_match,row_hash_fallback_looks_like_column_drift,
+                            should_dispatch_hybrid)
 from utils.semantic_normalize import canonicalize_frames
 from utils.quality_checks import append_validation_audit, run_quality_checks, validate_expected_grain
+from utils.row_compare import compare_indexed_frames
 from datetime import datetime
 
 
@@ -222,265 +224,203 @@ for validation in validation_dirs:
                             )
                             _warned_stale_exclusions.add(_excl_key)
 
-                    #source
-                    logger.info("Executing source query for table %s", table_name)
-                    logger.debug("Source query: %s", source_query)
-                    # Source connects via `environment` too (not hardcoded "local") —
-                    # a --environment prod run must read source creds from .env.prod,
-                    # same as the target does below, not always from the local .env.
-                    obj = get_database(source, BASE_DIR, environment,
-                                       override_database=source_database,
-                                       override_schema=source_schema)
-                    source_df = obj.execute_query(source_query)
+                    # Hybrid Tier-1/Tier-2 large-table path -- opt-in per table via a
+                    # `validation_plan.execution_strategy: hybrid_v1` flag (a sibling of
+                    # this validation block, not nested inside it -- the `_intent` lookup
+                    # a few lines below, inside the non-hybrid branch, reads
+                    # validation_config.get("validation_plan") for row_hash column config;
+                    # that is a separate, pre-existing lookup at the wrong nesting level
+                    # too and is left exactly as-is here (see
+                    # docs/large-table-scalable-architecture). Every table that hasn't
+                    # opted in falls straight through to today's unchanged fetch+compare
+                    # path below -- which is every table today.
+                    #
+                    # should_dispatch_hybrid() only ever returns True for
+                    # validation_name == "data_validation" -- row_hash_validation itself
+                    # (and transformation_validation/aggregate_validation) are sibling
+                    # blocks under the same "validations:" mapping and must never be
+                    # dispatched as if they were their own independent validation
+                    # (Phase 2 audit finding F1).
+                    _plan_block = table_config["validations"].get("validation_plan") or {}
+                    _row_hash_block = table_config["validations"].get("row_hash_validation") or {}
+                    _row_hash_spec = (_plan_block.get("row_hash") or {})
+                    _row_hash_columns = _row_hash_spec.get("columns") or []
+                    use_hybrid = should_dispatch_hybrid(validation_name, _plan_block, _row_hash_block)
 
-                    #target
-                    logger.info("Executing target query for table %s", table_name)
-                    logger.debug("Target query: %s", target_query)
-                    obj = get_database(target, BASE_DIR, environment,
-                                       override_database=target_database,
-                                       override_schema=target_schema)
-                    target_df = obj.execute_query(target_query)
-
-                    source_rows = len(source_df)
-                    target_rows = len(target_df)
-
-                    source_df.columns = source_df.columns.str.strip().str.lower()
-                    target_df.columns = target_df.columns.str.strip().str.lower()
-
-                    # JSON/JSONB/HStore arrive as raw document text (the SQL side
-                    # no longer tries to canonicalize them — two engines could not
-                    # be made to agree on key order, number formatting or NULL
-                    # sentinels). Canonicalize both frames here with one function
-                    # so equal documents become byte-identical strings before the
-                    # row comparison below.
-                    source_df, target_df = canonicalize_frames(source_df, target_df)
-                    quality_failures = []
-                    grain_failures = []
-
-                    output_file_path = ""
-                    if validation_name == "count_validation":
-                        source_rows = int(source_df['source_row_count'].iloc[0])
-                        target_rows = int(target_df['target_row_count'].iloc[0])
-                        logger.debug("Source row count: %s", source_rows)
-                        logger.debug("Target row count: %s", target_rows)
-                        # Opt-in tolerance for tables under active CDC/replication —
-                        # default stays 0 (exact match), so existing YAMLs behave
-                        # exactly as before unless a table explicitly sets this.
-                        # Strict == on a live table produces intermittent FAILs with
-                        # no real drift, which trains people to ignore the alert.
-                        count_threshold_pct = float(validation_config.get("count_mismatch_threshold_pct", 0))
-                        is_match, count_diff_pct = count_validation_match(source_rows, target_rows, count_threshold_pct)
-                        if count_threshold_pct > 0:
-                            logger.info(
-                                "Count threshold %.4f%% vs actual %.4f%% (source=%s, target=%s)",
-                                count_threshold_pct, count_diff_pct, source_rows, target_rows,
-                            )
+                    if use_hybrid:
+                        import tiered_runner
+                        quality_failures = []
+                        grain_failures = []
+                        output_file_path = ""
+                        hybrid_result = tiered_runner.run_table_hybrid(
+                            table_name=table_name,
+                            validation_name=validation_name,
+                            validation_config=validation_config,
+                            row_hash_config=_row_hash_block,
+                            row_hash_columns=_row_hash_columns,
+                            transformation_specs=transformation_specs,
+                            source=source,
+                            target=target,
+                            environment=environment,
+                            base_dir=BASE_DIR,
+                            source_database=source_database,
+                            source_schema=source_schema,
+                            target_database=target_database,
+                            target_schema=target_schema,
+                            output_path=output_path,
+                            run_id=run_id,
+                        )
+                        source_rows = hybrid_result["source_rows"]
+                        target_rows = hybrid_result["target_rows"]
+                        is_match = hybrid_result["is_match"]
+                        grain_failures = hybrid_result.get("grain_failures", [])
                     else:
-                        import pandas as pd
+                        #source
+                        logger.info("Executing source query for table %s", table_name)
+                        logger.debug("Source query: %s", source_query)
+                        # Source connects via `environment` too (not hardcoded "local") —
+                        # a --environment prod run must read source creds from .env.prod,
+                        # same as the target does below, not always from the local .env.
+                        obj = get_database(source, BASE_DIR, environment,
+                                           override_database=source_database,
+                                           override_schema=source_schema)
+                        source_df = obj.execute_query(source_query)
+
+                        #target
+                        logger.info("Executing target query for table %s", table_name)
+                        logger.debug("Target query: %s", target_query)
+                        obj = get_database(target, BASE_DIR, environment,
+                                           override_database=target_database,
+                                           override_schema=target_schema)
+                        target_df = obj.execute_query(target_query)
+
                         source_rows = len(source_df)
                         target_rows = len(target_df)
-                        logger.debug("Source row count: %s", source_rows)
-                        logger.debug("Target row count: %s", target_rows)
 
-                        # Fall back to row_hash when no PK configured.
-                        if not pksourcecolumn or not pktargetcolumn:
-                            pksourcecolumn = "row_hash"
-                            pktargetcolumn = "row_hash"
+                        source_df.columns = source_df.columns.str.strip().str.lower()
+                        target_df.columns = target_df.columns.str.strip().str.lower()
 
-                        # Support both scalar PK (string) and composite PK (list)
-                        if isinstance(pksourcecolumn, list):
-                            pk_src = [c.lower() for c in pksourcecolumn]
-                            pk_tgt = [c.lower() for c in pktargetcolumn]
+                        # JSON/JSONB/HStore arrive as raw document text (the SQL side
+                        # no longer tries to canonicalize them — two engines could not
+                        # be made to agree on key order, number formatting or NULL
+                        # sentinels). Canonicalize both frames here with one function
+                        # so equal documents become byte-identical strings before the
+                        # row comparison below.
+                        source_df, target_df = canonicalize_frames(source_df, target_df)
+                        quality_failures = []
+                        grain_failures = []
+
+                        output_file_path = ""
+                        if validation_name == "count_validation":
+                            source_rows = int(source_df['source_row_count'].iloc[0])
+                            target_rows = int(target_df['target_row_count'].iloc[0])
+                            logger.debug("Source row count: %s", source_rows)
+                            logger.debug("Target row count: %s", target_rows)
+                            # Opt-in tolerance for tables under active CDC/replication —
+                            # default stays 0 (exact match), so existing YAMLs behave
+                            # exactly as before unless a table explicitly sets this.
+                            # Strict == on a live table produces intermittent FAILs with
+                            # no real drift, which trains people to ignore the alert.
+                            count_threshold_pct = float(validation_config.get("count_mismatch_threshold_pct", 0))
+                            is_match, count_diff_pct = count_validation_match(source_rows, target_rows, count_threshold_pct)
+                            if count_threshold_pct > 0:
+                                logger.info(
+                                    "Count threshold %.4f%% vs actual %.4f%% (source=%s, target=%s)",
+                                    count_threshold_pct, count_diff_pct, source_rows, target_rows,
+                                )
                         else:
-                            pk_src = pksourcecolumn.lower()
-                            pk_tgt = pktargetcolumn.lower()
+                            import pandas as pd
+                            source_rows = len(source_df)
+                            target_rows = len(target_df)
+                            logger.debug("Source row count: %s", source_rows)
+                            logger.debug("Target row count: %s", target_rows)
 
-                        # row_hash mode: when pk is 'row_hash' but the SQL didn't
-                        # produce that column, compute it in Python from the common
-                        # columns so any JOIN query can be compared without a real PK.
-                        used_row_hash_fallback = (
-                            pk_src == "row_hash" or (isinstance(pk_src, list) and pk_src == ["row_hash"])
-                        )
-                        if used_row_hash_fallback and "row_hash" not in source_df.columns:
-                            import hashlib
-                            _intent = validation_config.get("validation_plan") or {}
-                            _hash_spec = _intent.get("row_hash") or {}
-                            _configured = [str(c).lower() for c in (_hash_spec.get("columns") or [])]
-                            _common = [c for c in source_df.columns if c in set(target_df.columns)]
-                            if _configured:
-                                _common = [c for c in _configured if c in source_df.columns and c in target_df.columns]
-                            _algorithm = str(_hash_spec.get("algorithm", "MD5")).upper()
-                            _hash_name = "sha256" if _algorithm == "SHA256" else "md5"
-                            def _hash_row(row, cols=_common):
-                                def _v(c):
-                                    v = row[c]
-                                    if v is None or (isinstance(v, float) and v != v):
-                                        return "<<NULL>>"
-                                    text = str(v).strip() if isinstance(v, str) else str(v)
-                                    return text
-                                return hashlib.new(_hash_name, "|".join(_v(c) for c in cols).encode()).hexdigest()
-                            source_df["row_hash"] = source_df.apply(_hash_row, axis=1)
-                            target_df["row_hash"] = target_df.apply(_hash_row, axis=1)
-                            pk_src = pk_tgt = "row_hash"
+                            # Fall back to row_hash when no PK configured.
+                            if not pksourcecolumn or not pktargetcolumn:
+                                pksourcecolumn = "row_hash"
+                                pktargetcolumn = "row_hash"
 
-                        quality_failures = run_quality_checks(source_df, target_df, validation_config)
-                        grain_failures = validate_expected_grain(source_df, target_df, validation_config)
-                        for quality_failure in quality_failures + grain_failures:
-                            logger.warning("Quality check failed for %s: %s", table_name, quality_failure)
-
-                        composite = isinstance(pk_src, list)
-                        src = source_df.set_index(pk_src).sort_index()
-                        tgt = target_df.set_index(pk_tgt).sort_index()
-                        if composite:
-                            tgt.index.names = src.index.names
-                        else:
-                            tgt.index.name = src.index.name
-
-                        all_src_cols  = list(src.columns)
-                        all_tgt_cols  = list(tgt.columns)
-                        tgt_col_set   = set(all_tgt_cols)
-                        src_col_set   = set(all_src_cols)
-
-                        # Columns present in both sides — comparison happens only here.
-                        common_cols   = [c for c in all_src_cols if c in tgt_col_set]
-                        # Schema drift — reported as warnings, not row-level FAILs.
-                        src_only_cols = [c for c in all_src_cols if c not in tgt_col_set]
-                        tgt_only_cols = [c for c in all_tgt_cols if c not in src_col_set]
-                        if src_only_cols:
-                            logger.warning(
-                                "Schema drift: column(s) %s exist in SOURCE but not in TARGET — "
-                                "excluded from row comparison; check target schema.",
-                                src_only_cols,
-                            )
-                        if tgt_only_cols:
-                            logger.warning(
-                                "Schema drift: column(s) %s exist in TARGET but not in SOURCE — "
-                                "excluded from row comparison.",
-                                tgt_only_cols,
-                            )
-
-                        # All columns from both sides appear in the output CSV for traceability.
-                        display_cols = all_src_cols + [c for c in all_tgt_cols if c not in src_col_set]
-
-                        def _row_key_str(pk_val):
-                            if isinstance(pk_val, tuple):
-                                return "|".join(str(v) for v in pk_val)
-                            return str(pk_val)
-
-                        def _cell_str(v):
-                            """Normalize a cell for comparison:
-                            - None/NaN            → '<<NULL>>'
-                            - float/Decimal       → 2-dp string (matches COALESCE CAST output)
-                            - everything else     → str()
-                            """
-                            if v is None or (isinstance(v, float) and v != v):
-                                return "<<NULL>>"
-                            if isinstance(v, float):
-                                return f"{v:.2f}"
-                            try:
-                                from decimal import Decimal as _Dec
-                                if isinstance(v, _Dec):
-                                    return f"{float(v):.2f}"
-                            except Exception:
-                                pass
-                            return str(v)
-
-                        def _to_df(frame, pk_val):
-                            if pk_val not in frame.index:
-                                return pd.DataFrame(columns=frame.columns)
-                            chunk = frame.loc[pk_val]
-                            return chunk if isinstance(chunk, pd.DataFrame) else chunk.to_frame().T
-
-                        # Single loop over all unique PKs — handles duplicates as sorted multisets
-                        # so row-order differences between engines never cause false FAILs.
-                        # Comparison is on common_cols only; schema drift is logged above.
-                        # ponytail: O(n log n) sort per PK group; fine for migration data volumes.
-                        all_pks = sorted(
-                            set(src.index.unique()) | set(tgt.index.unique()),
-                            key=lambda x: str(x),
-                        )
-                        rows = []
-                        for pk_val in all_pks:
-                            s_df = _to_df(src, pk_val)
-                            t_df = _to_df(tgt, pk_val)
-                            pk_str = _row_key_str(pk_val)
-
-                            def _rec(pk_str, status, s_row=None, t_row=None):
-                                rec = {"row_key": pk_str, "status": status}
-                                for col in display_cols:
-                                    rec[f"{col}__source"] = (s_row[col] if s_row is not None and col in s_row.index else "")
-                                    rec[f"{col}__target"] = (t_row[col] if t_row is not None and col in t_row.index else "")
-                                if transformation_specs:
-                                    rec["validation_type"] = "TRANSFORMATION"
-                                    for spec in transformation_specs:
-                                        name = str(spec.get("name", ""))
-                                        value_column = f"{name}_value"
-                                        expected = s_row.get(value_column, "") if s_row is not None else ""
-                                        actual = t_row.get(value_column, "") if t_row is not None else ""
-                                        rec[f"{name}__expected"] = expected
-                                        rec[f"{name}__actual"] = actual
-                                        try:
-                                            rec[f"{name}__difference"] = float(actual) - float(expected)
-                                        except (TypeError, ValueError):
-                                            rec[f"{name}__difference"] = "" if actual == expected else "MISMATCH"
-                                        rec[f"{name}__status"] = "PASS" if expected == actual else "FAIL"
-                                return rec
-
-                            if s_df.empty:
-                                rows.append(_rec(pk_str, "TARGET_ONLY", t_row=t_df.iloc[0]))
-                            elif t_df.empty:
-                                rows.append(_rec(pk_str, "SOURCE_ONLY", s_row=s_df.iloc[0]))
+                            # Support both scalar PK (string) and composite PK (list)
+                            if isinstance(pksourcecolumn, list):
+                                pk_src = [c.lower() for c in pksourcecolumn]
+                                pk_tgt = [c.lower() for c in pktargetcolumn]
                             else:
-                                s_sorted = sorted(
-                                    s_df[common_cols].apply(
-                                        lambda r: "|".join(_cell_str(r[c]) for c in common_cols), axis=1
-                                    ).tolist()
-                                )
-                                t_sorted = sorted(
-                                    t_df[common_cols].apply(
-                                        lambda r: "|".join(_cell_str(r[c]) for c in common_cols), axis=1
-                                    ).tolist()
-                                )
-                                row_status = "PASS" if s_sorted == t_sorted else "FAIL"
-                                rows.append(_rec(pk_str, row_status, s_row=s_df.iloc[0], t_row=t_df.iloc[0]))
+                                pk_src = pksourcecolumn.lower()
+                                pk_tgt = pktargetcolumn.lower()
 
-                        result_df = pd.DataFrame(rows).sort_values("row_key").reset_index(drop=True)
-                        filepath = os.path.join(output_path, f"{table_name}_{validation_name}_result_{run_id}.csv")
-                        result_df.to_csv(filepath, index=False)
-                        logger.info("Saved row-level results (%d rows) to %s", len(result_df), filepath)
+                            # row_hash mode: when pk is 'row_hash' but the SQL didn't
+                            # produce that column, compute it in Python from the common
+                            # columns so any JOIN query can be compared without a real PK.
+                            used_row_hash_fallback = (
+                                pk_src == "row_hash" or (isinstance(pk_src, list) and pk_src == ["row_hash"])
+                            )
+                            if used_row_hash_fallback and "row_hash" not in source_df.columns:
+                                import hashlib
+                                _intent = validation_config.get("validation_plan") or {}
+                                _hash_spec = _intent.get("row_hash") or {}
+                                _configured = [str(c).lower() for c in (_hash_spec.get("columns") or [])]
+                                _common = [c for c in source_df.columns if c in set(target_df.columns)]
+                                if _configured:
+                                    _common = [c for c in _configured if c in source_df.columns and c in target_df.columns]
+                                _algorithm = str(_hash_spec.get("algorithm", "MD5")).upper()
+                                _hash_name = "sha256" if _algorithm == "SHA256" else "md5"
+                                def _hash_row(row, cols=_common):
+                                    def _v(c):
+                                        v = row[c]
+                                        if v is None or (isinstance(v, float) and v != v):
+                                            return "<<NULL>>"
+                                        text = str(v).strip() if isinstance(v, str) else str(v)
+                                        return text
+                                    return hashlib.new(_hash_name, "|".join(_v(c) for c in cols).encode()).hexdigest()
+                                source_df["row_hash"] = source_df.apply(_hash_row, axis=1)
+                                target_df["row_hash"] = target_df.apply(_hash_row, axis=1)
+                                pk_src = pk_tgt = "row_hash"
 
-                        failed_df = result_df[result_df["status"] != "PASS"]
-                        if not failed_df.empty:
-                            failed_path = os.path.join(output_path, f"{table_name}_{validation_name}_failed_{run_id}.csv")
-                            failed_df.to_csv(failed_path, index=False)
-                            logger.info("Saved failed rows (%d rows) to %s", len(failed_df), failed_path)
+                            quality_failures = run_quality_checks(source_df, target_df, validation_config)
+                            grain_failures = validate_expected_grain(source_df, target_df, validation_config)
+                            for quality_failure in quality_failures + grain_failures:
+                                logger.warning("Quality check failed for %s: %s", table_name, quality_failure)
 
-                        n_fail_rows = int((result_df["status"] != "PASS").sum())
-                        total_rows = len(result_df)
+                            # PK-indexed multiset comparison — extracted to utils/row_compare.py
+                            # so this exact algorithm is shared with the hybrid Tier-1/Tier-2
+                            # engine (tiered_runner.py) instead of existing as two copies.
+                            result_df = compare_indexed_frames(source_df, target_df, pk_src, pk_tgt, transformation_specs)
+                            filepath = os.path.join(output_path, f"{table_name}_{validation_name}_result_{run_id}.csv")
+                            result_df.to_csv(filepath, index=False)
+                            logger.info("Saved row-level results (%d rows) to %s", len(result_df), filepath)
 
-                        if used_row_hash_fallback and total_rows > 0:
-                            n_source_only = int((result_df["status"] == "SOURCE_ONLY").sum())
-                            n_target_only = int((result_df["status"] == "TARGET_ONLY").sum())
-                            if row_hash_fallback_looks_like_column_drift(n_source_only, n_target_only, total_rows):
-                                logger.warning(
-                                    "row_hash fallback for %s: %d SOURCE_ONLY / %d TARGET_ONLY out of %d rows — "
-                                    "roughly equal counts on both sides usually means ONE un-normalized column "
-                                    "is desyncing the whole row hash, not real missing rows. Configure "
-                                    "pksourcecolumn/pktargetcolumn for accurate column-level diffs.",
-                                    table_name, n_source_only, n_target_only, total_rows,
-                                )
+                            failed_df = result_df[result_df["status"] != "PASS"]
+                            if not failed_df.empty:
+                                failed_path = os.path.join(output_path, f"{table_name}_{validation_name}_failed_{run_id}.csv")
+                                failed_df.to_csv(failed_path, index=False)
+                                logger.info("Saved failed rows (%d rows) to %s", len(failed_df), failed_path)
 
-                        # Optional per-table mismatch threshold (e.g. 0.1 for ≤0.1%)
-                        threshold_pct = float(validation_config.get("mismatch_threshold_pct", 0))
-                        if threshold_pct > 0 and total_rows > 0:
-                            actual_pct = (n_fail_rows / total_rows) * 100
-                            is_match = actual_pct <= threshold_pct
-                            logger.info("Threshold %.4f%% vs actual %.4f%%", threshold_pct, actual_pct)
-                        else:
-                            is_match = (n_fail_rows == 0)
+                            n_fail_rows = int((result_df["status"] != "PASS").sum())
+                            total_rows = len(result_df)
 
-                        if quality_failures or grain_failures:
-                            is_match = False
+                            if used_row_hash_fallback and total_rows > 0:
+                                n_source_only = int((result_df["status"] == "SOURCE_ONLY").sum())
+                                n_target_only = int((result_df["status"] == "TARGET_ONLY").sum())
+                                if row_hash_fallback_looks_like_column_drift(n_source_only, n_target_only, total_rows):
+                                    logger.warning(
+                                        "row_hash fallback for %s: %d SOURCE_ONLY / %d TARGET_ONLY out of %d rows — "
+                                        "roughly equal counts on both sides usually means ONE un-normalized column "
+                                        "is desyncing the whole row hash, not real missing rows. Configure "
+                                        "pksourcecolumn/pktargetcolumn for accurate column-level diffs.",
+                                        table_name, n_source_only, n_target_only, total_rows,
+                                    )
+
+                            # Optional per-table mismatch threshold (e.g. 0.1 for ≤0.1%)
+                            threshold_pct = float(validation_config.get("mismatch_threshold_pct", 0))
+                            if threshold_pct > 0 and total_rows > 0:
+                                actual_pct = (n_fail_rows / total_rows) * 100
+                                is_match = actual_pct <= threshold_pct
+                                logger.info("Threshold %.4f%% vs actual %.4f%%", threshold_pct, actual_pct)
+                            else:
+                                is_match = (n_fail_rows == 0)
+
+                            if quality_failures or grain_failures:
+                                is_match = False
 
                     if is_match:
                         logger.info("Match/Mismatch: Match")

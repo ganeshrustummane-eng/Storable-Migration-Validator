@@ -47,8 +47,33 @@ def test_execute_query_unchanged_behavior():
     print("test_execute_query_unchanged_behavior: OK")
 
 
+def test_execute_query_stream_yields_bounded_chunks_and_closes():
+    pg = Postgres("db", "user", "pw", "host", 5432)
+    fake_conn = MagicMock()
+    fake_cur = MagicMock()
+    # 5 rows total, chunksize=2 -> three fetchmany calls: 2, 2, 1, then [] to stop.
+    fake_cur.fetchmany.side_effect = [
+        [(1, "a"), (2, "b")],
+        [(3, "c"), (4, "d")],
+        [(5, "e")],
+        [],
+    ]
+    fake_cur.description = [("id",), ("name",)]
+    fake_conn.cursor.return_value = fake_cur
+    pg.connect = MagicMock(return_value=fake_conn)
+
+    chunks = list(pg.execute_query_stream("select id, name from t", chunksize=2))
+    assert [len(c) for c in chunks] == [2, 2, 1]
+    assert list(chunks[0].columns) == ["id", "name"]
+    fake_cur.execute.assert_called_once_with("select id, name from t")
+    fake_cur.close.assert_called_once()
+    fake_conn.close.assert_called_once()
+    print("test_execute_query_stream_yields_bounded_chunks_and_closes: OK")
+
+
 if __name__ == "__main__":
     test_connect_applies_timeout_and_statement_timeout()
     test_connect_without_schema_still_sets_statement_timeout()
     test_execute_query_unchanged_behavior()
+    test_execute_query_stream_yields_bounded_chunks_and_closes()
     print("All Postgres connector checks passed.")

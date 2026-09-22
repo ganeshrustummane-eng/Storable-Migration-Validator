@@ -48,3 +48,16 @@ class Snowflake(Database):
                 rows = cs.fetchall()
                 df = pd.DataFrame(rows, columns=[c[0] for c in cs.description])
                 return df
+
+    def execute_query_stream(self, query, chunksize=50_000):
+        with self.connect() as conn:
+            with conn.cursor() as cs:
+                if self.SNOWFLAKE_WAREHOUSE:
+                    cs.execute(f"USE WAREHOUSE {self.SNOWFLAKE_WAREHOUSE};")
+                cs.execute(query)
+                columns = [c[0] for c in cs.description]
+                while True:
+                    batch = cs.fetchmany(chunksize)
+                    if not batch:
+                        break
+                    yield pd.DataFrame(batch, columns=columns)

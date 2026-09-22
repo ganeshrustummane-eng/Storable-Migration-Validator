@@ -57,3 +57,20 @@ class Mssqlserver(Database):
             if cur is not None:
                 cur.close()
             conn.close()
+
+    def execute_query_stream(self, query, chunksize=50_000):
+        conn = self.connect()
+        cur = None
+        try:
+            cur = conn.cursor()
+            cur.execute(query)
+            columns = [col[0] for col in cur.description]
+            while True:
+                batch = cur.fetchmany(chunksize)
+                if not batch:
+                    break
+                yield pd.DataFrame.from_records(batch, columns=columns)
+        finally:
+            if cur is not None:
+                cur.close()
+            conn.close()

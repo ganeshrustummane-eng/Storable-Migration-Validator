@@ -21,6 +21,31 @@ def count_validation_match(source_rows: int, target_rows: int, threshold_pct: fl
     return source_rows == target_rows, (0.0 if source_rows == target_rows else float("inf"))
 
 
+def should_dispatch_hybrid(validation_name: str, plan_block: dict, row_hash_block: dict) -> bool:
+    """True only for the data_validation block itself, and only when it opted
+    into validation_plan.execution_strategy: hybrid_v1 with a real (non-
+    placeholder) row_hash_validation query pair to drive Tier 1 with.
+
+    validation_name must be exactly "data_validation" — row_hash_validation /
+    transformation_validation / aggregate_validation / validation_plan are
+    sibling helper blocks under the same table's "validations:" mapping, not
+    independent validations, and must never be dispatched on their own (Phase 2
+    audit finding F1: row_hash_validation was previously getting re-executed as
+    its own phantom validation because it also has a source/sourcequery key)."""
+    if validation_name != "data_validation":
+        return False
+    if (plan_block or {}).get("execution_strategy") != "hybrid_v1":
+        return False
+    src_q = (row_hash_block or {}).get("sourcequery")
+    tgt_q = (row_hash_block or {}).get("targetquery")
+    if not src_q or not tgt_q:
+        return False
+    placeholder = ("SELECT 1;", "SELECT 1")
+    if str(src_q).strip() in placeholder or str(tgt_q).strip() in placeholder:
+        return False
+    return True
+
+
 def row_hash_fallback_looks_like_column_drift(n_source_only: int, n_target_only: int, total_rows: int) -> bool:
     """Heuristic for the row_hash PK fallback: when no primary key is configured,
     the row's identity IS the hash of every common column, so one un-normalized
