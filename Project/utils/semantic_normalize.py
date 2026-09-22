@@ -375,6 +375,16 @@ def _normalize_numeric_str(val):
         return val
 
 
+def looks_numeric_string(value):
+    """True for a plain-decimal string like '400000.000000' -- the same shape
+    _normalize_numeric_str rounds to 2dp. Used by hybrid_v1's SQL distinct_count
+    (Project/tiered_runner.py) to identify columns where two differently-precise
+    numeric-string representations would count as distinct in raw SQL but as
+    one canonical value after this module's normalization -- see
+    docs/large-table-scalable-architecture §R.2.2."""
+    return isinstance(value, str) and bool(_NUMERIC_STR_RE.match(value.strip()))
+
+
 def canonicalize_frames(source_df, target_df):
     """Canonicalize semi-structured and numeric columns in both frames, symmetrically.
 

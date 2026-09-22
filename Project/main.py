@@ -274,6 +274,7 @@ for validation in validation_dirs:
                         target_rows = hybrid_result["target_rows"]
                         is_match = hybrid_result["is_match"]
                         grain_failures = hybrid_result.get("grain_failures", [])
+                        quality_failures = hybrid_result.get("quality_failures", [])
                     else:
                         #source
                         logger.info("Executing source query for table %s", table_name)

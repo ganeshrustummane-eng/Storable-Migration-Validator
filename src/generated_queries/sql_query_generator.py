@@ -304,7 +304,16 @@ class SQLQueryGenerator:
         source_values = [m.rule.apply_source(plan.source_db_type, m.source_column) for m in selected]
         target_values = [m.rule.apply_snowflake(m.target_column) for m in selected]
         source_hash = self._hash_expression(plan.source_db_type, source_values)
-        target_hash = self._hash_expression("snowflake", target_values)
+        # Tier-1 classifies rows by comparing the raw hash *string* from each
+        # side directly -- both sides must use the same algorithm over the
+        # same pipe-joined input, or identical row content never produces
+        # equal hashes. PostgreSQL has no built-in SHA-256 (only pgcrypto's
+        # digest(), which the controlled Postgres databases don't have), so
+        # a postgresql source uses the dependency-free, core-builtin MD5()
+        # on both sides instead of SHA2_256 -- every other source dialect
+        # keeps SHA2_256 unchanged.
+        hash_algorithm = "md5" if (plan.source_db_type or "").lower() == "postgresql" else "sha256"
+        target_hash = self._hash_expression("snowflake", target_values, algorithm=hash_algorithm)
         # PK-less table: there's no column to correlate rows by, so the hash
         # itself has to serve as both the join key and the content check —
         # otherwise record_key falls back to literal SQL NULL for every row,
@@ -358,7 +367,7 @@ class SQLQueryGenerator:
         return "WITH validation_population AS (\n" + body + "\n)\n", "validation_population"
 
     @staticmethod
-    def _hash_expression(dialect: str, values: List[str]) -> str:
+    def _hash_expression(dialect: str, values: List[str], algorithm: str = "sha256") -> str:
         dialect = (dialect or "postgresql").lower()
         if dialect in {"mssql", "sqlserver", "sql_server", "mssqlserver"}:
             joined = " + '|' + ".join(
@@ -371,6 +380,11 @@ class SQLQueryGenerator:
             return f"to_hex(sha256(to_utf8({joined})))"
         if dialect == "snowflake":
             joined = "CONCAT_WS('|', " + ", ".join(values) + ")"
+            # algorithm="md5" only when this table's source is postgresql --
+            # see _row_hash_queries. MD5() is a Snowflake builtin, same as
+            # PostgreSQL's, so both sides stay comparable without pgcrypto.
+            if algorithm == "md5":
+                return f"MD5({joined})"
             return f"SHA2({joined}, 256)"
         joined = " || '|' || ".join(
             f"COALESCE(CAST({value} AS TEXT), '{SQLQueryGenerator.NULL_PLACEHOLDER}')"
@@ -378,7 +392,12 @@ class SQLQueryGenerator:
         )
         if dialect == "redshift":
             return f"SHA2({joined}, 256)"
-        return f"encode(digest({joined}, 'sha256'), 'hex')"
+        # postgresql: MD5() is a core builtin (no extension required); SHA-256
+        # would need pgcrypto's digest(), which the controlled Postgres
+        # databases don't have installed -- see _row_hash_queries for how the
+        # paired Snowflake target side is switched to MD5 too so the two
+        # sides' hash strings stay directly comparable.
+        return f"MD5({joined})"
 
     def _transformation_queries(self, plan, source_filter: str, target_filter: str) -> Tuple[str, str]:
         source_expr = ", ".join(f"{item.source_expression} AS {item.name}_value" for item in plan.transformations)

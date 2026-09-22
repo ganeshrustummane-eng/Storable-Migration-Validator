@@ -23,6 +23,24 @@ def _column_pairs(source_df: pd.DataFrame, target_df: pd.DataFrame) -> list[tupl
     return [(column, column) for column in source_df.columns if column in target_columns]
 
 
+def _pct_difference(source_value: float, target_value: float) -> float:
+    """abs(source-target) as a % of |source|, floored at a denominator of 1.0
+    (see docs/large-table-scalable-architecture §B's flagged near-zero-source
+    caveat -- inherited as-is here, not fixed). Shared by the sum/min/max
+    checks below and by the hybrid_v1 aggregate parity check
+    (Project/tiered_runner.py) so the tolerance math isn't duplicated."""
+    denominator = max(abs(source_value), 1.0)
+    return abs(source_value - target_value) / denominator * 100
+
+
+def _hash_dataframe(df: pd.DataFrame, columns: list[str]) -> str:
+    """sha256 of columns rendered the same way sample_hash always has:
+    astype(str) then to_csv. Shared with hybrid_v1's sample_hash check
+    (Project/tiered_runner.py) so both paths hash identically."""
+    csv_text = df[columns].astype(str).to_csv(index=False)
+    return hashlib.sha256(csv_text.encode("utf-8")).hexdigest()
+
+
 def run_quality_checks(
     source_df: pd.DataFrame,
     target_df: pd.DataFrame,
@@ -76,8 +94,7 @@ def run_quality_checks(
             if source_numeric.notna().any() and target_numeric.notna().any():
                 source_sum = float(source_numeric.sum())
                 target_sum = float(target_numeric.sum())
-                denominator = max(abs(source_sum), 1.0)
-                difference_pct = abs(source_sum - target_sum) / denominator * 100
+                difference_pct = _pct_difference(source_sum, target_sum)
                 if difference_pct > aggregate_tolerance:
                     failures.append({
                         "check": "sum",
@@ -91,8 +108,7 @@ def run_quality_checks(
                     ("min", float(source_numeric.min()), float(target_numeric.min())),
                     ("max", float(source_numeric.max()), float(target_numeric.max())),
                 ):
-                    denominator = max(abs(source_value), 1.0)
-                    difference_pct = abs(source_value - target_value) / denominator * 100
+                    difference_pct = _pct_difference(source_value, target_value)
                     if difference_pct > aggregate_tolerance:
                         failures.append({
                             "check": aggregate_name,
@@ -107,10 +123,8 @@ def run_quality_checks(
     if sample_percent > 0 and len(source_df) and len(target_df):
         sample_size = max(1, int(min(len(source_df), len(target_df)) * min(sample_percent, 100) / 100))
         columns = [source for source, target in _column_pairs(source_df, target_df)]
-        source_sample = source_df[columns].head(sample_size).astype(str).to_csv(index=False)
-        target_sample = target_df[columns].head(sample_size).astype(str).to_csv(index=False)
-        source_hash = hashlib.sha256(source_sample.encode("utf-8")).hexdigest()
-        target_hash = hashlib.sha256(target_sample.encode("utf-8")).hexdigest()
+        source_hash = _hash_dataframe(source_df.head(sample_size), columns)
+        target_hash = _hash_dataframe(target_df.head(sample_size), columns)
         if source_hash != target_hash:
             failures.append({
                 "check": "sample_hash",
