@@ -196,7 +196,7 @@ class SQLQueryGenerator:
             raise AISQLGenerationError(
                 "No AI API key configured — cannot generate validation SQL.\n"
                 "  Set one of the following in .env:\n"
-                "    DIAL_API_KEY=...    (EPAM DIAL — access to GPT/Claude/Gemini)\n"
+                "    DIAL_API_KEY=...    (EPAM DIAL — access to GPT/Claude)\n"
                 "    CLAUDE_API_KEY=...  (Anthropic direct — no VPN needed)\n"
                 "  Or run: python validate_cli.py  →  choose [8] Configure API key"
             )

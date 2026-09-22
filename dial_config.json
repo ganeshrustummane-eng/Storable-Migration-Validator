@@ -87,15 +87,6 @@
       "vision": true,
       "maxInputTokens": 400000,
       "maxOutputTokens": 8096
-    },
-    {
-      "id": "gemini-2.0-flash",
-      "name": "Gemini 2.0 Flash",
-      "url": "https://ai-proxy.lab.epam.com/google/v1beta/models/gemini-2.0-flash:generateContent",
-      "toolCalling": true,
-      "vision": true,
-      "maxInputTokens": 2000000,
-      "maxOutputTokens": 9000
     }
   ]
 }

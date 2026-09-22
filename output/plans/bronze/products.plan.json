@@ -15,7 +15,7 @@
   "source_table": "mv_test_mssql.dbo.products",
   "target_table": "MV_TEST.PUBLIC.PRODUCTS",
   "status": "complete",
-  "generated_at": "2026-09-17T16:44:24.241269",
+  "generated_at": "2026-09-22T13:39:26.335602",
   "generated_by": "fuzzy",
   "model_used": "N/A",
   "ai_calls_made": 0,
