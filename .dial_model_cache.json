@@ -1,25 +1,25 @@
 {
-  "timestamp": 1789987084.2779438,
+  "timestamp": 1790142682.3732271,
   "api_key_prefix": "dial-eedlqdc",
   "results": {
-    "gpt-5": false,
-    "gpt-4o-2024-11-20": false,
-    "gpt-4o-mini": false,
     "gpt-4-turbo": false,
-    "gpt-4o": false,
-    "gpt-5.6-terra-2026-07-09": false,
-    "o3-mini": false,
-    "anthropic.claude-opus-4": false,
+    "gpt-5": false,
     "o3": false,
+    "o3-mini": false,
     "o4-mini": false,
+    "gpt-4o-mini": false,
+    "gpt-4o-2024-11-20": true,
+    "anthropic.claude-opus-4": false,
     "anthropic.claude-sonnet-4": false,
-    "anthropic.claude-sonnet-5": false,
+    "gpt-5.6-terra-2026-07-09": false,
     "anthropic.claude-haiku-4-5": false,
-    "mistral-large": false,
     "claude-3-5-sonnet": false,
-    "meta-llama-3-1-405b-instruct": false,
-    "meta-llama-3-70b-instruct": false,
     "claude-3-7-sonnet": false,
-    "mistral-large-2": false
+    "meta-llama-3-70b-instruct": false,
+    "meta-llama-3-1-405b-instruct": false,
+    "mistral-large": false,
+    "mistral-large-2": false,
+    "gpt-4o": true,
+    "anthropic.claude-sonnet-5": true
   }
 }

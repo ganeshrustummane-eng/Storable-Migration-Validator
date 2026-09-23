@@ -21,6 +21,7 @@ import difflib
 import os
 import re
 import sys
+import time
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="snowflake.connector")
 from pathlib import Path
@@ -59,7 +60,7 @@ from model_probe import get_working_models
 from learning.feedback import FeedbackRecorder, MismatchFeedback
 import mapping_store
 from generated_queries.ai_sql_generator import AISQLQueryGenerator, AISQLGenerationError
-from runner import list_configured_tables, run_validation
+from runner import list_configured_tables, run_validation, start_validation, collect_validation_result, terminate_validation
 import results_store
 
 sys.path.insert(0, str(_ROOT_DIR / "token_usage_analysis"))
@@ -3235,49 +3236,84 @@ with tab_execute:
             layer,
         )
 
-        if st.button("🚀 Run validation", type="primary", key="exec_run", disabled=not selected_tables):
-            # Inject mismatch_threshold_pct into data_validation YAMLs before running
-            if mismatch_threshold > 0:
-                import yaml as _yrun
-                # Build stem→path map from inventory directly (covers all layers + report)
-                _all_data_yamls = {r["stem"]: r["path"] for r in _inventory if r["vtype"] == "data_validation"}
-                for _tbl in picked_data_tables:
-                    _yp = _all_data_yamls.get(_tbl)
-                    if _yp.exists():
+        @st.fragment
+        def _run_validation_panel(selected_tables, do_count, do_data, _run_layer, environment,
+                                    mismatch_threshold, count_mismatch_threshold,
+                                    picked_data_tables, picked_count_tables, _inventory):
+            """Isolated as a fragment so the 1s poll loop below only re-runs this
+            panel, not the whole multi-thousand-line app.py script -- see
+            docs/decisions/0005-run-validation-slow-full-page-rerun-polling.md.
+            Without this, every poll tick re-executes every OTHER tab's setup
+            code too, turning an 11-second subprocess into a multi-minute wait.
+            """
+            _exec_proc_key = "exec_running_proc"
+            _exec_meta_key = "exec_running_meta"
+            result = None
+
+            if st.session_state.get(_exec_proc_key) is not None:
+                _proc = st.session_state[_exec_proc_key]
+                _meta = st.session_state[_exec_meta_key]
+                st.info(f"⏳ Running {_meta['layer']} validation against '{_meta['environment']}' — this executes real queries...")
+                if st.button("⏹ Stop validation", key="exec_stop", type="secondary"):
+                    terminate_validation(_proc)
+                    result = collect_validation_result(_proc, _meta["layer"], _meta["environment"], cancelled=True)
+                    st.session_state[_exec_proc_key] = None
+                    st.session_state[_exec_meta_key] = None
+                    st.warning("Validation stopped — the connector's `finally: conn.close()` still runs, so source/Snowflake "
+                               "connections are released, but tables that hadn't finished are not included below.")
+                elif _proc.poll() is None:
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    result = collect_validation_result(_proc, _meta["layer"], _meta["environment"])
+                    st.session_state[_exec_proc_key] = None
+                    st.session_state[_exec_meta_key] = None
+
+            elif st.button("🚀 Run validation", type="primary", key="exec_run", disabled=not selected_tables):
+                # Inject mismatch_threshold_pct into data_validation YAMLs before running
+                if mismatch_threshold > 0:
+                    import yaml as _yrun
+                    # Build stem→path map from inventory directly (covers all layers + report)
+                    _all_data_yamls = {r["stem"]: r["path"] for r in _inventory if r["vtype"] == "data_validation"}
+                    for _tbl in picked_data_tables:
+                        _yp = _all_data_yamls.get(_tbl)
+                        if _yp.exists():
+                            try:
+                                _ydoc = _yrun.safe_load(_yp.read_text(encoding="utf-8")) or {}
+                                for _tentry in (_ydoc.get("tables") or {}).values():
+                                    _dv = (_tentry.get("validations") or {}).get("data_validation")
+                                    if _dv:
+                                        _dv["mismatch_threshold_pct"] = mismatch_threshold
+                                _yp.write_text(_yrun.dump(_ydoc, default_flow_style=False, sort_keys=False, allow_unicode=True), encoding="utf-8")
+                            except Exception:
+                                pass
+
+                # Inject count_mismatch_threshold_pct into the layer's single count_validation
+                # YAML before running — count_validation has no tolerance by default (strict ==),
+                # so this is opt-in per run, same pattern as the data_validation threshold above.
+                if count_mismatch_threshold > 0 and picked_count_tables:
+                    import yaml as _yrun
+                    _cv_yaml = _PROJECT_DIR / "config" / layer / "count_validation" / f"{layer}.yaml"
+                    if _cv_yaml.exists():
                         try:
-                            _ydoc = _yrun.safe_load(_yp.read_text(encoding="utf-8")) or {}
-                            for _tentry in (_ydoc.get("tables") or {}).values():
-                                _dv = (_tentry.get("validations") or {}).get("data_validation")
-                                if _dv:
-                                    _dv["mismatch_threshold_pct"] = mismatch_threshold
-                            _yp.write_text(_yrun.dump(_ydoc, default_flow_style=False, sort_keys=False, allow_unicode=True), encoding="utf-8")
+                            _cvdoc = _yrun.safe_load(_cv_yaml.read_text(encoding="utf-8")) or {}
+                            for _tbl in picked_count_tables:
+                                _tentry = (_cvdoc.get("tables") or {}).get(_tbl)
+                                _cv = (_tentry.get("validations") or {}).get("count_validation") if _tentry else None
+                                if _cv:
+                                    _cv["count_mismatch_threshold_pct"] = count_mismatch_threshold
+                            _cv_yaml.write_text(_yrun.dump(_cvdoc, default_flow_style=False, sort_keys=False, allow_unicode=True), encoding="utf-8")
                         except Exception:
                             pass
 
-            # Inject count_mismatch_threshold_pct into the layer's single count_validation
-            # YAML before running — count_validation has no tolerance by default (strict ==),
-            # so this is opt-in per run, same pattern as the data_validation threshold above.
-            if count_mismatch_threshold > 0 and picked_count_tables:
-                import yaml as _yrun
-                _cv_yaml = _PROJECT_DIR / "config" / layer / "count_validation" / f"{layer}.yaml"
-                if _cv_yaml.exists():
-                    try:
-                        _cvdoc = _yrun.safe_load(_cv_yaml.read_text(encoding="utf-8")) or {}
-                        for _tbl in picked_count_tables:
-                            _tentry = (_cvdoc.get("tables") or {}).get(_tbl)
-                            _cv = (_tentry.get("validations") or {}).get("count_validation") if _tentry else None
-                            if _cv:
-                                _cv["count_mismatch_threshold_pct"] = count_mismatch_threshold
-                        _cv_yaml.write_text(_yrun.dump(_cvdoc, default_flow_style=False, sort_keys=False, allow_unicode=True), encoding="utf-8")
-                    except Exception:
-                        pass
-
-            with st.spinner(f"Running {_run_layer} validation against '{environment}' — this executes real queries..."):
                 try:
-                    result = run_validation(_run_layer, environment, selected_tables, do_count, do_data)
+                    _new_proc = start_validation(_run_layer, environment, selected_tables, do_count, do_data)
                 except Exception as exc:
                     st.error(f"Execution failed to start: {exc}")
-                    result = None
+                else:
+                    st.session_state[_exec_proc_key] = _new_proc
+                    st.session_state[_exec_meta_key] = {"layer": _run_layer, "environment": environment}
+                    st.rerun()
 
             if result:
                 if result["run_id"] and result["summaries"]:
@@ -3365,6 +3401,10 @@ with tab_execute:
                         st.code(result["stdout_tail"] or "(empty)")
                         if result["stderr_tail"]:
                             st.code(result["stderr_tail"])
+
+        _run_validation_panel(selected_tables, do_count, do_data, _run_layer, environment,
+                               mismatch_threshold, count_mismatch_threshold,
+                               picked_data_tables, picked_count_tables, _inventory)
 
 # =============================================================================
 # TAB: History & Trends — SQLite-backed validation history (results_store.py),

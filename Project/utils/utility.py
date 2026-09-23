@@ -4,6 +4,14 @@ import os
 import pandas as pd
 import logging
 import sys
+import threading
+
+# Guards the shared {validation_type}_summary.csv's check-exists-then-append
+# below -- table-level parallelism (main.py's ThreadPoolExecutor) means
+# multiple tables can call create_summary() for the same run_id/validation_type
+# concurrently; without this lock two threads racing the header check can both
+# write a header row, or interleave partial writes into the same file.
+_SUMMARY_WRITE_LOCK = threading.Lock()
 
 
 #Generating runids
@@ -169,10 +177,11 @@ def create_summary(run_at,run_id,validation_type,source_table_name,source_type,t
 
     summary_file = os.path.join(output_path,f"{validation_type}_summary.csv")
 
-    summary_df.to_csv(summary_file,
-        mode="a",
-        index=False,
-        header=not os.path.exists(summary_file))
+    with _SUMMARY_WRITE_LOCK:
+        summary_df.to_csv(summary_file,
+            mode="a",
+            index=False,
+            header=not os.path.exists(summary_file))
 
 def get_logger(name: str) -> logging.Logger:
     logger = logging.getLogger(name)

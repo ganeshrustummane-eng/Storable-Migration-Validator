@@ -9,6 +9,8 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
@@ -18,6 +20,24 @@ import results_store
 
 PROJECT_DIR = Path(__file__).parent
 _RUN_ID_RE = re.compile(r"Run ID:\s*(\S+)")
+
+
+@dataclass
+class RunningValidation:
+    """Handle for an in-flight `main.py` subprocess. stdout/stderr are
+    redirected to temp files rather than `subprocess.PIPE` -- see
+    docs/decisions/0004-run-validation-hang-subprocess-pipe-deadlock.md.
+    A pipe has a small OS buffer (~64KB on Windows); main.py logs at DEBUG
+    level (full SQL text per table) and can exceed that easily, so if nobody
+    drains the pipe until the process exits, the child blocks on write() and
+    never exits -- exactly the "stuck on Running... forever" hang. Files have
+    no such bounded buffer."""
+    proc: subprocess.Popen
+    stdout_path: Path
+    stderr_path: Path
+
+    def poll(self):
+        return self.proc.poll()
 
 
 def list_configured_tables(layer: str) -> dict:
@@ -49,22 +69,18 @@ def list_configured_tables(layer: str) -> dict:
     return {"count_validation": count_tables, "data_validation": data_tables}
 
 
-def run_validation(layer: str, environment: str, tables: list,
-                    count_validation: bool, data_validation: bool,
-                    timeout: int = 900) -> dict:
-    """Runs `python main.py --layer_type ... --tables ... --environment ...`
-    in Project/, then locates and loads the summary CSV(s) it produced.
+def start_validation(layer: str, environment: str, tables: list,
+                      count_validation: bool, data_validation: bool) -> RunningValidation:
+    """Launches `python main.py --layer_type ... --tables ... --environment ...`
+    in Project/ and returns immediately with a handle to the live process.
 
-    Returns:
-        {
-            "run_id": str | None,
-            "returncode": int,
-            "stdout_tail": str,
-            "summaries": {"count_validation": DataFrame, "data_validation": DataFrame},
-            "diff_files": [Path, ...],   # per-table full result CSVs (all rows), if any
-            "failed_files": [Path, ...], # per-table failed-rows-only CSVs, if any
-            "run_dir": Path | None,
-        }
+    stdout/stderr are redirected to temp files, NOT subprocess.PIPE -- see
+    RunningValidation's docstring for why a pipe here causes a permanent hang.
+
+    Callers that need to let a user cancel mid-run (webapp's Run Validation tab)
+    should poll `.poll()` and call `terminate_validation()` on the returned
+    handle, then pass it to `collect_validation_result`. Callers that just want
+    a blocking call (the scheduler) should use `run_validation` below.
     """
     if not tables:
         raise ValueError("At least one table (or 'all') is required.")
@@ -79,20 +95,55 @@ def run_validation(layer: str, environment: str, tables: list,
         "--data_validation", "yes" if data_validation else "no",
         "--environment", environment,
     ]
-    proc = subprocess.run(
-        args, cwd=str(PROJECT_DIR), capture_output=True, text=True, timeout=timeout,
-    )
+    stdout_fd, stdout_path = tempfile.mkstemp(prefix="validation_stdout_", suffix=".log")
+    stderr_fd, stderr_path = tempfile.mkstemp(prefix="validation_stderr_", suffix=".log")
+    with os.fdopen(stdout_fd, "w") as stdout_f, os.fdopen(stderr_fd, "w") as stderr_f:
+        proc = subprocess.Popen(
+            args, cwd=str(PROJECT_DIR), stdout=stdout_f, stderr=stderr_f, text=True,
+        )
+    return RunningValidation(proc=proc, stdout_path=Path(stdout_path), stderr_path=Path(stderr_path))
+
+
+def collect_validation_result(running: RunningValidation, layer: str, environment: str,
+                                cancelled: bool = False) -> dict:
+    """Waits for `running` (from `start_validation`) to finish and loads the
+    summary CSV(s) it produced.
+
+    Returns:
+        {
+            "run_id": str | None,
+            "returncode": int,
+            "stdout_tail": str,
+            "cancelled": bool,
+            "summaries": {"count_validation": DataFrame, "data_validation": DataFrame},
+            "diff_files": [Path, ...],   # per-table full result CSVs (all rows), if any
+            "failed_files": [Path, ...], # per-table failed-rows-only CSVs, if any
+            "run_dir": Path | None,
+        }
+    """
+    proc = running.proc
+    proc.wait()
+    try:
+        stdout = running.stdout_path.read_text(encoding="utf-8", errors="replace")
+        stderr = running.stderr_path.read_text(encoding="utf-8", errors="replace")
+    finally:
+        for p in (running.stdout_path, running.stderr_path):
+            try:
+                p.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     run_id = None
-    m = _RUN_ID_RE.search(proc.stdout)
+    m = _RUN_ID_RE.search(stdout)
     if m:
         run_id = m.group(1)
 
     result = {
         "run_id": run_id,
         "returncode": proc.returncode,
-        "stdout_tail": "\n".join(proc.stdout.splitlines()[-60:]),
-        "stderr_tail": "\n".join(proc.stderr.splitlines()[-60:]),
+        "stdout_tail": "\n".join(stdout.splitlines()[-60:]),
+        "stderr_tail": "\n".join(stderr.splitlines()[-60:]),
+        "cancelled": cancelled,
         "summaries": {},
         "diff_files": [],
         "failed_files": [],
@@ -114,7 +165,34 @@ def run_validation(layer: str, environment: str, tables: list,
     result["diff_files"] = sorted(Path(p) for p in glob.glob(str(run_dir / "**" / "*_result_*.csv"), recursive=True))
     result["failed_files"] = sorted(Path(p) for p in glob.glob(str(run_dir / "**" / "*_failed_*.csv"), recursive=True))
 
-    if result["summaries"]:
+    if result["summaries"] and not cancelled:
         results_store.record_run(run_id, layer, environment, proc.returncode, result["summaries"])
 
     return result
+
+
+def terminate_validation(running: RunningValidation, grace_seconds: float = 5.0) -> None:
+    """User-initiated stop: TERM first so main.py's connector `finally: conn.close()`
+    blocks get a chance to run and free the source/Snowflake connections cleanly,
+    then KILL if it hasn't exited within `grace_seconds`."""
+    proc = running.proc
+    proc.terminate()
+    try:
+        proc.wait(timeout=grace_seconds)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+
+
+def run_validation(layer: str, environment: str, tables: list,
+                    count_validation: bool, data_validation: bool,
+                    timeout: int = 900) -> dict:
+    """Blocking convenience wrapper over start_validation + collect_validation_result,
+    for callers with no user-facing cancel control (e.g. the scheduler)."""
+    running = start_validation(layer, environment, tables, count_validation, data_validation)
+    try:
+        running.proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        running.proc.kill()
+        running.proc.wait()
+        raise
+    return collect_validation_result(running, layer, environment)

@@ -4,11 +4,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+
+# Guards the shared validation_audit.jsonl append below -- table-level
+# parallelism (main.py's ThreadPoolExecutor) means multiple tables can append
+# to the same run's audit log concurrently; without this lock two threads'
+# writes can interleave mid-line and corrupt the JSONL file.
+_AUDIT_WRITE_LOCK = threading.Lock()
 
 
 def _as_float(value: Any, default: float = 0.0) -> float:
@@ -172,8 +179,9 @@ def validate_expected_grain(
 def append_validation_audit(path: Path, record: dict[str, Any]) -> None:
     """Append one JSON record. Audit failure must not hide validation result."""
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps({"recorded_at": datetime.now(timezone.utc).isoformat(), **record}, default=str) + "\n")
+        with _AUDIT_WRITE_LOCK:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps({"recorded_at": datetime.now(timezone.utc).isoformat(), **record}, default=str) + "\n")
     except OSError:
         pass

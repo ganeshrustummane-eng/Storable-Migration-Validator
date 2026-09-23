@@ -1,6 +1,8 @@
 import os
 import sys
+import threading
 import warnings
+from concurrent.futures import ThreadPoolExecutor, as_completed
 # Suppress snowflake-connector-python's pyarrow version warning — pyarrow 25 is
 # required by streamlit on Python 3.14 and cannot be downgraded.
 warnings.filterwarnings("ignore", category=UserWarning, module="snowflake.connector")
@@ -132,6 +134,17 @@ system_error = False
 processed_tables = set()  # every table_name that actually got a validation attempt
 _warned_stale_exclusions = set()  # (yamlfile, exclusions_file) pairs already warned about
 
+# Tables within one yamlfile/validation_dir are independent (own connections,
+# own output files) -- see docs/decisions/0002-table-level-thread-pool-parallelism.md.
+# Bounded so we don't open more concurrent source/Snowflake connections than
+# the DB side can take; override with VALIDATOR_MAX_TABLE_WORKERS if needed.
+MAX_TABLE_WORKERS = int(os.environ.get("VALIDATOR_MAX_TABLE_WORKERS", "4"))
+
+# Guards mutation of the module-level counters/sets below (failure_count,
+# system_error, processed_tables, _warned_stale_exclusions) now that multiple
+# tables can be validated concurrently on worker threads.
+_state_lock = threading.Lock()
+
 #Each validation is process in order
 for validation in validation_dirs:
     output_path = outputpaths[validation]
@@ -163,18 +176,28 @@ for validation in validation_dirs:
                 (table, config["tables"][table]) for table in tables if table in config["tables"]]
 
         if not tables_to_process:
-            logger.error(
-                "No tables to process for validation=%s from %s (requested tables=%s not found in this config)",
+            # Not a failure: a validation-type directory holds one config file per
+            # source system (postgres.yaml, mssql.yaml, ...) and a requested table
+            # only ever lives in one of them. The real "nobody validated this table
+            # at all" check is the processed_tables/missing_tables gate at the end
+            # of the run, which sees every file across every validation type.
+            logger.debug(
+                "No tables to process for validation=%s from %s (requested tables=%s not in this particular config file)",
                 validation, yamlfile, tables,
             )
-            failure_count += 1
-            system_error = True
             continue
 
         print("-"*100)
-        for table_name, table_config in tables_to_process:
-            processed_tables.add(table_name)
+
+        def _validate_table(table_name, table_config):
+            """One table's full validations dict, run on a worker thread — see
+            docs/decisions/0002-table-level-thread-pool-parallelism.md. Returns
+            (local_failure_count, local_system_error) instead of mutating the
+            module-level failure_count/system_error directly, since those aren't
+            safe to += from multiple threads without a lock."""
             logger.info("Processing table: %s", table_name)
+            local_failure_count = 0
+            local_system_error = False
             for validation_name, validation_config in table_config["validations"].items():
                 logger.debug("Validation configuration: %s", validation_name)
                 source = validation_config.get("source")
@@ -214,7 +237,11 @@ for validation in validation_dirs:
                     if source:
                         excl_file = os.path.join(os.path.dirname(BASE_DIR), "config", f"{source}_exclusions.yaml")
                         _excl_key = (yamlfile, excl_file)
-                        if (_excl_key not in _warned_stale_exclusions
+                        with _state_lock:
+                            _already_warned = _excl_key in _warned_stale_exclusions
+                            if not _already_warned:
+                                _warned_stale_exclusions.add(_excl_key)
+                        if (not _already_warned
                                 and os.path.exists(excl_file) and os.path.exists(yamlfile)
                                 and os.path.getmtime(excl_file) > os.path.getmtime(yamlfile)):
                             logger.warning(
@@ -222,7 +249,6 @@ for validation in validation_dirs:
                                 "to pick up the new exclusion rules (table=%s).",
                                 excl_file, yamlfile, table_name,
                             )
-                            _warned_stale_exclusions.add(_excl_key)
 
                     # Hybrid Tier-1/Tier-2 large-table path -- opt-in per table via a
                     # `validation_plan.execution_strategy: hybrid_v1` flag (a sibling of
@@ -431,8 +457,8 @@ for validation in validation_dirs:
                         logger.info("Match/Mismatch: Mismatch")
                         status = "FAIL"
                         logger.warning("Validation failed for table=%s validation=%s", table_name, validation_name)
-                        failure_count += 1
-                        logger.info("Current failure count: %s", failure_count)
+                        local_failure_count += 1
+                        logger.info("Local failure count for table=%s: %s", table_name, local_failure_count)
 
                     append_validation_audit(
                         Path(output_path) / "validation_audit.jsonl",
@@ -471,8 +497,8 @@ for validation in validation_dirs:
                         validation_name,
                         exc_info=True
                     )
-                    failure_count += 1
-                    system_error = True
+                    local_failure_count += 1
+                    local_system_error = True
                     _write_error_summary(table_name, validation_name, source_table_name, source,
                                          target_table_name, target, source_rows, target_rows,
                                          output_path, batch_start_time)
@@ -489,12 +515,31 @@ for validation in validation_dirs:
                         validation_name,
                         exc_info=True
                     )
-                    failure_count += 1
-                    system_error = True
+                    local_failure_count += 1
+                    local_system_error = True
                     _write_error_summary(table_name, validation_name, source_table_name, source,
                                          target_table_name, target, source_rows, target_rows,
                                          output_path, batch_start_time)
                     continue
+            return local_failure_count, local_system_error
+
+        with ThreadPoolExecutor(max_workers=MAX_TABLE_WORKERS) as _executor:
+            _futures = {}
+            for table_name, table_config in tables_to_process:
+                with _state_lock:
+                    processed_tables.add(table_name)
+                _futures[_executor.submit(_validate_table, table_name, table_config)] = table_name
+            for _future in as_completed(_futures):
+                _table_name = _futures[_future]
+                try:
+                    _lf, _lse = _future.result()
+                except Exception:
+                    logger.error("Unhandled exception validating table=%s", _table_name, exc_info=True)
+                    _lf, _lse = 1, True
+                with _state_lock:
+                    failure_count += _lf
+                    if _lse:
+                        system_error = True
 
 # Manifest/completeness check — nothing else verifies "every requested table
 # actually produced a result." A typo'd table name, a table missing from every
