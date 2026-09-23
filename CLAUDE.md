@@ -134,9 +134,14 @@ values and ignore the difference.
   `src/validation_pipeline.py`) — they're independent, real, intentional-for-now
   duplication, same treatment as the 5 exclusion YAMLs above. Don't consolidate
   without the user asking. See the `webapp-yaml-generation` skill.
-- **Agentic/chat layer**: `src/connector/` (renamed from `gemini_connector` —
-  Gemini is gone, EPAM DIAL/Claude only). JIRA integration, approval store,
-  audit log all live here and are real, in-use features.
+- **Connector layer**: `src/connector/` (renamed from `gemini_connector` —
+  Gemini is gone, EPAM DIAL/Claude only). The chatbot/chat-bubble agent was
+  removed (see below) along with its FastAPI API, approval store, audit log,
+  and authz layer (`agent.py`, `api.py`, `tools.py`, `approval_store.py`,
+  `audit.py`, `authz.py`, `auth.py`, `version_store.py`, `metrics.py`,
+  `a2a.py` — all deleted). Only `jira_client.py` remains: JIRA ticket
+  creation/status is still a real, in-use feature, called directly by
+  `webapp/app.py`, not through an agent.
 - **Removed/quarantined code**: `trash/` — things moved out of the active tree
   but not deleted, in case something's needed later. Check there before
   assuming something no longer exists.

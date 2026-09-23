@@ -120,13 +120,18 @@ and validates tables across any source → Snowflake pair.
 
 ## Persistence File Map
 
+> **Stale rows (2026-09-23):** the `tools.py`/`ApprovalStore`/`VersionStore`/
+> `MetricsTracker` readers/writers below were deleted with the chatbot/agent
+> layer ("removed chat bot" commit, 2026-09-22). `output/plans/*.plan.json`
+> is still written by `ValidationPipeline` and read by the webapp directly.
+
 | File | Format | Written by | Read by |
 |------|--------|-----------|---------|
-| `output/plans/<layer>/<table>.plan.json` | JSON (schema v1) | ValidationPipeline | tools.py, webapp |
-| `output/audit_log.jsonl` | Append-only JSONL | AuditLogger | audit tool, webapp |
-| `output/approval_store.jsonl` | Latest-line-per-ID JSONL | ApprovalStore | tools.py, webapp |
-| `output/entity_versions.json` | Flat JSON dict | VersionStore | tools.py |
-| `output/connector_metrics.jsonl` | JSONL | MetricsTracker | metrics tool, webapp |
+| `output/plans/<layer>/<table>.plan.json` | JSON (schema v1) | ValidationPipeline | webapp |
+| `output/audit_log.jsonl` | Append-only JSONL | *(removed — was AuditLogger)* | *(removed — was audit tool, webapp)* |
+| `output/approval_store.jsonl` | Latest-line-per-ID JSONL | *(removed — was ApprovalStore)* | *(removed — was tools.py, webapp)* |
+| `output/entity_versions.json` | Flat JSON dict | *(removed — was VersionStore)* | *(removed — was tools.py)* |
+| `output/connector_metrics.jsonl` | JSONL | *(removed — was MetricsTracker)* | *(removed — was metrics tool, webapp)* |
 | `Project/config/<layer>/count_validation/<layer>.yaml` | YAML | YAMLConfigWriter | batch runner |
 | `Project/config/<layer>/data_validation/<table>.yaml` | YAML | YAMLConfigWriter | batch runner |
 | `config/postgresql_exclusions.yaml` | YAML | CLI (cmd_add_exclusion) | ExclusionManager |

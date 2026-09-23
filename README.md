@@ -1,9 +1,8 @@
 # Migration Validator
 
-> AI-assisted database migration testing platform. Validates heterogeneous source migrations (PostgreSQL, MSSQL, and AWS Athena) into Snowflake with automated SQL generation, row-level comparison, human-governed approvals, and full audit trail.
+> AI-assisted database migration testing platform. Validates heterogeneous source migrations (PostgreSQL, MSSQL, AWS Athena, and AWS Redshift) into Snowflake with automated SQL generation, row-level comparison, and human-governed approvals.
 
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-green)](#)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.110%2B-009688)](#)
 [![Streamlit](https://img.shields.io/badge/UI-Streamlit-FF4B4B)](#)
 [![Status: Production](https://img.shields.io/badge/Status-Production-brightgreen)](#)
 
@@ -22,11 +21,10 @@
 9. [Rule Book](#9-rule-book)
 10. [Human Review & Approvals](#10-human-review--approvals)
 11. [Scheduled Runs & Notifications](#11-scheduled-runs--notifications)
-12. [Authentication & Security](#12-authentication--security)
-13. [Jira Integration](#13-jira-integration)
-14. [Environment Variables](#14-environment-variables)
-15. [Repository Structure](#15-repository-structure)
-16. [Documentation Index](#16-documentation-index)
+12. [Jira Integration](#12-jira-integration)
+13. [Environment Variables](#13-environment-variables)
+14. [Repository Structure](#14-repository-structure)
+15. [Documentation Index](#15-documentation-index)
 
 ---
 
@@ -59,12 +57,12 @@ Migration Validator automates the most labour-intensive parts of a database migr
               ┌────────────┴────────────┐
               ▼                         ▼
 ┌─────────────────────┐    ┌────────────────────────────┐
-│  VALIDATION ENGINE  │    │   GEMINI CONNECTOR         │
-│  Project/main.py    │    │   src/gemini_connector/    │
-│                     │    │   FastAPI  :8001           │
-│  get_database()     │    │   24 tools · RBAC · Audit  │
-│  canonicalize_frames│    └────────────────────────────┘
-│  row-level compare  │
+│  VALIDATION ENGINE  │    │   JIRA CLIENT               │
+│  Project/main.py    │    │   src/connector/            │
+│                     │    │   jira_client.py            │
+│  get_database()     │    │   (called directly from     │
+│  canonicalize_frames│    │    webapp/app.py)           │
+│  row-level compare  │    └────────────────────────────┘
 │  mismatch threshold │
 │  notify_failure()   │
 └──────┬──────────────┘
@@ -86,9 +84,8 @@ PostgreSQL / MSSQL / Athena         Snowflake
 | AWS Athena | Source | S3 staging dir required |
 | AWS Redshift | Source | Speaks Postgres wire protocol (psycopg2), default port 5439 |
 | Snowflake | Target | Bronze / Silver / Gold / Reporting layers |
-| Google Gemini / Vertex AI | AI backend | SQL generation, column mapping |
-| EPAM DIAL | AI proxy | GPT-4o, Claude, Gemini, Llama |
-| Anthropic Claude | AI backend | Direct fallback |
+| EPAM DIAL | AI proxy | GPT-4o, Claude, Gemini, Llama — used because a direct Claude key isn't issued yet |
+| Anthropic Claude | AI backend | `CLAUDE_API_KEY` — becomes primary automatically once set |
 
 ---
 
@@ -100,13 +97,10 @@ pip install -r requirements.txt
 
 # 2. Configure credentials
 cp .env.example .env
-# Fill in SRC_1_*, SNOWFLAKE_*, GEMINI_API_KEY or DIAL_API_KEY
+# Fill in SRC_1_*, SNOWFLAKE_*, DIAL_API_KEY (or CLAUDE_API_KEY)
 
 # 3. Start the web UI
 streamlit run webapp/app.py
-
-# 4. (Optional) Start the Gemini connector API
-python start_connector.py
 ```
 
 Open `http://localhost:8501` in your browser.
@@ -317,27 +311,7 @@ SMTP_PASSWORD=...
 
 ---
 
-## 12. Authentication & Security
-
-The Gemini Connector API (`start_connector.py`) enforces:
-
-| Mode | Set via | Use case |
-|---|---|---|
-| `static` | `CONNECTOR_API_TOKEN` | CI/CD, internal tooling |
-| `jwt` | HS256 JWT with configurable issuer | Enterprise SSO |
-| `dev` | `AUTH_MODE=dev` | Local development |
-
-RBAC roles: `VIEWER`, `REVIEWER`, `RULE_ADMIN`, `VALIDATION_OPERATOR`, `ADMIN`.
-
-Security guarantees:
-- Credentials never sent to AI — stay server-side
-- AI self-approval blocked (`gemini_ai` / `ai` actor strings rejected)
-- Append-only audit log — no secrets logged
-- Optimistic concurrency control — HTTP 409 on version conflict
-
----
-
-## 13. Jira Integration
+## 12. Jira Integration
 
 Set in `.env`:
 
@@ -356,16 +330,15 @@ The **My Jira Tickets** tab:
 
 ---
 
-## 14. Environment Variables
+## 13. Environment Variables
 
 See `.env.example` for the full list. Key variables:
 
 ```bash
 # AI backend (choose one)
-GEMINI_API_KEY=                    # Gemini Developer API
-GEMINI_MODEL=gemini-2.5-flash
-DIAL_API_KEY=                      # EPAM DIAL proxy
+DIAL_API_KEY=                      # EPAM DIAL proxy (default today)
 DIAL_API_BASE=
+CLAUDE_API_KEY=                    # becomes primary automatically once set
 
 # Source connections (repeat for SRC_2, SRC_3, SRC_4, ...)
 SRC_1_TYPE=postgresql              # postgresql | mssql | athena | redshift
@@ -400,12 +373,11 @@ JIRA_PROJECT_KEY=MIG
 
 ---
 
-## 15. Repository Structure
+## 14. Repository Structure
 
 ```
 Migration-validator/
 ├── webapp/app.py                   # Streamlit web UI (11 tabs + sidebar controls)
-├── start_connector.py              # Gemini connector FastAPI server
 ├── requirements.txt
 ├── .env.example
 │
@@ -432,14 +404,8 @@ Migration-validator/
 │   ├── generated_queries/
 │   │   ├── ai_sql_generator.py     # AI SQL generation (dialect-aware)
 │   │   └── yaml_config_writer.py   # YAML config file writer
-│   ├── gemini_connector/
-│   │   ├── api.py                  # FastAPI app
-│   │   ├── tools.py                # 24 tool implementations
-│   │   ├── gemini_agent.py         # GeminiAgent + tool declarations
-│   │   ├── jira_client.py          # Jira REST API client
-│   │   ├── auth.py                 # JWT / static / dev auth
-│   │   ├── approval_store.py       # Mapping approval persistence
-│   │   └── audit.py                # Append-only audit logger
+│   ├── connector/
+│   │   └── jira_client.py          # Jira REST API client (called directly from webapp/app.py)
 │   └── matching/                   # Fuzzy + exact column matching
 │
 ├── config/
@@ -457,20 +423,15 @@ Migration-validator/
 
 ---
 
-## 16. Documentation Index
+## 15. Documentation Index
 
 | Topic | Document |
 |---|---|
-| System architecture | `docs/architecture/system-architecture.md` |
-| Gemini connector integration | `docs/architecture/gemini-integration.md` |
-| Security & auth | `docs/architecture/security-architecture.md` |
-| All 24 connector tools | `docs/api/connector-tools.md` |
-| RBAC roles & permissions | `docs/api/authorization.md` |
+| System architecture | `docs/architecture/system-architecture.md` *(mostly historical — see stale-content notice at top of file)* |
+| Data flow | `docs/architecture/data-flow.md` |
 | Rule Book | `docs/rules/rule-book.md` |
-| Approval workflow | `docs/human-in-the-loop/review-workflow.md` |
-| Audit trail format | `docs/human-in-the-loop/audit-trail.md` |
 | Validation strategies | `docs/validation/validation-strategies.md` |
 | Supported databases | `docs/validation/supported-databases.md` |
 | Local setup | `docs/deployment/local-setup.md` |
 | All environment variables | `docs/deployment/environment.md` |
-| GCP Cloud Run deployment | `docs/deployment/gcp-deployment.md` |
+| Jira integration | `docs/deployment/jira-integration.md` |

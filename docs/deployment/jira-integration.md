@@ -59,6 +59,16 @@ This will:
 
 ---
 
+> **Stale content notice (2026-09-23):** everything from here through
+> "Metrics & Reporting" describes JIRA tickets created automatically via a
+> Gemini/agent tool (`reject_mapping()`, `create_jira_ticket()`,
+> `get_business_metrics()`) — that agent layer was removed ("removed chat
+> bot" commit, 2026-09-22). Today, ticket creation is a direct button click
+> in the Streamlit UI (`webapp/app.py` calls `connector.jira_client.create_ticket()`
+> directly), not natural-language-triggered, and there's no metrics tool.
+> Kept for historical reference only — see "Example: Complete Workflow"
+> below for the current flow.
+
 ## 🎯 Use Cases
 
 ### 1. Rejected Mapping Creates Ticket
@@ -253,7 +263,7 @@ Your JIRA user needs:
 - ✅ API tokens stored in `.env` (git-ignored)
 - ✅ Never logged or exposed via API
 - ✅ Transmitted over HTTPS only
-- ❌ Never stored in approval_store or audit_log
+- ❌ Never logged in plaintext anywhere
 
 ---
 
@@ -296,11 +306,11 @@ ORDER BY priority DESC, created DESC
 
 ```bash
 # Test 1: Verify configuration
-python -c "from src.gemini_connector.jira_client import is_configured; print(f'JIRA configured: {is_configured()}')"
+python -c "from src.connector.jira_client import is_configured; print(f'JIRA configured: {is_configured()}')"
 
 # Test 2: Create test ticket
 python -c "
-from src.gemini_connector.jira_client import create_ticket
+from src.connector.jira_client import create_ticket
 result = create_ticket(
     'Test Ticket - Migration Validator',
     'This is a test ticket created by the migration validator.',
@@ -324,18 +334,14 @@ To disable automatic ticket creation:
 3. **Set `JIRA_INTEGRATION_ENABLED=false`**
 
 When disabled:
-- No tickets are created automatically
-- `create_jira_ticket()` tool returns an informational message
+- The "Create JIRA ticket" buttons in the UI show an informational message instead
 - All other functionality works normally
 
 ---
 
 ## 📚 Related Documentation
 
-- [Review Workflow](../human-in-the-loop/review-workflow.md)
-- [Audit Trail](../human-in-the-loop/audit-trail.md)
 - [Environment Variables](environment.md)
-- [Security Architecture](../architecture/security-architecture.md)
 
 ---
 
@@ -406,21 +412,17 @@ JIRA_API_TOKEN=abc123...
 JIRA_PROJECT_KEY=MIG
 EOF
 
-# 2. Start connector
-python start_connector.py
+# 2. Start the web UI
+streamlit run webapp/app.py
 
-# 3. In Gemini chat:
-User: "Run validation for orders table"
-→ Validation runs
+# 3. In the "Run Validation" tab:
+→ Run validation for the orders table
 → Detects 50 missing rows
-→ Auto-creates MIG-456
-→ Returns: "Validation failed. Created JIRA ticket MIG-456 for tracking."
+→ Click "Create JIRA ticket" for the failure → creates MIG-456
 
 # 4. Team resolves issue
 → Data engineer investigates via JIRA
 → Fixes source query
-→ Updates JIRA ticket
-→ Re-runs validation
-→ Validation passes
-→ System comments on JIRA ticket: "✅ Validation now passing"
+→ Re-runs validation from the "My Jira Tickets" tab
+→ Validation passes → attach the passing result as a comment on MIG-456
 ```

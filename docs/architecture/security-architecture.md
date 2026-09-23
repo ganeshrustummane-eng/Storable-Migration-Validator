@@ -1,5 +1,11 @@
 # Security Architecture
 
+> **Stale content notice (2026-09-23):** this document describes the security
+> model of the removed chatbot/agent API (auth, authz, version store, audit
+> trail — `src/connector/auth.py`, `authz.py`, `version_store.py`, `audit.py`,
+> all deleted in the "removed chat bot" commit, 2026-09-22). None of this is
+> live code today. Kept for historical reference only.
+
 ## Overview
 
 Migration Validator implements a layered security model: authentication at the API boundary, role-based authorization per operation, optimistic concurrency control for write conflicts, and an append-only audit trail for compliance.

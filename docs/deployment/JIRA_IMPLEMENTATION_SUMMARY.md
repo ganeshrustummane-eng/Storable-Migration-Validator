@@ -1,5 +1,14 @@
 # JIRA Integration - Complete Implementation Summary
 
+> **Stale content notice (2026-09-23):** this document describes the JIRA
+> integration as it existed alongside the chatbot/agent layer, which was
+> removed (`git log` commit "removed chat bot", 2026-09-22). References to
+> `src/gemini_connector/tools.py`, the Gemini agent, and agent-invoked tools
+> below no longer exist. Only the JIRA client (`src/connector/jira_client.py`)
+> is still live, called directly from `webapp/app.py`. Kept for historical
+> reference only — see `docs/deployment/jira-integration.md` for the current
+> integration.
+
 ## 📋 What Was Implemented
 
 ### 1. **Core JIRA Client** (`src/gemini_connector/jira_client.py`)

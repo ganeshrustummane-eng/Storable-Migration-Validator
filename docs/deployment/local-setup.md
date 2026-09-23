@@ -33,17 +33,11 @@ cp .env.example .env
 
 Edit `.env` with your values. See [`docs/deployment/environment.md`](environment.md) for all variables.
 
-**Minimum required for Gemini connector demo:**
+**Minimum required to run validation:**
 
 ```bash
-# --- Gemini ---
-GOOGLE_API_KEY=your-gemini-api-key
-GEMINI_MODEL=gemini-default-model
-
-# --- Connector authentication ---
-AUTH_MODE=static
-CONNECTOR_API_TOKEN=your-connector-token
-CONNECTOR_ROLES=ADMIN
+# --- AI mapping (EPAM DIAL, or CLAUDE_API_KEY once issued) ---
+DIAL_API_KEY=your-dial-api-key
 
 # --- Source: PostgreSQL ---
 SRC_1_DB_TYPE=postgresql
@@ -79,33 +73,7 @@ SNOWFLAKE:
 
 ---
 
-## Step 4: Start the Connector Server
-
-```bash
-python start_connector.py
-```
-
-Expected output:
-```
-Migration Validator Connector
-================================
-  URL:    http://0.0.0.0:8001
-  Docs:   http://localhost:8001/docs
-  Health: http://localhost:8001/health
-  Tools:  http://localhost:8001/tools
-  Auth:   static mode
-================================
-```
-
-Verify:
-```bash
-curl http://localhost:8001/health
-# → {"status": "ok", "tool_count": 24, "auth_mode": "static"}
-```
-
----
-
-## Step 5: Start the Web UI (Optional)
+## Step 4: Start the Web UI
 
 ```bash
 streamlit run webapp/app.py
@@ -115,7 +83,7 @@ Opens at `http://localhost:8501`
 
 ---
 
-## Step 6: Run the CLI (Optional)
+## Step 5: Run the CLI (Optional)
 
 ```bash
 python -m src.validate_cli --help
@@ -134,7 +102,7 @@ python -m src.validate_cli add-rule
 
 ---
 
-## Step 7: Run Available Checks
+## Step 6: Run Available Checks
 
 ```bash
 python -m py_compile webapp/app.py
@@ -171,6 +139,4 @@ ACCEPT_EULA=Y apt-get install -y msodbcsql18
 |-------|-------|-----|
 | `ModuleNotFoundError: pyodbc` | ODBC driver not installed | Install MSSQL ODBC driver 17/18 |
 | `SnowflakeLoginError` | Wrong account/credentials | Verify SNOWFLAKE_ACCOUNT includes `.snowflakecomputing.com` |
-| `AuthenticationError: MISSING_TOKEN` | No bearer token in request | Add `Authorization: Bearer <CONNECTOR_API_TOKEN>` header |
-| `PORT 8001 already in use` | Another process on port | `python start_connector.py --port 8002` |
-| Gemini offline mode | No GOOGLE_API_KEY | Set `GOOGLE_API_KEY` in `.env` for full functionality |
+| AI mapping calls failing | No `DIAL_API_KEY` (or `CLAUDE_API_KEY`) | Set one in `.env` |

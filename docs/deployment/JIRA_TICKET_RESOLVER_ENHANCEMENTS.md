@@ -1,5 +1,13 @@
 # Jira Ticket Resolver — Enhancements (My Jira Tickets tab)
 
+> **Stale content notice (2026-09-23):** the "Suggest a fix" feature
+> described below depended on `src/connector/agent.py`'s `create_agent()`/
+> `agent.chat()`, which was deleted in the "removed chat bot" commit
+> (2026-09-22) along with the rest of the chatbot layer. `webapp/app.py` no
+> longer has this button. Kept for historical reference only — the ticket
+> list/detail view itself (not the "Suggest a fix" button) may still be
+> live; verify against current `webapp/app.py` before relying on this doc.
+
 Date: 2026-09-18
 Author: Ganesh Rustum Mane
 Scope: `webapp/app.py` — "🎫 My Jira Tickets" tab only. No other files touched.

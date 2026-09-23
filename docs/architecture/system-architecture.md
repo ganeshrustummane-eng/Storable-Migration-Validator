@@ -1,5 +1,13 @@
 # System Architecture
 
+> **Stale content notice (2026-09-23):** the three-tier architecture below
+> (Gemini AI layer, FastAPI connector layer with auth/authz/tools/api) was
+> removed wholesale in the "removed chat bot" commit (2026-09-22). Today
+> `src/connector/` contains only `jira_client.py`, called directly by
+> `webapp/app.py` — there is no agent, no FastAPI server, no auth/authz
+> layer. Only the validation-engine tier (Python core) below is still
+> current. Kept for historical reference only.
+
 ## Overview
 
 Migration Validator is a three-tier system: a conversational AI layer (Gemini), a governed connector layer (FastAPI), and a deterministic validation engine (Python core).
