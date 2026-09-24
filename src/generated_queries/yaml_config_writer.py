@@ -205,6 +205,7 @@ class YAMLConfigWriter:
                 "validations": [v.to_dict() for v in plan.validations],
                 "requires_review": plan.requires_review,
                 "review_reasons": plan.review_reasons,
+                "execution_strategy": plan.execution_strategy,
             } if plan is not None else None,
             transformation_source_yaml=_prep(query_set.transformation_source),
             transformation_target_yaml=_prep(query_set.transformation_target),

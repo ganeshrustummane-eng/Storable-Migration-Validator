@@ -109,11 +109,23 @@ class DataValidationBlock(_QueryBlock):
     targetcolumn: Optional[str] = None
 
 
+class ValidationPlanBlock(BaseModel):
+    """The ``validation_plan`` sibling block — plan metadata, not a validation
+    itself (see should_dispatch_hybrid() in Project/utils/utility.py). Only
+    ``execution_strategy`` is typed here; row_hash/relationships/etc. are
+    passed through untouched via extra="allow"."""
+
+    model_config = ConfigDict(extra="allow")
+
+    execution_strategy: Literal["standard", "hybrid_v1"] = "standard"
+
+
 class TableValidations(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     count_validation: Optional[CountValidationBlock] = None
     data_validation: Optional[DataValidationBlock] = None
+    validation_plan: Optional[ValidationPlanBlock] = None
 
 
 class TableEntry(BaseModel):

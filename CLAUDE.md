@@ -4,6 +4,21 @@ Read this before working anywhere in the repo. It's the one place that describes
 the real business problem, the real architecture, and the data-quality bar this
 tool has to hit — so agents and skills don't each re-derive (or contradict) it.
 
+## Decision log
+
+Non-obvious architectural/design decisions and their rationale are tracked as
+numbered ADRs in `docs/decisions/` (e.g. `0007-false-positive-failure-multi-source-config-directory.md`),
+using `docs/decisions/TEMPLATE.md`. Check there before assuming "why is it
+built this way" is undocumented, and add a new ADR there — not just a code
+comment — when making a decision worth tracing later.
+
+## Repo-wide scan/grep exclusions
+
+`graphify-out/` , `trash/` and `.codemie/` are generated/tool-scratch trees, not source —
+exclude them from full-repo greps and scans (they're large and irrelevant to
+migration logic, and matches from them are noise). Neither is currently in
+`.gitignore`; don't assume gitignore alone keeps them out of a scan.
+
 ## The problem
 
 Storable is migrating data from several operational systems into Snowflake.

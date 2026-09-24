@@ -351,6 +351,15 @@ class CanonicalValidationPlan:
     requires_review: bool = False
     review_reasons: List[str] = field(default_factory=list)
 
+    # ── Execution strategy ─────────────────────────────────────────────────
+    # "standard" (default) uses Project/main.py's oracle fetch+compare path.
+    # "hybrid_v1" opts this table into Project/tiered_runner.py's Tier-1/
+    # Tier-2 large-table path -- only takes effect if PlanValidator's
+    # eligibility checks pass (single-column PK, row_hash configured) and the
+    # generated row_hash_validation block has real (non-placeholder) queries;
+    # see should_dispatch_hybrid() in Project/utils/utility.py.
+    execution_strategy: str = "standard"
+
     # ── Generation metadata ────────────────────────────────────────────────
     ai_calls_made:   int = 0
     model_used:      str = "N/A"
@@ -484,6 +493,7 @@ class CanonicalValidationPlan:
             "validations": [v.to_dict() for v in self.validations],
             "requires_review": self.requires_review,
             "review_reasons": list(self.review_reasons),
+            "execution_strategy": self.execution_strategy,
             "primary_keys": {
                 "source": self.source_primary_keys,
                 "target": self.target_primary_keys,
@@ -542,6 +552,7 @@ class CanonicalValidationPlan:
             validations=[ValidationSpec.from_dict(v) for v in d.get("validations", [])],
             requires_review=bool(d.get("requires_review", False)),
             review_reasons=list(d.get("review_reasons", [])),
+            execution_strategy=d.get("execution_strategy", "standard"),
             source_primary_keys=list(pks.get("source", [])),
             target_primary_keys=list(pks.get("target", [])),
             pk_mismatch=bool(pks.get("mismatch", False)),
@@ -580,6 +591,7 @@ class CanonicalValidationPlan:
             f"AI calls made     : {self.ai_calls_made}",
             f"Model used        : {self.model_used}",
             f"Status            : {self.status.upper()}",
+            f"Execution strategy: {self.execution_strategy}",
         ]
         if excl["excluded"]:
             lines.append(f"EXCLUDED ({excl['excluded_count']}) — not validated:")

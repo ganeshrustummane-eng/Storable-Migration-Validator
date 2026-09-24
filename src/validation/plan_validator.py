@@ -250,6 +250,30 @@ class PlanValidator:
             if len(plan.row_hash.columns) != len(set(plan.row_hash.columns)):
                 issues.append("Row hash columns must be unique and ordered")
 
+        # ── 11. execution_strategy / hybrid_v1 eligibility ──────────────────
+        # Catches at generation time what Project/tiered_runner.py would
+        # otherwise only discover at runtime (composite PK -> NotImplementedError,
+        # missing row_hash -> should_dispatch_hybrid() silently staying on the
+        # standard path). See docs/decisions/0010-hybrid-v1-tiered-runner-audit-no-front-door.md.
+        if plan.execution_strategy not in {"standard", "hybrid_v1"}:
+            issues.append(
+                f"Unsupported execution_strategy '{plan.execution_strategy}' — "
+                "expected 'standard' or 'hybrid_v1'"
+            )
+        elif plan.execution_strategy == "hybrid_v1":
+            if len(plan.source_primary_keys) > 1 or len(plan.target_primary_keys) > 1:
+                issues.append(
+                    "execution_strategy=hybrid_v1 does not support composite PKs yet "
+                    f"(source_primary_keys={plan.source_primary_keys}, "
+                    f"target_primary_keys={plan.target_primary_keys}) — use 'standard' "
+                    "for this table"
+                )
+            if not plan.row_hash:
+                issues.append(
+                    "execution_strategy=hybrid_v1 requires a row_hash spec (plan.row_hash) "
+                    "to drive Tier 1 — set one or use 'standard'"
+                )
+
         for transformation in plan.transformations:
             if not transformation.name.strip():
                 issues.append("Transformation check requires name")
