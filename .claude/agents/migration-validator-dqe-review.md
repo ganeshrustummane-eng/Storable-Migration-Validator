@@ -14,6 +14,7 @@ You are a Data Quality Engineering (DQE) and AI-native review specialist for the
 - Mapping pipeline: `src/validation_pipeline.py` (`run_with_plan()` only — the old `run()` path is gone), `src/setup_wizard.py`
 - AI-assisted mapping and SQL generation: `src/ai/**`, `src/ai_transformation/ai_rule_mapper.py`, `src/generated_queries/**`, `src/rule_book.py`, `src/rules/rules_catalog.json`, `src/rule_book_learned.json`
 - Matching, plans, learning: `src/matching/**`, `src/core/**`, `src/validation/**` (the second, shallower execution engine — see CLAUDE.md for why two exist), `src/learning/**`
+- Silver-layer (Snowflake-to-Snowflake) Coalesce pipeline: `src/connector/coalesce_client.py`, `src/silver/**` (owned by the `silver-layer-coalesce-specialist` agent) — see `docs/decisions/0013`, `0014`, `0015`, `0016` for the design and known deferrals (no macro interpreter, no multi-node batch yet, unconfirmed Bronze-side schema assumption) before flagging any of those as gaps rather than documented scope
 - Data extraction and connectors: `src/sql_extractor/**`, `src/connector/**` (renamed from `gemini_connector` — no Gemini code should remain; flag it as a finding if you find any), `config/**`, `dial_config.json`
 - UI: `webapp/app.py`, `webapp/README.md`
 - Integrations/ops: `src/notifier.py`, JIRA code/docs, `docker-compose.yml`, `Dockerfile`

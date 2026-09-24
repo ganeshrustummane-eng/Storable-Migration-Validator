@@ -1,0 +1,39 @@
+version: '1.0'
+last_updated: '2026-09-24'
+description: 'Column exclusions for Silver validation (Snowflake Bronze -> Snowflake
+  Silver via Coalesce). Every entry in this file applies to BOTH the Bronze and
+  Silver sides, since both live in Snowflake for this validation path.
+
+  '
+global_exclusions:
+  description: Columns excluded from ALL Silver validation tables, source and target
+  columns:
+  - column_name: _FIVETRAN_DELETED
+    reason: Fivetran soft-delete flag - internal metadata
+    applies_to:
+    - source
+    - target
+  - column_name: _FIVETRAN_SYNCED
+    reason: Fivetran sync timestamp - internal metadata
+    applies_to:
+    - target
+  - column_name: _FIVETRAN_ID
+    reason: Fivetran internal row identifier
+    applies_to:
+    - target
+  - column_name: _FIVETRAN_INDEX
+    reason: Fivetran array index for nested structures
+    applies_to:
+    - target
+pattern_exclusions:
+  description: Exclude columns matching these regex patterns (case-insensitive)
+  patterns:
+  - pattern: ^_FIVETRAN_.*
+    reason: Fivetran internal metadata columns
+    applies_to:
+    - source
+    - target
+settings:
+  log_exclusions: true
+  log_level: INFO
+user_global_exclusions: []

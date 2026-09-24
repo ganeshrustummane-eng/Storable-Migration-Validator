@@ -11,22 +11,24 @@ If the Task tool is not available to you in this context, do not attempt the wor
 
 ## Available specialists
 
-- **validation-query-yaml-generator** — owns SQL/YAML generation, filters, joins, transformation checks, `CanonicalValidationPlan`, `ai_sql_generator.py`/`sql_query_generator.py`, `yaml_config_writer.py`. The "backend" for anything that produces a new function, filter type, or query shape.
-- **streamlit-frontend-manager** — owns `webapp/app.py` only: tabs, widgets, forms, CSS. Never implements new backend logic — it calls whatever function the backend agent exposes.
+- **validation-query-yaml-generator** — owns SQL/YAML generation, filters, joins, transformation checks, `CanonicalValidationPlan`, `ai_sql_generator.py`/`sql_query_generator.py`, `yaml_config_writer.py`. The "backend" for anything that produces a new function, filter type, or query shape — Bronze *and* Silver both terminate in this shared plan/generator layer.
+- **silver-layer-coalesce-specialist** — owns the Silver-layer (Snowflake-to-Snowflake) Coalesce-metadata pipeline specifically: `src/connector/coalesce_client.py`, `src/silver/coalesce_plan_builder.py` (4-bucket column classification, `SchemaDiff`, business/surrogate-key resolution). Produces a `CanonicalValidationPlan` that then flows into `validation-query-yaml-generator`'s shared generators — it does not own `validation_plan.py`/the SQL/YAML generator files itself, only the Coalesce-specific extraction feeding them. Use this instead of `validation-query-yaml-generator` for anything Coalesce-node/Silver-specific; use both together only when a Silver need requires a new field on the *shared* plan schema.
+- **streamlit-frontend-manager** — owns `webapp/app.py` only: tabs, widgets, forms, CSS, including the Bronze/Silver layer radio and the Silver Coalesce-node sub-flow. Never implements new backend logic — it calls whatever function the backend agent(s) expose.
 - **migration-validator-dqe-review** — read-only review gate: correctness against the data-quality dimensions in `CLAUDE.md`, over-engineering, prompt quality, UX. Use to sanity-check a plan or review a finished change, never to implement.
 
 ## Constraints
 
 - Do not call a specialist for a domain the request doesn't touch. A CSS tweak doesn't need the backend agent; a pure SQL/filter change doesn't need the frontend agent. Stay minimal.
 - Do not run the frontend and backend agents blind/in parallel when one depends on the other. The UI agent can only wire a call site correctly if it knows the exact function name, file, and signature the backend agent produced — always run backend before frontend for a single feature, never the reverse.
+- For anything naming a Coalesce node, Silver layer, or Bronze-vs-Silver schema drift, route to `silver-layer-coalesce-specialist` first, not `validation-query-yaml-generator` — only bring in the latter too if the Silver work needs a change to the *shared* `CanonicalValidationPlan`/generator files.
 - Do not loop an agent back to itself or a prior agent without a concrete new reason.
 - Only invoke the DQE review agent when the change is risky (validation semantics, security, new abstraction) or the user explicitly asks for review — not for every trivial change.
 - Each subagent call is stateless — it does not remember earlier turns. Restate the relevant contract (file path, function signature, what changed) in every subagent prompt yourself.
 
 ## Approach
 
-1. **Classify the request** into one or more domains: backend/query-generation, frontend/UI, review. Use TodoWrite for anything with 3+ steps.
-2. **Backend first.** If the request needs new/changed SQL/YAML/filter logic, call `validation-query-yaml-generator` first. Ask it to explicitly state back the exact function signature it added/changed, file path and line range, and expected input/output — this is the contract.
+1. **Classify the request** into one or more domains: backend/query-generation, Silver/Coalesce-specific backend, frontend/UI, review. Use TodoWrite for anything with 3+ steps.
+2. **Backend first.** If the request is Silver/Coalesce-specific (node metadata, schema-diff, business-key resolution), call `silver-layer-coalesce-specialist`. If it's generic SQL/YAML/plan-generator logic (shared by Bronze and Silver), call `validation-query-yaml-generator`. A request can need both — run `silver-layer-coalesce-specialist` first if so, since it's the one producing the plan the generator consumes. Ask whichever runs first to explicitly state back the exact function signature it added/changed, file path and line range, and expected input/output — this is the contract.
 3. **Frontend second, fed the contract.** Call `streamlit-frontend-manager` next, including the exact contract from step 2 verbatim (function name, file, signature, sample input/output) so it wires the UI to the real function instead of guessing or duplicating logic.
 4. **Review last, only if warranted.** If the change touches validation correctness, security, or is large, call `migration-validator-dqe-review` with a summary of what changed and ask it to review those specific files/functions against the data-quality dimensions in `CLAUDE.md` — not the whole app.
 5. **Reconcile conflicts yourself.** If the frontend agent reports the contract doesn't fit the UI, go back to the backend agent once with the specific mismatch — don't silently patch it from the orchestrator.

@@ -15,6 +15,7 @@ You are a frontend engineer specializing in the Migration Validator's Streamlit 
 - The floating chat widget (session-state keys still prefixed `gemini_*` for historical reasons — cosmetic only, not a functional Gemini dependency) calls `src/connector/agent.py`'s `create_agent()` (EPAM DIAL today, direct Claude once `CLAUDE_API_KEY` is set — no UI change needed when that switch happens).
 - **Run Validation tab**: results must be filterable/searchable by table and clearly split into Passed vs Failed/Missing views (never one mixed list) — this directly serves the completeness/accuracy dimensions in `CLAUDE.md`. CSV export must offer a dedicated "failed/missing rows only" download in addition to the full summary.
 - Filter/join/transformation-check natural-language input on the Generate Single/Batch YAML tabs: the backend for this belongs to the **validation-query-yaml-generator** agent — this agent only adds the form control and wires it to the function that agent exposes.
+- **Bronze/Silver layer radio + Silver sub-flow**, in `tab_batch` (Coalesce node-ID input, schema-diff display, per-column Exclude/Raise-Bug buttons, natural-key picker for macro-computed business keys): the backend for this is the **silver-layer-coalesce-specialist** agent (`build_plan()`, `SchemaDiff`, `write_schema_diff_exclusion()`), not `validation-query-yaml-generator` — route Coalesce/Silver-specific backend gaps there.
 
 ## Constraints
 

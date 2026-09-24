@@ -45,7 +45,10 @@ key is compared (soft-deleted/superseded rows are not migration failures).
 
 Connection config is environment-driven: `SRC_1_*`, `SRC_2_*`, ... in `.env` /
 `.env.dev` / `.env.uat` / `.env.prod` (see `.env.example`), one block per source,
-`TYPE` picks the connector. `SNOWFLAKE_*` is the single target.
+`TYPE` picks the connector. `SNOWFLAKE_*` is the single target. `COALESCE_*`
+(`COALESCE_API_TOKEN`, `COALESCE_WORKSPACE_ID`, `COALESCE_API_BASE`) is a
+separate, optional block for the Silver/Coalesce integration below — it's
+metadata *about* a transform, not a source or target connector.
 
 ## What "validated correctly" means — data quality dimensions
 
@@ -94,7 +97,29 @@ values and ignore the difference.
 ## Where things actually live (post-cleanup, current as of this session)
 
 - **UI**: `webapp/app.py` — single-file Streamlit app. Thin wrapper only; no
-  validation logic lives here.
+  validation logic lives here. The "Generate Batch YAML" tab (`tab_batch`)
+  starts with a `Bronze`/`Silver` radio (`batch_layer_flow`, distinct from the
+  existing per-flow `pick_layer()` output-directory selectbox further down):
+  choosing Bronze runs the existing source-DB-to-Snowflake mapping flow
+  unchanged; choosing Silver fetches a Coalesce node via `build_plan()`
+  (`src/silver/coalesce_plan_builder.py`), gates YAML generation on every
+  Bronze/Silver schema-drift column being resolved (excluded via
+  `write_schema_diff_exclusion()` or bugged via the existing JIRA
+  `create_ticket()`), lets a human pick the natural key when the business key
+  is a macro-computed surrogate, and then calls
+  `QueryOutputManager().generate_from_plan(plan, layer="silver")` directly
+  (the same call `ValidationPipeline.run_with_plan()` already makes
+  internally for Bronze) to write the YAML. The "Run Validation" tab needed
+  no change — `Project/runner.py::start_validation()` already derives
+  `--layer_type` from the picked YAML's inventory entry, so Silver YAMLs run
+  the same way Bronze ones do once they exist under `Project/config/silver/`.
+- **Silver/Coalesce metadata extraction** (new this pass):
+  `src/connector/coalesce_client.py` (thin, read-only Coalesce REST client,
+  `get_node(workspace_id, node_id)`) + `src/silver/coalesce_plan_builder.py`
+  (`build_plan(node_id, workspace_id=None) -> (CanonicalValidationPlan,
+  SchemaDiff)` — turns one Coalesce node's metadata into the same plan
+  bronze's SQL/YAML generators consume). See
+  `docs/decisions/0013-0016` and the `silver-layer-coalesce-validation` skill.
 - **Mapping pipeline (used by the UI)**: `src/validation_pipeline.py`'s
   `run_with_plan()` — exact/fuzzy column matching, AI only for ambiguous
   columns (`src/ai/rule_planner.py`). The older 100%-AI `run()` method and
@@ -123,7 +148,14 @@ values and ignore the difference.
   `Project/utils/semantic_normalize.py`. Well-tested, don't casually rewrite.
 - **Exclusions**: `config/exclusions.yaml` (global) + `config/*_exclusions.yaml`
   (per-source-DB) + table-specific exclusions set at runtime in the UI. The 5
-  YAML files are ~90% duplicate content — a known cleanup candidate.
+  per-source-DB YAML files are ~90% duplicate content — a known cleanup
+  candidate. `config/silver_exclusions.yaml` is a 6th, separate file for
+  Silver validation (`db_type="silver"` in `_EXCLUSION_FILE_BY_DB_TYPE`,
+  `src/validate_cli.py`) — it doesn't reuse any of the 5 because Silver
+  validation is Snowflake-to-Snowflake (Bronze and Silver both live in
+  Snowflake, per ADR 0013), not a source-DB→Snowflake pair, so it can't be
+  shoehorned into an existing per-source-DB-type file or a generic
+  "snowflake" key.
 - **Base rule catalog (static/immutable)**: `src/rules/rules_catalog.json` (10
   rule entries, metadata only) + `src/rules/base_rules.py` (the Python classes
   that actually execute — the JSON file's embedded SQL templates for
@@ -203,3 +235,5 @@ divergence found once already); don't treat `.github/` as ground truth.
 - `connector-postgresql`, `connector-mssql-sitelink`, `connector-athena`,
   `connector-redshift-tradeshift`, `connector-snowflake-target` — per-source/target
   connection, schema-extraction, and type-mapping specifics.
+- `silver-layer-coalesce-validation` — Coalesce node metadata → column
+  classification, surrogate-key fallback, `CanonicalValidationPlan`/`SchemaDiff`.

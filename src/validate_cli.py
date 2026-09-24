@@ -185,6 +185,11 @@ _EXCLUSION_FILE_BY_DB_TYPE = {
     "mssql":      _EXCLUSIONS_DIR / "mssql_exclusions.yaml",
     "athena":     _EXCLUSIONS_DIR / "athena_exclusions.yaml",
     "redshift":   _EXCLUSIONS_DIR / "redshift_exclusions.yaml",
+    # Silver validation is Snowflake-to-Snowflake (Bronze + Silver both live in
+    # Snowflake, per ADR 0013) — it doesn't belong to any source-DB-type file
+    # above, so it gets its own. Not "snowflake" — that key is intentionally
+    # left free for a hypothetical future generic-Snowflake-source case.
+    "silver":     _EXCLUSIONS_DIR / "silver_exclusions.yaml",
 }
 
 
@@ -220,12 +225,17 @@ def _load_global_user_exclusions(db_type: str) -> list:
         return []
 
 
-def _save_global_user_exclusion(db_type: str, column_name: str, reason: str, added_by: str = "") -> bool:
+def save_global_user_exclusion(db_type: str, column_name: str, reason: str, added_by: str = "") -> bool:
     """
     Append a new global column exclusion to the exclusions YAML file for
     `db_type` (postgresql/mssql/athena). The column will be excluded from
     every table of that source type AND the Snowflake target.
     Returns True on success.
+
+    Public name for this helper — `src/silver/coalesce_plan_builder.py`'s
+    `write_schema_diff_exclusion()` calls this directly instead of
+    duplicating the write logic. Keep `_save_global_user_exclusion` as an
+    alias below for existing in-module callers.
     """
     import yaml
     import datetime
@@ -262,6 +272,10 @@ def _save_global_user_exclusion(db_type: str, column_name: str, reason: str, add
         return True
     except Exception:
         return False
+
+
+# Backward-compat alias — existing in-module call sites use the underscore name.
+_save_global_user_exclusion = save_global_user_exclusion
 
 
 def _remove_global_user_exclusion(db_type: str, column_name: str) -> bool:
