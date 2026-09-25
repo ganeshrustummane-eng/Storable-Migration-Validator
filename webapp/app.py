@@ -924,6 +924,15 @@ def render_mapping_review(
     except Exception:
         live_tgt_cols = []
 
+    # ADR 0025: reserve the top slot for the schema-validation summary now,
+    # fill it in below (after the flag groups are computed) -- Streamlit
+    # renders a container at the position it was created, not where it's
+    # filled, so this keeps "Schema Validation" visually ABOVE the editable
+    # mapping grid while still reusing the grid's own edit state (corrected
+    # targets) to decide what's still an open issue.
+    _schema_section = st.container()
+
+    st.markdown("**Column mapping (editable)**")
     import pandas as pd
     df = pd.DataFrame([{
         "Source Column": r["source_column"],
@@ -1001,111 +1010,182 @@ def render_mapping_review(
         and r["source_column"].lower() not in _schema_ok_cols
     ]
 
-    if skipped_low:
-        _sk_cols = ", ".join(
-            f"`{r['source_column']}` ({int(r.get('confidence',0)*100)}%)" for r in skipped_low
+    # ADR 0025: the other half of "did every column migrate" -- target
+    # (Snowflake) columns that exist live but nothing on the source side
+    # claims. Fivetran metadata columns are never expected to have a source
+    # counterpart, so they're excluded the same way they are everywhere else.
+    _fivetran_meta_cols = {c.lower() for c in STATIC_EXCLUDE_COLUMNS}
+    _matched_target_cols = {r["target_column"].upper() for r in rows if r.get("target_column")}
+    extra_in_target = [
+        c for c in live_tgt_cols
+        if c.upper() not in _matched_target_cols
+        and c.lower() not in _fivetran_meta_cols
+        and c.lower() not in _schema_ok_cols
+    ]
+
+    _missing_in_target_n = len(skipped_low) + len(
+        [r for r in rows if not r.get("skip_validation") and not r.get("target_column")
+         and r["source_column"].lower() not in _schema_ok_cols]
+    )
+    _total_issues = _missing_in_target_n + len(extra_in_target) + len(type_mismatches) + len(low_conf_rows)
+    _matched_count = sum(1 for r in rows if r.get("target_column") and not r.get("skip_validation"))
+
+    with _schema_section:
+        st.markdown("### 🧬 Schema Validation")
+        st.caption(
+            f"Source columns: {len(rows)}  |  Target columns: {len(live_tgt_cols)}  |  "
+            f"Matched: {_matched_count}  |  Missing in target: {_missing_in_target_n}  |  "
+            f"Extra in target: {len(extra_in_target)}  |  Type mismatches: {len(type_mismatches)}"
         )
-        _sk_c1, _sk_c2, _sk_c3 = st.columns([3, 1, 1])
-        with _sk_c1:
-            st.warning(
-                f"⚠️ **{len(skipped_low)} column(s) skipped — no target match found** "
-                f"(confidence below 75%): {_sk_cols}\n\n"
-                "Set a **Corrected Target** above to include them, mark them OK, or raise a Jira ticket."
-            )
-        with _sk_c2:
-            if st.button("🎫 Raise Jira ticket", key=f"{key_prefix}_skip_jira_btn"):
-                try:
-                    from connector.jira_client import create_ticket, is_configured
-                    if not is_configured():
-                        st.info("Jira not configured — set `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_PROJECT_KEY` in `.env`.")
-                    else:
-                        _t = create_ticket(
-                            summary=f"[Migration Validator] Skipped columns need mapping: {pg_table}",
-                            description=(
-                                f"Table: {pg_table}\n\nColumns skipped (no target match, confidence <75%):\n"
-                                + "\n".join(
-                                    f"  - {r['source_column']} (conf {int(r.get('confidence',0)*100)}%,"
-                                    f" reason: {r.get('skip_reason','unknown')})"
-                                    for r in skipped_low
-                                )
-                            ),
-                            labels=["migration-validator", "skipped-columns", "needs-review"],
+        if _total_issues:
+            st.warning(f"⚠️ Schema validation: {_total_issues} issue(s) need review")
+        else:
+            st.success("✅ Schema validation: no issues")
+
+        if extra_in_target:
+            _et_c1, _et_c2, _et_c3 = st.columns([3, 1, 1])
+            with _et_c1:
+                st.warning(
+                    f"⚠️ **{len(extra_in_target)} column(s) in target with no source match**: "
+                    + ", ".join(f"`{c}`" for c in extra_in_target)
+                )
+            with _et_c2:
+                if st.button("🎫 Raise Jira ticket", key=f"{key_prefix}_extra_jira_btn"):
+                    try:
+                        from connector.jira_client import create_ticket, is_configured
+                        if not is_configured():
+                            st.info("Jira not configured — set `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_PROJECT_KEY` in `.env`.")
+                        else:
+                            _t = create_ticket(
+                                summary=f"[Migration Validator] Extra target columns with no source match: {sf_table}",
+                                description=(
+                                    f"Table: {pg_table} -> {sf_table}\n\n"
+                                    "Target columns with no source column mapping to them:\n"
+                                    + "\n".join(f"  - {c}" for c in extra_in_target)
+                                ),
+                                labels=["migration-validator", "extra-target-columns", "needs-review"],
+                            )
+                            st.success(f"Jira ticket created: [{_t['key']}]({_t['url']})")
+                    except Exception as _ete:
+                        st.error(f"Jira error: {_ete}")
+            with _et_c3:
+                if st.button("✅ Mark OK", key=f"{key_prefix}_extra_ok_btn"):
+                    for c in extra_in_target:
+                        _save_global_user_exclusion(
+                            "bronze_schema", c,
+                            f"{sf_table}.{c}: no source column maps to it -- reviewed OK via mapping UI",
                         )
-                        st.success(f"Jira ticket created: [{_t['key']}]({_t['url']})")
-                except Exception as _ske:
-                    st.error(f"Jira error: {_ske}")
-        with _sk_c3:
-            # ADR 0024: human reviewed, decided this missing column is fine --
-            # remember it (bronze_schema exclusions) so it stops re-flagging.
-            if st.button("✅ Mark OK", key=f"{key_prefix}_skip_ok_btn"):
-                for r in skipped_low:
-                    _save_global_user_exclusion(
-                        "bronze_schema", r["source_column"],
-                        f"No target match for {pg_table}.{r['source_column']} -- reviewed OK via mapping UI",
-                    )
-                st.rerun()
+                    st.rerun()
 
     unmatched = [
         r["source_column"] for r in rows
         if not r.get("skip_validation") and not r.get("target_column")
         and r["source_column"].lower() not in _schema_ok_cols
     ]
-    if unmatched:
-        _um_c1, _um_c2 = st.columns([3, 1])
-        with _um_c1:
-            st.warning(f"No target match for: {', '.join(unmatched)} — pick one above, mark OK, or it will be skipped from validation.")
-        with _um_c2:
-            if st.button("✅ Mark OK", key=f"{key_prefix}_unmatched_ok_btn"):
-                for col in unmatched:
-                    _save_global_user_exclusion(
-                        "bronze_schema", col,
-                        f"No target match for {pg_table}.{col} -- reviewed OK via mapping UI",
-                    )
-                st.rerun()
 
-    if type_mismatches:
-        _tm_c1, _tm_c2 = st.columns([3, 1])
-        with _tm_c1:
-            st.info(
-                f"⚠️ **{len(type_mismatches)} type mismatch(es)** (informational — base rule "
-                "compatibility not confirmed yet, review manually): "
-                + ", ".join(
-                    f"`{r['source_column']}` ({r['source_type']} → {r['target_type']})"
-                    for r in type_mismatches
-                )
+    # ADR 0025: the remaining three flag groups render inside the same
+    # top-of-page schema-validation section as the extra-in-target group above.
+    with _schema_section:
+        if skipped_low:
+            _sk_cols = ", ".join(
+                f"`{r['source_column']}` ({int(r.get('confidence',0)*100)}%)" for r in skipped_low
             )
-        with _tm_c2:
-            if st.button("✅ Mark OK", key=f"{key_prefix}_type_ok_btn"):
-                for r in type_mismatches:
-                    _save_global_user_exclusion(
-                        "bronze_schema", r["source_column"],
-                        f"{pg_table}.{r['source_column']}: {r['source_type']} vs {r['target_type']} "
-                        "-- type mismatch reviewed OK via mapping UI",
-                    )
-                st.rerun()
-
-    if low_conf_rows:
-        _lc_col1, _lc_col2 = st.columns([3, 1])
-        with _lc_col1:
-            st.info(f"Matched below high confidence: {', '.join(r['source_column'] for r in low_conf_rows)} — review these; a flagged mismatch can still be correct.")
-        with _lc_col2:
-            if st.button("🎫 Raise Jira ticket", key=f"{key_prefix}_inline_jira_btn"):
-                try:
-                    from connector.jira_client import create_ticket, is_configured
-                    if not is_configured():
-                        st.info("Jira not configured — set `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_PROJECT_KEY` in `.env`.")
-                    else:
-                        _t = create_ticket(
-                            summary=f"[Migration Validator] Low-confidence mappings: {pg_table}",
-                            description=(
-                                f"Table: {pg_table}\n\nLow-confidence column mappings:\n"
-                                + "\n".join(f"  - {r['source_column']} → {r['target_column']} ({int(r['confidence']*100)}%)" for r in low_conf_rows)
-                            ),
-                            labels=["migration-validator", "needs-review"],
+            _sk_c1, _sk_c2, _sk_c3 = st.columns([3, 1, 1])
+            with _sk_c1:
+                st.warning(
+                    f"⚠️ **{len(skipped_low)} column(s) skipped — no target match found** "
+                    f"(confidence below 75%): {_sk_cols}\n\n"
+                    "Set a **Corrected Target** below to include them, mark them OK, or raise a Jira ticket."
+                )
+            with _sk_c2:
+                if st.button("🎫 Raise Jira ticket", key=f"{key_prefix}_skip_jira_btn"):
+                    try:
+                        from connector.jira_client import create_ticket, is_configured
+                        if not is_configured():
+                            st.info("Jira not configured — set `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_PROJECT_KEY` in `.env`.")
+                        else:
+                            _t = create_ticket(
+                                summary=f"[Migration Validator] Skipped columns need mapping: {pg_table}",
+                                description=(
+                                    f"Table: {pg_table}\n\nColumns skipped (no target match, confidence <75%):\n"
+                                    + "\n".join(
+                                        f"  - {r['source_column']} (conf {int(r.get('confidence',0)*100)}%,"
+                                        f" reason: {r.get('skip_reason','unknown')})"
+                                        for r in skipped_low
+                                    )
+                                ),
+                                labels=["migration-validator", "skipped-columns", "needs-review"],
+                            )
+                            st.success(f"Jira ticket created: [{_t['key']}]({_t['url']})")
+                    except Exception as _ske:
+                        st.error(f"Jira error: {_ske}")
+            with _sk_c3:
+                # ADR 0024: human reviewed, decided this missing column is fine --
+                # remember it (bronze_schema exclusions) so it stops re-flagging.
+                if st.button("✅ Mark OK", key=f"{key_prefix}_skip_ok_btn"):
+                    for r in skipped_low:
+                        _save_global_user_exclusion(
+                            "bronze_schema", r["source_column"],
+                            f"No target match for {pg_table}.{r['source_column']} -- reviewed OK via mapping UI",
                         )
-                        st.success(f"Jira ticket created: [{_t['key']}]({_t['url']})")
-                except Exception as _lce:
-                    st.error(f"Jira error: {_lce}")
+                    st.rerun()
+
+        if unmatched:
+            _um_c1, _um_c2 = st.columns([3, 1])
+            with _um_c1:
+                st.warning(f"No target match for: {', '.join(unmatched)} — pick one below, mark OK, or it will be skipped from validation.")
+            with _um_c2:
+                if st.button("✅ Mark OK", key=f"{key_prefix}_unmatched_ok_btn"):
+                    for col in unmatched:
+                        _save_global_user_exclusion(
+                            "bronze_schema", col,
+                            f"No target match for {pg_table}.{col} -- reviewed OK via mapping UI",
+                        )
+                    st.rerun()
+
+        if type_mismatches:
+            _tm_c1, _tm_c2 = st.columns([3, 1])
+            with _tm_c1:
+                st.info(
+                    f"⚠️ **{len(type_mismatches)} type mismatch(es)** (informational — base rule "
+                    "compatibility not confirmed yet, review manually): "
+                    + ", ".join(
+                        f"`{r['source_column']}` ({r['source_type']} → {r['target_type']})"
+                        for r in type_mismatches
+                    )
+                )
+            with _tm_c2:
+                if st.button("✅ Mark OK", key=f"{key_prefix}_type_ok_btn"):
+                    for r in type_mismatches:
+                        _save_global_user_exclusion(
+                            "bronze_schema", r["source_column"],
+                            f"{pg_table}.{r['source_column']}: {r['source_type']} vs {r['target_type']} "
+                            "-- type mismatch reviewed OK via mapping UI",
+                        )
+                    st.rerun()
+
+        if low_conf_rows:
+            _lc_col1, _lc_col2 = st.columns([3, 1])
+            with _lc_col1:
+                st.info(f"Matched below high confidence: {', '.join(r['source_column'] for r in low_conf_rows)} — review these; a flagged mismatch can still be correct.")
+            with _lc_col2:
+                if st.button("🎫 Raise Jira ticket", key=f"{key_prefix}_inline_jira_btn"):
+                    try:
+                        from connector.jira_client import create_ticket, is_configured
+                        if not is_configured():
+                            st.info("Jira not configured — set `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_PROJECT_KEY` in `.env`.")
+                        else:
+                            _t = create_ticket(
+                                summary=f"[Migration Validator] Low-confidence mappings: {pg_table}",
+                                description=(
+                                    f"Table: {pg_table}\n\nLow-confidence column mappings:\n"
+                                    + "\n".join(f"  - {r['source_column']} → {r['target_column']} ({int(r['confidence']*100)}%)" for r in low_conf_rows)
+                                ),
+                                labels=["migration-validator", "needs-review"],
+                            )
+                            st.success(f"Jira ticket created: [{_t['key']}]({_t['url']})")
+                    except Exception as _lce:
+                        st.error(f"Jira error: {_lce}")
 
     overrides = {
         row["Source Column"]: row["Corrected Target"]
