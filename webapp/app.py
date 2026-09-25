@@ -964,6 +964,10 @@ def render_mapping_review(
         if row["Corrected Target"] and row["Corrected Target"] != row["AI/Fuzzy Target"]
     }
 
+    # ADR 0024: columns a human already reviewed and marked OK (missing-column
+    # or type-mismatch) don't need to be re-flagged on every subsequent run.
+    _schema_ok_cols = {c.lower() for c in _get_all_exclusions("bronze_schema")}
+
     # skipped = skip_validation=True AND no user correction yet
     skipped_low = [
         r for r in rows
@@ -971,6 +975,7 @@ def render_mapping_review(
         and not r.get("target_column")
         and r["source_column"] not in corrected_targets
         and r.get("confidence", 0.0) < 0.75
+        and r["source_column"].lower() not in _schema_ok_cols
     ]
     # matched but low confidence (not corrected, not a learned rule)
     low_conf_rows = [
@@ -981,16 +986,31 @@ def render_mapping_review(
         and r.get("confidence", 1.0) < 0.75
     ]
 
+    # ADR 0024: source/target data-type comparison, informational -- the
+    # rules_catalog.json compatibility table isn't confirmed as the bar yet,
+    # so a mismatch is flagged for human review, not auto-failed.
+    def _norm_type(t: str) -> str:
+        return re.sub(r"\s*\([^)]*\)", "", (t or "")).strip().upper()
+
+    type_mismatches = [
+        r for r in rows
+        if r.get("target_column")
+        and not r.get("skip_validation")
+        and r["source_column"] not in corrected_targets
+        and _norm_type(r.get("source_type", "")) != _norm_type(r.get("target_type", ""))
+        and r["source_column"].lower() not in _schema_ok_cols
+    ]
+
     if skipped_low:
         _sk_cols = ", ".join(
             f"`{r['source_column']}` ({int(r.get('confidence',0)*100)}%)" for r in skipped_low
         )
-        _sk_c1, _sk_c2 = st.columns([3, 1])
+        _sk_c1, _sk_c2, _sk_c3 = st.columns([3, 1, 1])
         with _sk_c1:
             st.warning(
                 f"⚠️ **{len(skipped_low)} column(s) skipped — no target match found** "
                 f"(confidence below 75%): {_sk_cols}\n\n"
-                "Set a **Corrected Target** above to include them, or raise a Jira ticket for manual review."
+                "Set a **Corrected Target** above to include them, mark them OK, or raise a Jira ticket."
             )
         with _sk_c2:
             if st.button("🎫 Raise Jira ticket", key=f"{key_prefix}_skip_jira_btn"):
@@ -1014,10 +1034,56 @@ def render_mapping_review(
                         st.success(f"Jira ticket created: [{_t['key']}]({_t['url']})")
                 except Exception as _ske:
                     st.error(f"Jira error: {_ske}")
+        with _sk_c3:
+            # ADR 0024: human reviewed, decided this missing column is fine --
+            # remember it (bronze_schema exclusions) so it stops re-flagging.
+            if st.button("✅ Mark OK", key=f"{key_prefix}_skip_ok_btn"):
+                for r in skipped_low:
+                    _save_global_user_exclusion(
+                        "bronze_schema", r["source_column"],
+                        f"No target match for {pg_table}.{r['source_column']} -- reviewed OK via mapping UI",
+                    )
+                st.rerun()
 
-    unmatched = [r["source_column"] for r in rows if not r.get("skip_validation") and not r.get("target_column")]
+    unmatched = [
+        r["source_column"] for r in rows
+        if not r.get("skip_validation") and not r.get("target_column")
+        and r["source_column"].lower() not in _schema_ok_cols
+    ]
     if unmatched:
-        st.warning(f"No target match for: {', '.join(unmatched)} — pick one above or it will be skipped from validation.")
+        _um_c1, _um_c2 = st.columns([3, 1])
+        with _um_c1:
+            st.warning(f"No target match for: {', '.join(unmatched)} — pick one above, mark OK, or it will be skipped from validation.")
+        with _um_c2:
+            if st.button("✅ Mark OK", key=f"{key_prefix}_unmatched_ok_btn"):
+                for col in unmatched:
+                    _save_global_user_exclusion(
+                        "bronze_schema", col,
+                        f"No target match for {pg_table}.{col} -- reviewed OK via mapping UI",
+                    )
+                st.rerun()
+
+    if type_mismatches:
+        _tm_c1, _tm_c2 = st.columns([3, 1])
+        with _tm_c1:
+            st.info(
+                f"⚠️ **{len(type_mismatches)} type mismatch(es)** (informational — base rule "
+                "compatibility not confirmed yet, review manually): "
+                + ", ".join(
+                    f"`{r['source_column']}` ({r['source_type']} → {r['target_type']})"
+                    for r in type_mismatches
+                )
+            )
+        with _tm_c2:
+            if st.button("✅ Mark OK", key=f"{key_prefix}_type_ok_btn"):
+                for r in type_mismatches:
+                    _save_global_user_exclusion(
+                        "bronze_schema", r["source_column"],
+                        f"{pg_table}.{r['source_column']}: {r['source_type']} vs {r['target_type']} "
+                        "-- type mismatch reviewed OK via mapping UI",
+                    )
+                st.rerun()
+
     if low_conf_rows:
         _lc_col1, _lc_col2 = st.columns([3, 1])
         with _lc_col1:
@@ -2340,43 +2406,130 @@ with tab_batch:
             CoalesceNotConfiguredError as _CoalesceNotConfiguredError,
             CoalesceError as _CoalesceError,
         )
-        _silver_c1, _silver_c2 = st.columns([3, 2])
-        with _silver_c1:
-            _silver_node_id = st.text_input("Coalesce node ID", key="silver_node_id")
-        with _silver_c2:
-            _silver_workspace_id = st.text_input(
-                "Workspace ID (optional override)",
-                value=os.getenv("COALESCE_WORKSPACE_ID", ""),
-                key="silver_workspace_id",
-                help="Defaults to COALESCE_WORKSPACE_ID from .env if left blank.",
-            )
 
-        if st.button("Fetch node and build plan", key="silver_fetch_btn", disabled=not _silver_node_id):
-            try:
-                _plan, _diff = _silver_build_plan(
-                    _silver_node_id.strip(),
-                    workspace_id=(_silver_workspace_id.strip() or None),
+        # Repeatable node-ID row list -- same session_state-list-of-dicts +
+        # Add/Remove-row pattern as the Custom SQL tab's validation entries
+        # (_CST_KEY / _cst_blank_entry, see render_custom_sql_section above),
+        # per ADR 0019 section 6's instruction to reuse the existing pattern
+        # rather than inventing a new one.
+        _SILVER_NODES_KEY = "silver_node_rows"
+        if _SILVER_NODES_KEY not in st.session_state:
+            st.session_state[_SILVER_NODES_KEY] = [{"node_id": "", "pasted_json": "", "mode": "Node ID (fetch live)"}]
+
+        _silver_workspace_id = st.text_input(
+            "Workspace ID (optional override)",
+            value=os.getenv("COALESCE_WORKSPACE_ID", ""),
+            key="silver_workspace_id",
+            help="Defaults to COALESCE_WORKSPACE_ID from .env if left blank. Applies to every node row below.",
+        )
+
+        st.markdown("**Coalesce node IDs**")
+        st.caption(
+            "Add one row per Coalesce node to validate in this batch. Each row runs the full "
+            "build-plan / schema-diff / key-resolution / generate flow independently -- "
+            "batching only saves re-opening this tab per node."
+        )
+        if st.button("➕ Add node", key="silver_add_node"):
+            st.session_state[_SILVER_NODES_KEY].append({"node_id": "", "pasted_json": "", "mode": "Node ID (fetch live)"})
+            st.rerun()
+
+        _silver_rows_to_delete = []
+        for _row_idx, _row in enumerate(st.session_state[_SILVER_NODES_KEY]):
+            with st.container(border=True):
+                # ADR 0021: per-row escape hatch for when a user has the node
+                # metadata (e.g. from a manual curl) but no Snowflake grant
+                # yet to run the live fetch/schema-diff -- paste the same
+                # JSON get_node() would have returned instead of a node ID.
+                _row["mode"] = st.radio(
+                    f"Row #{_row_idx + 1} input", ["Node ID (fetch live)", "Paste metadata JSON"],
+                    index=["Node ID (fetch live)", "Paste metadata JSON"].index(_row.get("mode", "Node ID (fetch live)")),
+                    key=f"silver_mode_{_row_idx}", horizontal=True,
                 )
-                st.session_state["silver_plan"] = _plan
-                st.session_state["silver_schema_diff"] = _diff
-                st.session_state["silver_node_id_built"] = _silver_node_id.strip()
-                st.session_state["silver_diff_resolution"] = {}
-                st.success(f"Plan built for node `{_silver_node_id.strip()}` -- {_plan.source_table} to {_plan.target_table}.")
-            except _CoalesceNotConfiguredError as exc:
-                st.error(f"Coalesce is not configured -- set `COALESCE_API_TOKEN` / `COALESCE_WORKSPACE_ID` in `.env`. ({exc})")
-            except _SilverUnsupportedNodeShapeError as exc:
-                st.error(f"Unsupported Coalesce node shape -- cannot build a plan for this node: {exc}")
-            except _CoalesceError as exc:
-                st.error(f"Coalesce API error: {exc}")
-            except Exception as exc:
-                st.error(f"Failed to build plan: {exc}")
-        _silver_plan = st.session_state.get("silver_plan")
-        _silver_diff = st.session_state.get("silver_schema_diff")
+                if _row["mode"] == "Node ID (fetch live)":
+                    _row["node_id"] = st.text_input(
+                        f"Coalesce node ID #{_row_idx + 1}",
+                        value=_row["node_id"], key=f"silver_node_{_row_idx}",
+                    )
+                else:
+                    _row["pasted_json"] = st.text_area(
+                        f"Pasted node metadata JSON #{_row_idx + 1}",
+                        value=_row["pasted_json"], key=f"silver_paste_{_row_idx}", height=150,
+                        help="Same JSON shape as GET /workspaces/{ws}/nodes/{node_id} returns. "
+                             "Skips the live Coalesce fetch entirely -- schema-diff verification "
+                             "against live Snowflake will also be attempted, but a failure there "
+                             "(e.g. no grant yet on the Bronze database) won't block plan/YAML "
+                             "generation, just shows as 'unavailable' below.",
+                    )
+                if len(st.session_state[_SILVER_NODES_KEY]) > 1 and st.button(
+                    "🗑️ Remove row", key=f"silver_node_del_{_row_idx}", type="secondary",
+                ):
+                    _silver_rows_to_delete.append(_row_idx)
+        if _silver_rows_to_delete:
+            for _row_idx in sorted(_silver_rows_to_delete, reverse=True):
+                st.session_state[_SILVER_NODES_KEY].pop(_row_idx)
+            st.rerun()
 
-        if _silver_plan is not None and _silver_diff is not None:
-            st.markdown(f"**Plan:** `{_silver_plan.source_table}` (Bronze) -> `{_silver_plan.target_table}` (Silver)")
+        # (label, row_idx, node_id_or_None, pasted_json_or_None) -- label is
+        # the dict key results get stored under, unique per row either way.
+        _silver_entries = []
+        for _row_idx, _row in enumerate(st.session_state[_SILVER_NODES_KEY]):
+            if _row["mode"] == "Node ID (fetch live)" and _row["node_id"].strip():
+                _nid = _row["node_id"].strip()
+                _silver_entries.append((_nid, _row_idx, _nid, None))
+            elif _row["mode"] == "Paste metadata JSON" and _row["pasted_json"].strip():
+                _silver_entries.append((f"pasted-row-{_row_idx + 1}", _row_idx, None, _row["pasted_json"].strip()))
 
-            _silver_resolution = st.session_state.setdefault("silver_diff_resolution", {})
+        if st.button("Fetch nodes and build plans", key="silver_fetch_btn", disabled=not _silver_entries):
+            _silver_results = st.session_state.get("silver_results") or {}
+            for _label, _row_idx, _nid, _pasted in _silver_entries:
+                try:
+                    if _nid is not None:
+                        _plan, _diff = _silver_build_plan(
+                            _nid, workspace_id=(_silver_workspace_id.strip() or None),
+                        )
+                    else:
+                        import json as _json
+                        from silver.coalesce_plan_builder import build_plan_from_metadata as _silver_build_plan_from_metadata
+                        _node = _json.loads(_pasted)
+                        _plan, _diff = _silver_build_plan_from_metadata(
+                            _node, workspace_id=(_silver_workspace_id.strip() or None),
+                        )
+                    _silver_results[_label] = {"plan": _plan, "diff": _diff, "resolution": {}}
+                    st.success(f"Plan built for `{_label}` -- {_plan.source_table} to {_plan.target_table}.")
+                except ValueError as exc:  # includes json.JSONDecodeError
+                    st.error(f"Row #{_row_idx + 1}: could not parse pasted JSON: {exc}")
+                except _CoalesceNotConfiguredError as exc:
+                    st.error(f"Coalesce is not configured -- set `COALESCE_API_TOKEN` / `COALESCE_WORKSPACE_ID` in `.env`. ({exc})")
+                    if _nid is not None:
+                        break  # live-fetch rows all depend on the same config -- no point looping further
+                except _SilverUnsupportedNodeShapeError as exc:
+                    st.error(f"`{_label}`: unsupported Coalesce node shape -- cannot build a plan: {exc}")
+                except _CoalesceError as exc:
+                    st.error(f"`{_label}`: Coalesce API error: {exc}")
+                except Exception as exc:
+                    st.error(f"`{_label}`: failed to build plan: {exc}")
+            st.session_state["silver_results"] = _silver_results
+
+        _silver_all_results = st.session_state.get("silver_results", {})
+
+        for _silver_node_id_built, _silver_node_result in _silver_all_results.items():
+          _silver_plan = _silver_node_result["plan"]
+          _silver_diff = _silver_node_result["diff"]
+          _kp = f"silver_{_silver_node_id_built}"  # per-node widget-key / session-state prefix
+
+          with st.container(border=True):
+            st.markdown(f"**Node `{_silver_node_id_built}` -- Plan:** `{_silver_plan.source_table}` (Bronze) -> `{_silver_plan.target_table}` (Silver)")
+
+            if getattr(_silver_diff, "unavailable_reason", None):
+                # ADR 0021: live schema-diff couldn't run (e.g. no Snowflake
+                # grant on the Bronze database yet) -- distinct from "no
+                # drift found". Warn, don't gate YAML generation on it.
+                st.warning(
+                    "Live schema-diff verification unavailable -- drift was NOT checked, "
+                    f"proceeding without it: {_silver_diff.unavailable_reason}"
+                )
+
+            _silver_resolution = _silver_node_result["resolution"]
             _silver_drift_groups = [
                 ("only_in_metadata", "In Coalesce metadata but not live", _silver_diff.only_in_metadata),
                 ("only_in_bronze_live", "In live Bronze table but not metadata", _silver_diff.only_in_bronze_live),
@@ -2397,7 +2550,7 @@ with tab_batch:
                             _status_txt = {"excluded": " [excluded]", "bugged": " [bug raised]"}.get(_status, "")
                             st.write(f"`{_col}`{_status_txt}")
                         with _rc2:
-                            if st.button("Exclude", key=f"silver_excl_{_res_key}"):
+                            if st.button("Exclude", key=f"{_kp}_excl_{_res_key}"):
                                 try:
                                     _silver_write_exclusion(
                                         "silver", _col,
@@ -2426,7 +2579,7 @@ with tab_batch:
                                 except Exception as exc:
                                     st.error(f"Could not write exclusion: {exc}")
                         with _rc3:
-                            if st.button("Raise Bug", key=f"silver_bug_{_res_key}"):
+                            if st.button("Raise Bug", key=f"{_kp}_bug_{_res_key}"):
                                 try:
                                     from connector.jira_client import create_ticket, is_configured as _jira_is_configured
                                     if not _jira_is_configured():
@@ -2448,7 +2601,10 @@ with tab_batch:
                                 except Exception as exc:
                                     st.error(f"Jira error: {exc}")
                 if not _silver_any_drift:
-                    st.success("No schema drift detected -- metadata matches live Bronze and Silver schemas.")
+                    if getattr(_silver_diff, "unavailable_reason", None):
+                        st.info("Nothing to resolve -- diff itself was unavailable (see warning above), not confirmed clean.")
+                    else:
+                        st.success("No schema drift detected -- metadata matches live Bronze and Silver schemas.")
             _silver_drift_keys = [
                 f"{g}:{c}" for g, _, cols in _silver_drift_groups for c in cols
             ]
@@ -2463,7 +2619,7 @@ with tab_batch:
                 )
                 _silver_candidates = _silver_plan.population_scope.get("natural_key_candidates", [])
                 _silver_pk_pick = st.selectbox(
-                    "Natural key column", options=_silver_candidates, key="silver_natural_key_pick",
+                    "Natural key column", options=_silver_candidates, key=f"{_kp}_natural_key_pick",
                 ) if _silver_candidates else None
                 st.caption(
                     "Assumption: the target (Silver) side uses the same column name as this passthrough "
@@ -2480,9 +2636,13 @@ with tab_batch:
                     _silver_plan.target_primary_keys = [_silver_target_name]
                     _silver_pk_ready = True
 
-            _silver_layer, _silver_output_dir = pick_layer("silver_layer_output")
+            # Silver validation is always Snowflake-to-Snowflake (Bronze and Silver
+            # both live in Snowflake, per ADR 0013) -- this flow only ever produces
+            # a Silver config, so the generic bronze/silver/gold pick_layer()
+            # selectbox is a false choice here. Fixed to Project/config/silver.
+            _silver_output_dir = _ROOT_DIR / "Project" / "config" / "silver"
             _silver_generate_disabled = not (_silver_all_resolved and _silver_pk_ready)
-            if st.button("Generate YAML", type="primary", key="silver_generate_btn", disabled=_silver_generate_disabled):
+            if st.button("Generate YAML", type="primary", key=f"{_kp}_generate_btn", disabled=_silver_generate_disabled):
                 try:
                     from generated_queries import QueryOutputManager as _SilverQOM
                     _silver_result = _SilverQOM().generate_from_plan(

@@ -282,8 +282,12 @@ class QueryOutputManager:
         print()
 
         # ── Render targets, both from the same plan ──────────────────────────
-        query_set       = self._sql_gen.generate_from_plan(plan)
-        yaml_path       = self._yaml_writer.write_from_plan(plan, query_set, output_dir=output_dir)
+        if layer == "silver":
+            from silver.silver_sql_emitter import emit_query_set
+            query_set = emit_query_set(plan)
+        else:
+            query_set = self._sql_gen.generate_from_plan(plan)
+        yaml_path       = self._yaml_writer.write_from_plan(plan, query_set, output_dir=output_dir, layer=layer)
         count_yaml_path = self._yaml_writer.write_count_yaml_from_plan(plan, query_set, output_dir=output_dir)
 
         skipped_names = [m.source_column for m in skipped]

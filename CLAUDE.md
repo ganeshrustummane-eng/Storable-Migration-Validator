@@ -14,7 +14,7 @@ comment — when making a decision worth tracing later.
 
 ## Repo-wide scan/grep exclusions
 
-`graphify-out/` , `trash/` and `.codemie/` are generated/tool-scratch trees, not source —
+`trash/` and `.codemie/` are generated/tool-scratch trees, not source —
 exclude them from full-repo greps and scans (they're large and irrelevant to
 migration logic, and matches from them are noise). Neither is currently in
 `.gitignore`; don't assume gitignore alone keeps them out of a scan.

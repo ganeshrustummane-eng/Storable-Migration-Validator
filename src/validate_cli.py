@@ -190,6 +190,12 @@ _EXCLUSION_FILE_BY_DB_TYPE = {
     # above, so it gets its own. Not "snowflake" — that key is intentionally
     # left free for a hypothetical future generic-Snowflake-source case.
     "silver":     _EXCLUSIONS_DIR / "silver_exclusions.yaml",
+    # Bronze column-level schema-validation gate (ADR 0024) -- "this missing
+    # column / type mismatch is a known, human-reviewed non-issue" decisions.
+    # Distinct from the per-source-DB-type files above: those exclude columns
+    # from VALUE comparison; this one excludes a column from being re-flagged
+    # by the pre-migration schema-completeness/type check.
+    "bronze_schema": _EXCLUSIONS_DIR / "bronze_schema_exclusions.yaml",
 }
 
 

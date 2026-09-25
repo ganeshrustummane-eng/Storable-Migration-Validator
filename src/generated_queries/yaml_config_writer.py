@@ -115,6 +115,7 @@ class YAMLConfigWriter:
         source_primary_keys: Optional[List[str]] = None,
         target_primary_keys: Optional[List[str]] = None,
         plan: Optional["CanonicalValidationPlan"] = None,
+        layer: str = "bronze",
     ) -> Path:
         """
         Write the data validation YAML for a single table.
@@ -166,7 +167,8 @@ class YAMLConfigWriter:
             tgt_pk = src_pk
 
         def _prep(sql: str) -> str:
-            return _to_single_line(_strip_generator_header(sql))
+            clean = _strip_generator_header(sql)
+            return _to_indented_multiline(clean) if layer == "silver" else _to_single_line(clean)
 
         yaml_content = _build_data_yaml(
             table_name_source=pg_table,
@@ -324,6 +326,7 @@ class YAMLConfigWriter:
         plan: "CanonicalValidationPlan",
         query_set: ValidationQuerySet,
         output_dir: Optional[Path] = None,
+        layer: str = "bronze",
     ) -> Path:
         """
         Write the YAML config file directly from a CanonicalValidationPlan.
@@ -335,6 +338,10 @@ class YAMLConfigWriter:
             plan      : Fully constructed CanonicalValidationPlan
             query_set : ValidationQuerySet already generated from the same plan
             output_dir: Output directory (default: config/bronze/data_validation/)
+            layer     : 'bronze' or 'silver' -- controls only sourcequery/targetquery
+                        formatting (see _prep in write()); Silver keeps its
+                        readable multi-line SQL instead of being flattened
+                        to one line (ADR 0022).
 
         Returns:
             Path to the written YAML file.
@@ -355,6 +362,7 @@ class YAMLConfigWriter:
             target_primary_keys=plan.target_primary_keys or [],
             output_dir=output_dir,
             plan=plan,
+            layer=layer,
         )
 
 
@@ -635,3 +643,14 @@ def _to_single_line(sql: str) -> str:
     """Collapse multi-line SQL to one space-separated line, 10-space indented for YAML block."""
     single = " ".join(line.strip() for line in sql.splitlines() if line.strip())
     return " " * _QUERY_INDENT + single
+
+
+def _to_indented_multiline(sql: str) -> str:
+    """Re-indent already multi-line SQL (one column per line, as
+    silver_sql_emitter.py emits it) to _QUERY_INDENT spaces per line, keeping
+    every line break -- unlike _to_single_line(), used for Bronze. ADR 0022:
+    flattening Silver's SQL onto one line broke it once a `--` comment was
+    present (the comment ate everything after it), and is unreadable besides;
+    Silver's SQL now never contains comments (macro-skip columns are simply
+    omitted from the SELECT), so keeping it multi-line is safe."""
+    return "\n".join(" " * _QUERY_INDENT + line for line in sql.splitlines())
